@@ -52,6 +52,8 @@ The interface opens at <http://localhost:4000>. The port is published on the loo
 docker compose -f deploy/docker-compose.yml logs server | grep password
 ```
 
+Save it or change it at once: the line is gone from the log as soon as the container is recreated, for example on an update.
+
 Compose starts two containers: the server and VictoriaMetrics (the time series storage, not published outside).
 
 To update, change `HLSMON_VERSION` (or keep `latest`) and run `docker compose -f deploy/docker-compose.yml pull && docker compose -f deploy/docker-compose.yml up -d`. To build the images from source instead, see [Development](#development).
@@ -102,6 +104,8 @@ An agent checks streams from its own network and sends the results to the server
      -v hls-monitor-agent:/var/lib/hls-monitor \
      ghcr.io/hotid/hls-monitor-agent:latest
    ```
+
+   The address must be the one the server is reached at from the agent host: `localhost` will not do, in a container least of all. Set `HLSMON_PUBLIC_URL` on the server, and `HLSMON_BIND` or a reverse proxy so that the port is reachable. To try an agent on the same machine as the server, run the one built into the server's compose file: `HLSMON_ENROLL_TOKEN=<token> docker compose -f deploy/docker-compose.yml --profile agent up -d agent`.
 
    The command in the interface already has the server address, the token and the image of the server's version. The same with compose: `deploy/docker-compose.agent.yml`.
 

@@ -52,6 +52,8 @@ docker compose -f deploy/docker-compose.yml up -d
 docker compose -f deploy/docker-compose.yml logs server | grep password
 ```
 
+Сохраните его или сразу смените: строка исчезнет из лога, как только контейнер будет пересоздан, например при обновлении.
+
 Compose поднимает два контейнера: сервер и VictoriaMetrics (хранилище числовых рядов, наружу не публикуется).
 
 Чтобы обновиться, поменяйте `HLSMON_VERSION` (или оставьте `latest`) и выполните `docker compose -f deploy/docker-compose.yml pull && docker compose -f deploy/docker-compose.yml up -d`. Как собрать образы из исходников — в разделе [Разработка](#разработка).
@@ -102,6 +104,8 @@ Compose поднимает два контейнера: сервер и Victoria
      -v hls-monitor-agent:/var/lib/hls-monitor \
      ghcr.io/hotid/hls-monitor-agent:latest
    ```
+
+   Адрес должен быть тем, по которому сервер доступен с хоста агента: `localhost` не подойдёт, тем более из контейнера. Задайте серверу `HLSMON_PUBLIC_URL`, а чтобы порт был доступен — `HLSMON_BIND` или обратный прокси. Чтобы попробовать агента на той же машине, что и сервер, запустите встроенного в compose-файл сервера: `HLSMON_ENROLL_TOKEN=<токен> docker compose -f deploy/docker-compose.yml --profile agent up -d agent`.
 
    В команде из интерфейса уже подставлены адрес сервера, токен и образ той же версии, что у сервера. То же через compose: `deploy/docker-compose.agent.yml`.
 

@@ -27,6 +27,7 @@
   "online": "Online",
   "runInDocker": "Run in Docker",
   "running": "Running",
+  "serverAddressIsLocal": "The server address in the command is {url}: it works on this machine only, and an agent, a containerised one included, will not find the server there. Replace it with the address the server is reached at from the agent host, or set HLSMON_PUBLIC_URL for the server.",
   "streams": "stream | streams",
   "theCurrentKeyOfAgentWill": "The current key of agent “{name}” will stop working. A running agent will stay disconnected until it is started with the new token.",
   "theTokenIsShownOnceIt": "The token is shown once. It is valid until {time} and works for one connection.",

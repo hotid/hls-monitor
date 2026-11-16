@@ -105,6 +105,16 @@ async function copy(text: string) {
     toasts.error(t('common.couldNotCopySelectTheText'))
   }
 }
+
+/** The address works on this machine only: an agent elsewhere, or in a container, cannot use it. */
+function localOnly(url: string): boolean {
+  try {
+    const host = new URL(url).hostname
+    return host === 'localhost' || host === '[::1]' || host.startsWith('127.')
+  } catch {
+    return false
+  }
+}
 </script>
 
 <template>
@@ -190,6 +200,7 @@ async function copy(text: string) {
           <span class="label">{{ t('agents.runInDocker') }}</span>
           <pre class="code wrap">{{ enrollment.command }}</pre>
           <span class="help">{{ t('agents.afterTheFirstStartTheAgent') }}</span>
+          <div v-if="localOnly(enrollment.server_url)" class="notice" style="margin-top: 8px">{{ t('agents.serverAddressIsLocal', { url: enrollment.server_url }) }}</div>
         </div>
         <div class="field">
           <span class="label">{{ t('agents.enrollmentToken') }}</span>
