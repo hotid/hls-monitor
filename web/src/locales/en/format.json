@@ -1,0 +1,19 @@
+{
+  "ago": "{span} ago",
+  "b": "B",
+  "bps": "bit/s",
+  "d": "d",
+  "gb": "GB",
+  "gbps": "Gbit/s",
+  "h": "h",
+  "justNow": "just now",
+  "kb": "KB",
+  "kbps": "kbit/s",
+  "mb": "MB",
+  "mbps": "Mbit/s",
+  "min": "min",
+  "ms": "ms",
+  "never": "never",
+  "s": "s",
+  "us": "µs"
+}

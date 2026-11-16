@@ -1,0 +1,3517 @@
+{
+    "swagger": "2.0",
+    "info": {
+        "description": "HLS stream monitoring. /api/v1 is the web API (session cookie; every non-GET request needs an X-Requested-With header), /api/agent/v1 is for remote agents, /api/ext/v1 is the read-only API for external monitoring systems (Bearer token).",
+        "title": "hls-monitor API",
+        "contact": {},
+        "version": "1.0"
+    },
+    "paths": {
+        "/api/agent/v1/config": {
+            "get": {
+                "description": "Doubles as the agent's heartbeat. Answers 304 when the revision passed in the query is still current.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent"
+                ],
+                "summary": "What the agent has to check",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer agent key",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Revision the agent already has",
+                        "name": "revision",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.Config"
+                        }
+                    },
+                    "304": {
+                        "description": "Not Modified"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/agent/v1/enroll": {
+            "post": {
+                "description": "The token works once. The key is returned only in this response.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent"
+                ],
+                "summary": "Exchange an enrollment token for a permanent agent key",
+                "parameters": [
+                    {
+                        "description": "Enrollment token",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.EnrollRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.EnrollResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/agent/v1/results": {
+            "post": {
+                "description": "The body may be gzip-compressed (Content-Encoding: gzip). Results for streams not assigned to the agent are rejected.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent"
+                ],
+                "summary": "Deliver check results",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer agent key",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "description": "Results",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.ResultsRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.ResultsResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ext/v1/discovery/agents": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "external"
+                ],
+                "summary": "Agents for low-level discovery, with reachability",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer API token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.extAgent"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ext/v1/discovery/streams": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "external"
+                ],
+                "summary": "Streams for low-level discovery",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer API token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.extStream"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ext/v1/discovery/variants": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "external"
+                ],
+                "summary": "Active variants of all streams for low-level discovery",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer API token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.extVariant"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ext/v1/status": {
+            "get": {
+                "description": "status_code: 0 ok, 1 warning, 2 failure, 3 no data, -1 disabled.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "external"
+                ],
+                "summary": "Current state of all streams",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer API token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.extStreamStatusDoc"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/ext/v1/streams/{id}/status": {
+            "get": {
+                "description": "status_code: 0 ok, 1 warning, 2 failure, 3 no data, -1 disabled.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "external"
+                ],
+                "summary": "Current state of one stream with per-variant metrics",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer API token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.extStreamStatusDoc"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agents": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "List agents",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.agentView"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "Returns a one-time enrollment token. It is shown only in this response.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Register a remote agent",
+                "parameters": [
+                    {
+                        "description": "Agent name",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.agentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.enrollment"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agents/{id}": {
+            "put": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Rename an agent or switch it on or off",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Agent ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Agent settings",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.agentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.Agent"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Delete a remote agent with everything it reported",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Agent ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/agents/{id}/token": {
+            "post": {
+                "description": "Invalidates the agent's current key: the running agent stops being accepted until it enrolls again.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agents"
+                ],
+                "summary": "Issue a new enrollment token",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Agent ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.enrollment"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/aggregate": {
+            "get": {
+                "description": "Counts of streams by state, playlist and segment response times (average and 95th percentile), errors, stalls, server changes and total bitrate, as time series.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "overview"
+                ],
+                "summary": "Figures over all streams for the overview charts",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Length of the history in seconds (default 3600, max 604800)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of steps (default 120, max 300)",
+                        "name": "buckets",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.aggregateResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/login": {
+            "post": {
+                "description": "Sets the session cookie. Every non-GET request to /api/v1 must carry an X-Requested-With header.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Sign in",
+                "parameters": [
+                    {
+                        "description": "Credentials",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.loginRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.User"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/logout": {
+            "post": {
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Sign out",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/me": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Current user",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.User"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/auth/password": {
+            "put": {
+                "description": "Ends all sessions of the user, including the current one.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Change own password",
+                "parameters": [
+                    {
+                        "description": "Passwords",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.passwordRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/incidents": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "incidents"
+                ],
+                "summary": "Incidents, open ones first",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Only this stream",
+                        "name": "stream",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only this agent",
+                        "name": "agent",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "true: only open, false: only closed",
+                        "name": "open",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "true: leave out informational incidents such as a change of server",
+                        "name": "problems",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only these severities, comma-separated: info, warn, crit",
+                        "name": "severity",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Only incidents still open at or after this Unix time",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Only incidents started before this Unix time",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Rows to return (default 200, max 2000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.Incident"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/overview": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "overview"
+                ],
+                "summary": "Dashboard data: counters, streams, agents, open incidents",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.overviewResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/servers": {
+            "get": {
+                "description": "Built from the last five minutes of checks. A stream served by several servers is counted for each.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "overview"
+                ],
+                "summary": "Servers currently answering, with the state of the streams they serve",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.serverView"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/snapshots/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "One captured playlist with its text",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Snapshot ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.Snapshot"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "List streams with their current state",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.streamView"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Add a stream",
+                "parameters": [
+                    {
+                        "description": "Stream settings",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.streamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.streamView"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Stream with variants and their latest metrics",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.streamDetail"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Replaces all settings. Checking restarts with a clean state.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Change a stream",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Stream settings",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.streamRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.streamView"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Delete a stream with its history",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/check": {
+            "post": {
+                "description": "Starts the next local check cycle immediately. Remote agents follow their own schedule.",
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Check a stream now",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/diagnose": {
+            "get": {
+                "description": "Runs a separate checker from the server itself, apart from the regular checks: nothing it finds is stored, raises incidents or reaches the charts. The response is newline-delimited JSON, one event per line: \"start\", then a \"cycle\" per check with the full result, then \"end\". It lasts until the duration passes or the client disconnects. At most three diagnoses run at once.",
+                "produces": [
+                    "application/x-ndjson"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Check a stream every second and stream what each check finds",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "How deep to check: playlist, header, segments or container (default: the stream's own level)",
+                        "name": "level",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "How long to run (default 120, max 600)",
+                        "name": "seconds",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.diagnoseEvent"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "429": {
+                        "description": "Too Many Requests",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/disable": {
+            "post": {
+                "description": "Open incidents of the stream are closed.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Stop checking a stream",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.streamView"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/enable": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Resume checking a stream",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.streamView"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/segments": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Journal of checked segments, newest first",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only this agent",
+                        "name": "agent",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only this variant",
+                        "name": "variant",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Only segments with problems",
+                        "name": "problems",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Only segments checked before this Unix time",
+                        "name": "before",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Rows to return (default 100, max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.SegmentRecord"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/series": {
+            "get": {
+                "description": "Returns one series per agent and variant for each requested metric. Each point aggregates the samples of one step.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Time series of a stream for charts",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated metric names, e.g. hls_segment_total_seconds",
+                        "name": "metric",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "number",
+                        "description": "Start, Unix seconds (default: one hour ago)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "End, Unix seconds (default: now)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Step in seconds (default: range / 300)",
+                        "name": "step",
+                        "in": "query"
+                    },
+                    {
+                        "enum": [
+                            "avg",
+                            "max",
+                            "min",
+                            "last",
+                            "sum"
+                        ],
+                        "type": "string",
+                        "description": "Aggregation within a step",
+                        "name": "agg",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only this agent",
+                        "name": "agent",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Only this variant",
+                        "name": "variant",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.seriesResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/snapshots": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Playlists captured when something was wrong, without their text",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Rows to return (default 50, max 500)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.Snapshot"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/sources": {
+            "get": {
+                "description": "Every server seen within the period, with how often it answered and when it was last seen.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Servers that answered for a stream's playlists and segments",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "How far back to look (default 24, max 720)",
+                        "name": "hours",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.SourceSeen"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/system": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Server version and the state of the time series storage",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.systemResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/timeline": {
+            "get": {
+                "description": "For every stream, the worst status across agents in each step of the range.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "overview"
+                ],
+                "summary": "Recent status history of all streams",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Length of the history in seconds (default 3600, max 604800)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of steps (default 60, max 240)",
+                        "name": "buckets",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.timelineResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tokens": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tokens"
+                ],
+                "summary": "List API tokens for external monitoring",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.APIToken"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "description": "The token value is shown only in this response.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "tokens"
+                ],
+                "summary": "Create a read-only API token",
+                "parameters": [
+                    {
+                        "description": "Token name",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.tokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.createdToken"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/tokens/{id}": {
+            "delete": {
+                "tags": [
+                    "tokens"
+                ],
+                "summary": "Revoke an API token",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Token ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "List users",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.User"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Add a user",
+                "parameters": [
+                    {
+                        "description": "User",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.userRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.User"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/users/{id}": {
+            "put": {
+                "description": "Only the fields present in the body change. A new password or disabling ends the user's sessions.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "users"
+                ],
+                "summary": "Change a user's role, password or access",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "User ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Fields to change",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.userRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.User"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "users"
+                ],
+                "summary": "Delete a user",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "User ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/healthz": {
+            "get": {
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Liveness check",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "github_com_hotid_hls-monitor_internal_agentproto.Config": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "poll_sec": {
+                    "description": "PollSec is how often to ask for the configuration again.",
+                    "type": "integer"
+                },
+                "revision": {
+                    "description": "Revision identifies this exact set of targets.",
+                    "type": "string"
+                },
+                "server_time": {
+                    "description": "ServerTime is the server's clock in Unix milliseconds.",
+                    "type": "integer"
+                },
+                "targets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Target"
+                    }
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_agentproto.EnrollRequest": {
+            "type": "object",
+            "properties": {
+                "token": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_agentproto.EnrollResponse": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "integer"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_agentproto.ResultsRequest": {
+            "type": "object",
+            "properties": {
+                "results": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Result"
+                    }
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_agentproto.ResultsResponse": {
+            "type": "object",
+            "properties": {
+                "accepted": {
+                    "type": "integer"
+                },
+                "failed": {
+                    "type": "integer"
+                },
+                "rejected": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_httpx.Hop": {
+            "type": "object",
+            "properties": {
+                "remote_addr": {
+                    "type": "string"
+                },
+                "server": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_media.Info": {
+            "type": "object",
+            "properties": {
+                "cc_errors": {
+                    "type": "integer"
+                },
+                "container": {
+                    "type": "string"
+                },
+                "error": {
+                    "description": "Error is set when the segment could not be parsed completely.",
+                    "type": "string"
+                },
+                "has_pat": {
+                    "type": "boolean"
+                },
+                "has_pmt": {
+                    "type": "boolean"
+                },
+                "packets": {
+                    "description": "MPEG-TS specifics.",
+                    "type": "integer"
+                },
+                "scrambled": {
+                    "type": "boolean"
+                },
+                "sync_errors": {
+                    "type": "integer"
+                },
+                "time_wrap": {
+                    "description": "TimeWrap is the period in seconds after which timestamps wrap around\n(2^33 / 90000 for MPEG-TS), zero when they do not wrap.",
+                    "type": "number"
+                },
+                "tracks": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_media.Track"
+                    }
+                },
+                "transport_errors": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_media.Track": {
+            "type": "object",
+            "properties": {
+                "bytes": {
+                    "type": "integer"
+                },
+                "channels": {
+                    "type": "integer"
+                },
+                "codec": {
+                    "type": "string"
+                },
+                "end_pts": {
+                    "type": "number"
+                },
+                "first_keyframe": {
+                    "type": "boolean"
+                },
+                "fps": {
+                    "type": "number"
+                },
+                "frames": {
+                    "type": "integer"
+                },
+                "has_timing": {
+                    "description": "HasTiming is false when presentation times could not be determined.",
+                    "type": "boolean"
+                },
+                "height": {
+                    "type": "integer"
+                },
+                "id": {
+                    "description": "PID for TS, track ID for fMP4",
+                    "type": "integer"
+                },
+                "keyframes": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "level": {
+                    "type": "string"
+                },
+                "max_gop": {
+                    "description": "MaxGOP is the longest distance between keyframes in seconds, counting\nthe tail after the last keyframe.",
+                    "type": "number"
+                },
+                "profile": {
+                    "type": "string"
+                },
+                "sample_rate": {
+                    "type": "integer"
+                },
+                "start_pts": {
+                    "description": "StartPTS and EndPTS are in seconds on the track timeline. EndPTS is the\npresentation end of the last frame.",
+                    "type": "number"
+                },
+                "width": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_metrics.Series": {
+            "type": "object",
+            "properties": {
+                "labels": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "points": {
+                    "description": "Points are [unix seconds, value] pairs.",
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "number",
+                            "format": "float64"
+                        }
+                    }
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_metrics.Stats": {
+            "type": "object",
+            "properties": {
+                "dropped_batches": {
+                    "type": "integer"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "queued_bytes": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_probe.Endpoint": {
+            "type": "object",
+            "properties": {
+                "headers": {
+                    "description": "Headers are the response headers that identify the server or cache\nnode and its software (Server, Via, X-Cache and the like).",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "host": {
+                    "description": "Host is the host part of URL, with the port when it is not the default.",
+                    "type": "string"
+                },
+                "ip": {
+                    "description": "IP is the address of the server the connection was made to.",
+                    "type": "string"
+                },
+                "proto": {
+                    "type": "string"
+                },
+                "redirects": {
+                    "description": "Redirects are the hops followed from the requested URL, in order.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_httpx.Hop"
+                    }
+                },
+                "url": {
+                    "description": "URL is the address the response finally came from.",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_probe.Level": {
+            "type": "string",
+            "enum": [
+                "playlist",
+                "header",
+                "segments",
+                "container"
+            ],
+            "x-enum-comments": {
+                "LevelContainer": "plus container analysis",
+                "LevelPlaylist": "playlists only",
+                "LevelSegments": "plus segment downloads"
+            },
+            "x-enum-descriptions": [
+                "playlists only",
+                "",
+                "plus segment downloads",
+                "plus container analysis"
+            ],
+            "x-enum-varnames": [
+                "LevelPlaylist",
+                "LevelHeader",
+                "LevelSegments",
+                "LevelContainer"
+            ]
+        },
+        "github_com_hotid_hls-monitor_internal_probe.Metric": {
+            "type": "object",
+            "properties": {
+                "n": {
+                    "type": "string"
+                },
+                "v": {
+                    "type": "string"
+                },
+                "x": {
+                    "type": "number"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_probe.Problem": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "description": "Count is how many times it occurred within the cycle.",
+                    "type": "integer"
+                },
+                "details": {
+                    "description": "Details are the figures the conclusion was drawn from: what was\nrequested, what came back and what it was compared with. Keys are\nstable identifiers; values are numbers, strings or lists of strings.",
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "severity": {
+                    "type": "string"
+                },
+                "variant": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_probe.Result": {
+            "type": "object",
+            "properties": {
+                "metrics": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Metric"
+                    }
+                },
+                "problems": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Problem"
+                    }
+                },
+                "segments": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Segment"
+                    }
+                },
+                "snapshots": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Snapshot"
+                    }
+                },
+                "sources": {
+                    "description": "Sources tells, per playlist, which servers answered in this cycle.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Source"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "target_id": {
+                    "type": "integer"
+                },
+                "time": {
+                    "type": "string"
+                },
+                "variants": {
+                    "description": "Variants is the current set of playlists; nil when it could not be\ndetermined in this cycle (the entry playlist failed).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Variant"
+                    }
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_probe.Segment": {
+            "type": "object",
+            "properties": {
+                "bps": {
+                    "type": "number"
+                },
+                "cache": {
+                    "type": "string"
+                },
+                "connect_ms": {
+                    "type": "number"
+                },
+                "discontinuity": {
+                    "type": "boolean"
+                },
+                "dns_ms": {
+                    "type": "number"
+                },
+                "duration": {
+                    "type": "number"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "fetched": {
+                    "description": "Fetched is how many bytes were actually downloaded; less than Size\nwhen only the beginning of the segment was requested.",
+                    "type": "integer"
+                },
+                "media": {
+                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_media.Info"
+                },
+                "partial": {
+                    "type": "boolean"
+                },
+                "problems": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "program_time": {
+                    "type": "string"
+                },
+                "proto": {
+                    "type": "string"
+                },
+                "remote_addr": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "source": {
+                    "description": "Source is the server that answered, when a response was received.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Endpoint"
+                        }
+                    ]
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "time": {
+                    "type": "string"
+                },
+                "tls_ms": {
+                    "type": "number"
+                },
+                "total_ms": {
+                    "type": "number"
+                },
+                "ttfb_ms": {
+                    "type": "number"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "variant": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_probe.Snapshot": {
+            "type": "object",
+            "properties": {
+                "body": {
+                    "type": "string"
+                },
+                "previous": {
+                    "description": "Previous is the text the same playlist had at the check before, and\nPreviousTime when it was received; absent when there was none.",
+                    "type": "string"
+                },
+                "previous_time": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "variant": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_probe.Source": {
+            "type": "object",
+            "properties": {
+                "playlist": {
+                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Endpoint"
+                },
+                "segment": {
+                    "description": "Segment is the endpoint of the last segment downloaded in the cycle.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Endpoint"
+                        }
+                    ]
+                },
+                "variant": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_probe.Target": {
+            "type": "object",
+            "properties": {
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "insecure": {
+                    "type": "boolean"
+                },
+                "interval_sec": {
+                    "description": "IntervalSec is the pause between cycles; zero derives it from the\nplaylist target duration.",
+                    "type": "number"
+                },
+                "level": {
+                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Level"
+                },
+                "max_segments": {
+                    "description": "MaxSegments limits segment downloads per variant per cycle; zero means 3.",
+                    "type": "integer"
+                },
+                "revision": {
+                    "description": "Revision changes whenever the configuration changes.",
+                    "type": "integer"
+                },
+                "timeout_sec": {
+                    "description": "TimeoutSec bounds a single HTTP request; zero means 10 seconds.",
+                    "type": "number"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_probe.Variant": {
+            "type": "object",
+            "properties": {
+                "avg_bandwidth": {
+                    "type": "integer"
+                },
+                "bandwidth": {
+                    "type": "integer"
+                },
+                "codecs": {
+                    "type": "string"
+                },
+                "frame_rate": {
+                    "type": "number"
+                },
+                "group": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "language": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resolution": {
+                    "type": "string"
+                },
+                "uri": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.APIToken": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.Agent": {
+            "type": "object",
+            "properties": {
+                "clock_offset_ms": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "enroll_expires": {
+                    "type": "string"
+                },
+                "enrolled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "remote_addr": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.Incident": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "integer"
+                },
+                "agent_name": {
+                    "type": "string"
+                },
+                "count": {
+                    "type": "integer"
+                },
+                "details": {
+                    "description": "Details are the figures of the latest occurrence that had any.",
+                    "type": "object"
+                },
+                "ended_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "severity": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "stream_id": {
+                    "type": "integer"
+                },
+                "stream_name": {
+                    "type": "string"
+                },
+                "variant_id": {
+                    "type": "integer"
+                },
+                "variant_key": {
+                    "type": "string"
+                },
+                "variant_kind": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.SegmentRecord": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "integer"
+                },
+                "detail": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "duration": {
+                    "type": "number"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "problems": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "remote_addr": {
+                    "type": "string"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "size": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "stream_id": {
+                    "type": "integer"
+                },
+                "time": {
+                    "type": "string"
+                },
+                "total_ms": {
+                    "type": "number"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "variant_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.Snapshot": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "integer"
+                },
+                "body": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "previous_body": {
+                    "description": "PreviousBody is the playlist at the check before and PreviousTime\nwhen it was received; absent when the snapshot has none.",
+                    "type": "string"
+                },
+                "previous_time": {
+                    "type": "string"
+                },
+                "problems": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "stream_id": {
+                    "type": "integer"
+                },
+                "time": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "variant_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.SourceSeen": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "integer"
+                },
+                "first_seen": {
+                    "type": "string"
+                },
+                "hits": {
+                    "type": "integer"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "software": {
+                    "type": "string"
+                },
+                "stream_id": {
+                    "type": "integer"
+                },
+                "variant_id": {
+                    "type": "integer"
+                },
+                "what": {
+                    "description": "playlist or segment",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.Usage": {
+            "type": "object",
+            "properties": {
+                "database_bytes": {
+                    "description": "DatabaseBytes and JournalBytes include the write-ahead logs.",
+                    "type": "integer"
+                },
+                "disk_free_bytes": {
+                    "description": "DiskFreeBytes and DiskTotalBytes describe the volume the database is\non; zero when that cannot be told.",
+                    "type": "integer"
+                },
+                "disk_total_bytes": {
+                    "type": "integer"
+                },
+                "journal_bytes": {
+                    "type": "integer"
+                },
+                "journal_max_bytes": {
+                    "type": "integer"
+                },
+                "journal_rows": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.User": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "disabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "role": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.VariantState": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "integer"
+                },
+                "checked_at": {
+                    "type": "string"
+                },
+                "metrics": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "playlist_source": {
+                    "description": "PlaylistSource and SegmentSource are the servers that last answered.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Endpoint"
+                        }
+                    ]
+                },
+                "segment_source": {
+                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Endpoint"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "variant_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_api.agentRequest": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.agentStatus": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "integer"
+                },
+                "agent_name": {
+                    "type": "string"
+                },
+                "checked_at": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                }
+            }
+        },
+        "internal_api.agentView": {
+            "type": "object",
+            "properties": {
+                "clock_offset_ms": {
+                    "type": "number"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "enroll_expires": {
+                    "type": "string"
+                },
+                "enrolled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "online": {
+                    "type": "boolean"
+                },
+                "remote_addr": {
+                    "type": "string"
+                },
+                "streams": {
+                    "type": "integer"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.aggregateResponse": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "number"
+                },
+                "series": {
+                    "description": "Series maps a figure to [unix seconds, value] points. A step with no\npoint means zero for counts and \"no data\" for averages.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "number",
+                                "format": "float64"
+                            }
+                        }
+                    }
+                },
+                "step": {
+                    "type": "number"
+                },
+                "to": {
+                    "type": "number"
+                }
+            }
+        },
+        "internal_api.apiError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "error": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.createdToken": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "last_used_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.diagnoseEvent": {
+            "type": "object",
+            "properties": {
+                "level": {
+                    "type": "string"
+                },
+                "n": {
+                    "description": "Cycle: its number from one, how long it took and everything it found.",
+                    "type": "integer"
+                },
+                "reason": {
+                    "description": "End: \"time\" when the requested duration has passed.",
+                    "type": "string"
+                },
+                "result": {
+                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Result"
+                },
+                "seconds": {
+                    "type": "number"
+                },
+                "time": {
+                    "type": "string"
+                },
+                "took_ms": {
+                    "type": "number"
+                },
+                "type": {
+                    "description": "Type is \"start\", \"cycle\" or \"end\".",
+                    "type": "string"
+                },
+                "url": {
+                    "description": "Start: what is being checked and for how long.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.enrollment": {
+            "type": "object",
+            "properties": {
+                "agent": {
+                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.Agent"
+                },
+                "command": {
+                    "description": "Command is a ready-to-run example for starting the agent in Docker.",
+                    "type": "string"
+                },
+                "expires_at": {
+                    "type": "string"
+                },
+                "server_url": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.extAgent": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "online": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "internal_api.extAgentStatus": {
+            "type": "object",
+            "properties": {
+                "age_seconds": {
+                    "type": "number"
+                },
+                "agent_id": {
+                    "type": "integer"
+                },
+                "agent_name": {
+                    "type": "string"
+                },
+                "metrics": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "number",
+                        "format": "float64"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "status_code": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_api.extStream": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "level": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.extStreamStatusDoc": {
+            "type": "object",
+            "properties": {
+                "agents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.extAgentStatus"
+                    }
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "incidents": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "name": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "status_code": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "variants": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.extVariantDoc"
+                    }
+                }
+            }
+        },
+        "internal_api.extVariant": {
+            "type": "object",
+            "properties": {
+                "bandwidth": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resolution": {
+                    "type": "string"
+                },
+                "stream_id": {
+                    "type": "integer"
+                },
+                "stream_name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.extVariantDoc": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "states": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.VariantState"
+                    }
+                }
+            }
+        },
+        "internal_api.loginRequest": {
+            "type": "object",
+            "properties": {
+                "password": {
+                    "type": "string"
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.metricSeries": {
+            "type": "object",
+            "properties": {
+                "metric": {
+                    "type": "string"
+                },
+                "series": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_metrics.Series"
+                    }
+                }
+            }
+        },
+        "internal_api.overviewResponse": {
+            "type": "object",
+            "properties": {
+                "agents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.agentView"
+                    }
+                },
+                "counts": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "incidents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.Incident"
+                    }
+                },
+                "streams": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.streamView"
+                    }
+                },
+                "time": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.passwordRequest": {
+            "type": "object",
+            "properties": {
+                "current": {
+                    "type": "string"
+                },
+                "new": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.seriesResponse": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "number"
+                },
+                "metrics": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.metricSeries"
+                    }
+                },
+                "step": {
+                    "type": "number"
+                },
+                "to": {
+                    "type": "number"
+                }
+            }
+        },
+        "internal_api.serverView": {
+            "type": "object",
+            "properties": {
+                "fail": {
+                    "type": "integer"
+                },
+                "failing_streams": {
+                    "description": "FailingStreams are up to ten of the streams in the failed state.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.streamRef"
+                    }
+                },
+                "host": {
+                    "type": "string"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "ok": {
+                    "type": "integer"
+                },
+                "playlists": {
+                    "type": "boolean"
+                },
+                "segments": {
+                    "type": "boolean"
+                },
+                "software": {
+                    "type": "string"
+                },
+                "stream_ids": {
+                    "description": "StreamIDs are all the streams counted in Streams.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "streams": {
+                    "description": "Streams is the number of streams whose playlists or segments this\nserver answered for recently; the rest split them by current state.",
+                    "type": "integer"
+                },
+                "warn": {
+                    "type": "integer"
+                }
+            }
+        },
+        "internal_api.streamDetail": {
+            "type": "object",
+            "properties": {
+                "agent_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "agents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.agentStatus"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "insecure": {
+                    "type": "boolean"
+                },
+                "interval_sec": {
+                    "type": "number"
+                },
+                "level": {
+                    "type": "string"
+                },
+                "max_segments": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "open_incidents": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "revision": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "timeout_sec": {
+                    "type": "number"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "variants": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.variantView"
+                    }
+                }
+            }
+        },
+        "internal_api.streamRef": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.streamRequest": {
+            "type": "object",
+            "properties": {
+                "agent_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "insecure": {
+                    "type": "boolean"
+                },
+                "interval_sec": {
+                    "type": "number"
+                },
+                "level": {
+                    "type": "string",
+                    "enum": [
+                        "playlist",
+                        "header",
+                        "segments",
+                        "container"
+                    ]
+                },
+                "max_segments": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "timeout_sec": {
+                    "type": "number"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.streamView": {
+            "type": "object",
+            "properties": {
+                "agent_ids": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "agents": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.agentStatus"
+                    }
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "enabled": {
+                    "type": "boolean"
+                },
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "insecure": {
+                    "type": "boolean"
+                },
+                "interval_sec": {
+                    "type": "number"
+                },
+                "level": {
+                    "type": "string"
+                },
+                "max_segments": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "open_incidents": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer"
+                    }
+                },
+                "revision": {
+                    "type": "integer"
+                },
+                "status": {
+                    "type": "string"
+                },
+                "timeout_sec": {
+                    "type": "number"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.systemResponse": {
+            "type": "object",
+            "properties": {
+                "local_streams": {
+                    "type": "integer"
+                },
+                "metrics": {
+                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_metrics.Stats"
+                },
+                "metrics_up": {
+                    "type": "boolean"
+                },
+                "public_url": {
+                    "type": "string"
+                },
+                "storage": {
+                    "description": "Storage is how much room the database and the segment journal take.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.Usage"
+                        }
+                    ]
+                },
+                "time": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.timelineResponse": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "number"
+                },
+                "step": {
+                    "type": "number"
+                },
+                "streams": {
+                    "description": "Streams maps a stream ID to [unix seconds, status] points, where the\nstatus is the worst seen within the step: 0 ok, 1 warning, 2 failure.\nA step without a point had no checks.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "number",
+                                "format": "float64"
+                            }
+                        }
+                    }
+                },
+                "to": {
+                    "type": "number"
+                }
+            }
+        },
+        "internal_api.tokenRequest": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.userRequest": {
+            "type": "object",
+            "properties": {
+                "disabled": {
+                    "type": "boolean"
+                },
+                "password": {
+                    "type": "string"
+                },
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "admin",
+                        "viewer"
+                    ]
+                },
+                "username": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.variantView": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "avg_bandwidth": {
+                    "type": "integer"
+                },
+                "bandwidth": {
+                    "type": "integer"
+                },
+                "codecs": {
+                    "type": "string"
+                },
+                "frame_rate": {
+                    "type": "number"
+                },
+                "group": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "language": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "resolution": {
+                    "type": "string"
+                },
+                "states": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.VariantState"
+                    }
+                },
+                "stream_id": {
+                    "type": "integer"
+                },
+                "uri": {
+                    "type": "string"
+                }
+            }
+        }
+    }
+}

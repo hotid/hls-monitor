@@ -1,0 +1,26 @@
+# hls-monitor agent on a host of its own, from the published image.
+#
+#   HLSMON_SERVER_URL=https://monitor.example.com HLSMON_ENROLL_TOKEN=<token> \
+#     docker compose -f deploy/docker-compose.agent.yml up -d
+#
+# The token is needed only for the first start: the agent keeps its key in
+# the volume. It makes outgoing connections only.
+#
+#   HLSMON_IMAGE_PREFIX  where the image is, default ghcr.io/hotid/
+#   HLSMON_VERSION       image tag, default latest; keep it the same as the server's
+
+name: hls-monitor-agent
+
+services:
+  agent:
+    image: ${HLSMON_IMAGE_PREFIX:-ghcr.io/hotid/}hls-monitor-agent:${HLSMON_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      HLSMON_SERVER_URL: ${HLSMON_SERVER_URL:?set HLSMON_SERVER_URL to the address of the hls-monitor server}
+      HLSMON_ENROLL_TOKEN: ${HLSMON_ENROLL_TOKEN:-}
+      HLSMON_LOG_LEVEL: ${HLSMON_LOG_LEVEL:-info}
+    volumes:
+      - agent-data:/var/lib/hls-monitor
+
+volumes:
+  agent-data:

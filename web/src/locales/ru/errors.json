@@ -1,0 +1,14 @@
+{
+  "connectionToTheServerWasLost": "Соединение с сервером прервалось",
+  "error": "Ошибка {status}",
+  "internalServerError": "Внутренняя ошибка сервера",
+  "notEnoughRightsTheAdministratorRole": "Недостаточно прав: нужна роль администратора",
+  "notFound": "Не найдено",
+  "serverIsUnavailable": "Сервер недоступен",
+  "thisNameIsAlreadyTaken": "Такое имя уже занято",
+  "thisStreamIsCheckedOnlyBy": "Этот поток проверяют только удалённые агенты — они работают по своему расписанию",
+  "threeDiagnosesAreRunningNowNo": "Сейчас идут три диагностики — больше одновременно нельзя. Повторите, когда одна из них закончится",
+  "tooManyFailedAttemptsTryAgain": "Слишком много неудачных попыток. Повторите через несколько минут",
+  "wrongUsernameOrPassword": "Неверное имя пользователя или пароль",
+  "youNeedToSignInAgain": "Нужно войти заново"
+}

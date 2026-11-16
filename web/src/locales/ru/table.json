@@ -1,0 +1,17 @@
+{
+  "clear": "Сбросить",
+  "clearFilters": "Сбросить фильтры",
+  "columnFilter": "Фильтр по колонке",
+  "contains": "Содержит",
+  "containsPlaceholder": "Содержит…",
+  "filter": "Фильтр",
+  "filterIsOn": "Фильтр включён",
+  "filterIsOnChange": "Фильтр включён, изменить",
+  "from": "От",
+  "nothingMatchesTheFiltersInThe": "Под фильтры в заголовках ничего не подходит",
+  "of": "{n} из {total}",
+  "rangeFrom": "от",
+  "rangeTo": "до",
+  "sort": "Сортировать",
+  "to": "До"
+}

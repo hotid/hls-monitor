@@ -1,0 +1,14 @@
+{
+  "aStreamIsListedHereIf": "A stream is listed here if this server served its playlist or a segment in the last five minutes. The status belongs to the stream as a whole: other servers may serve it too.",
+  "address": "Address",
+  "allServers": "All servers",
+  "lastResponse": "Last response",
+  "notOKNowOnTheseStreams": "Not OK now on these streams",
+  "okWithWarningsFailing": "{n} {streams}: {ok} OK, {warn} with warnings, {fail} failing",
+  "onlyServersThatRecentlyReturnedPlaylists": "Only servers that recently returned playlists or segments are shown here.",
+  "openIncidents": "Open incidents",
+  "otherAddressesOfThisName": "Other addresses of this name",
+  "streamsOK": "Streams OK",
+  "streamsOfThisServer": "Streams of this server",
+  "thisServerHasNotAnsweredIn": "This server has not answered in the last five minutes"
+}

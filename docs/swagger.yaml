@@ -1,0 +1,2376 @@
+definitions:
+  github_com_hotid_hls-monitor_internal_agentproto.Config:
+    properties:
+      agent_id:
+        type: integer
+      enabled:
+        type: boolean
+      name:
+        type: string
+      poll_sec:
+        description: PollSec is how often to ask for the configuration again.
+        type: integer
+      revision:
+        description: Revision identifies this exact set of targets.
+        type: string
+      server_time:
+        description: ServerTime is the server's clock in Unix milliseconds.
+        type: integer
+      targets:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Target'
+        type: array
+    type: object
+  github_com_hotid_hls-monitor_internal_agentproto.EnrollRequest:
+    properties:
+      token:
+        type: string
+      version:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_agentproto.EnrollResponse:
+    properties:
+      agent_id:
+        type: integer
+      key:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_agentproto.ResultsRequest:
+    properties:
+      results:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Result'
+        type: array
+    type: object
+  github_com_hotid_hls-monitor_internal_agentproto.ResultsResponse:
+    properties:
+      accepted:
+        type: integer
+      failed:
+        type: integer
+      rejected:
+        type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_httpx.Hop:
+    properties:
+      remote_addr:
+        type: string
+      server:
+        type: string
+      status:
+        type: integer
+      url:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_media.Info:
+    properties:
+      cc_errors:
+        type: integer
+      container:
+        type: string
+      error:
+        description: Error is set when the segment could not be parsed completely.
+        type: string
+      has_pat:
+        type: boolean
+      has_pmt:
+        type: boolean
+      packets:
+        description: MPEG-TS specifics.
+        type: integer
+      scrambled:
+        type: boolean
+      sync_errors:
+        type: integer
+      time_wrap:
+        description: |-
+          TimeWrap is the period in seconds after which timestamps wrap around
+          (2^33 / 90000 for MPEG-TS), zero when they do not wrap.
+        type: number
+      tracks:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_media.Track'
+        type: array
+      transport_errors:
+        type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_media.Track:
+    properties:
+      bytes:
+        type: integer
+      channels:
+        type: integer
+      codec:
+        type: string
+      end_pts:
+        type: number
+      first_keyframe:
+        type: boolean
+      fps:
+        type: number
+      frames:
+        type: integer
+      has_timing:
+        description: HasTiming is false when presentation times could not be determined.
+        type: boolean
+      height:
+        type: integer
+      id:
+        description: PID for TS, track ID for fMP4
+        type: integer
+      keyframes:
+        type: integer
+      kind:
+        type: string
+      level:
+        type: string
+      max_gop:
+        description: |-
+          MaxGOP is the longest distance between keyframes in seconds, counting
+          the tail after the last keyframe.
+        type: number
+      profile:
+        type: string
+      sample_rate:
+        type: integer
+      start_pts:
+        description: |-
+          StartPTS and EndPTS are in seconds on the track timeline. EndPTS is the
+          presentation end of the last frame.
+        type: number
+      width:
+        type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_metrics.Series:
+    properties:
+      labels:
+        additionalProperties:
+          type: string
+        type: object
+      points:
+        description: Points are [unix seconds, value] pairs.
+        items:
+          items:
+            format: float64
+            type: number
+          type: array
+        type: array
+    type: object
+  github_com_hotid_hls-monitor_internal_metrics.Stats:
+    properties:
+      dropped_batches:
+        type: integer
+      enabled:
+        type: boolean
+      queued_bytes:
+        type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_probe.Endpoint:
+    properties:
+      headers:
+        additionalProperties:
+          type: string
+        description: |-
+          Headers are the response headers that identify the server or cache
+          node and its software (Server, Via, X-Cache and the like).
+        type: object
+      host:
+        description: Host is the host part of URL, with the port when it is not the
+          default.
+        type: string
+      ip:
+        description: IP is the address of the server the connection was made to.
+        type: string
+      proto:
+        type: string
+      redirects:
+        description: Redirects are the hops followed from the requested URL, in order.
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_httpx.Hop'
+        type: array
+      url:
+        description: URL is the address the response finally came from.
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_probe.Level:
+    enum:
+    - playlist
+    - header
+    - segments
+    - container
+    type: string
+    x-enum-comments:
+      LevelContainer: plus container analysis
+      LevelPlaylist: playlists only
+      LevelSegments: plus segment downloads
+    x-enum-descriptions:
+    - playlists only
+    - ""
+    - plus segment downloads
+    - plus container analysis
+    x-enum-varnames:
+    - LevelPlaylist
+    - LevelHeader
+    - LevelSegments
+    - LevelContainer
+  github_com_hotid_hls-monitor_internal_probe.Metric:
+    properties:
+      "n":
+        type: string
+      v:
+        type: string
+      x:
+        type: number
+    type: object
+  github_com_hotid_hls-monitor_internal_probe.Problem:
+    properties:
+      count:
+        description: Count is how many times it occurred within the cycle.
+        type: integer
+      details:
+        additionalProperties: {}
+        description: |-
+          Details are the figures the conclusion was drawn from: what was
+          requested, what came back and what it was compared with. Keys are
+          stable identifiers; values are numbers, strings or lists of strings.
+        type: object
+      kind:
+        type: string
+      message:
+        type: string
+      severity:
+        type: string
+      variant:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_probe.Result:
+    properties:
+      metrics:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Metric'
+        type: array
+      problems:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Problem'
+        type: array
+      segments:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Segment'
+        type: array
+      snapshots:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Snapshot'
+        type: array
+      sources:
+        description: Sources tells, per playlist, which servers answered in this cycle.
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Source'
+        type: array
+      status:
+        type: string
+      target_id:
+        type: integer
+      time:
+        type: string
+      variants:
+        description: |-
+          Variants is the current set of playlists; nil when it could not be
+          determined in this cycle (the entry playlist failed).
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Variant'
+        type: array
+    type: object
+  github_com_hotid_hls-monitor_internal_probe.Segment:
+    properties:
+      bps:
+        type: number
+      cache:
+        type: string
+      connect_ms:
+        type: number
+      discontinuity:
+        type: boolean
+      dns_ms:
+        type: number
+      duration:
+        type: number
+      error:
+        type: string
+      fetched:
+        description: |-
+          Fetched is how many bytes were actually downloaded; less than Size
+          when only the beginning of the segment was requested.
+        type: integer
+      media:
+        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_media.Info'
+      partial:
+        type: boolean
+      problems:
+        items:
+          type: string
+        type: array
+      program_time:
+        type: string
+      proto:
+        type: string
+      remote_addr:
+        type: string
+      seq:
+        type: integer
+      size:
+        type: integer
+      source:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Endpoint'
+        description: Source is the server that answered, when a response was received.
+      status:
+        type: integer
+      time:
+        type: string
+      tls_ms:
+        type: number
+      total_ms:
+        type: number
+      ttfb_ms:
+        type: number
+      url:
+        type: string
+      variant:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_probe.Snapshot:
+    properties:
+      body:
+        type: string
+      previous:
+        description: |-
+          Previous is the text the same playlist had at the check before, and
+          PreviousTime when it was received; absent when there was none.
+        type: string
+      previous_time:
+        type: string
+      url:
+        type: string
+      variant:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_probe.Source:
+    properties:
+      playlist:
+        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Endpoint'
+      segment:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Endpoint'
+        description: Segment is the endpoint of the last segment downloaded in the
+          cycle.
+      variant:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_probe.Target:
+    properties:
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      id:
+        type: integer
+      insecure:
+        type: boolean
+      interval_sec:
+        description: |-
+          IntervalSec is the pause between cycles; zero derives it from the
+          playlist target duration.
+        type: number
+      level:
+        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Level'
+      max_segments:
+        description: MaxSegments limits segment downloads per variant per cycle; zero
+          means 3.
+        type: integer
+      revision:
+        description: Revision changes whenever the configuration changes.
+        type: integer
+      timeout_sec:
+        description: TimeoutSec bounds a single HTTP request; zero means 10 seconds.
+        type: number
+      url:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_probe.Variant:
+    properties:
+      avg_bandwidth:
+        type: integer
+      bandwidth:
+        type: integer
+      codecs:
+        type: string
+      frame_rate:
+        type: number
+      group:
+        type: string
+      key:
+        type: string
+      kind:
+        type: string
+      language:
+        type: string
+      name:
+        type: string
+      resolution:
+        type: string
+      uri:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_store.APIToken:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      last_used_at:
+        type: string
+      name:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_store.Agent:
+    properties:
+      clock_offset_ms:
+        type: number
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      enroll_expires:
+        type: string
+      enrolled:
+        type: boolean
+      id:
+        type: integer
+      kind:
+        type: string
+      last_seen:
+        type: string
+      name:
+        type: string
+      remote_addr:
+        type: string
+      version:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_store.Incident:
+    properties:
+      agent_id:
+        type: integer
+      agent_name:
+        type: string
+      count:
+        type: integer
+      details:
+        description: Details are the figures of the latest occurrence that had any.
+        type: object
+      ended_at:
+        type: string
+      id:
+        type: integer
+      kind:
+        type: string
+      last_seen:
+        type: string
+      message:
+        type: string
+      severity:
+        type: string
+      started_at:
+        type: string
+      stream_id:
+        type: integer
+      stream_name:
+        type: string
+      variant_id:
+        type: integer
+      variant_key:
+        type: string
+      variant_kind:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_store.SegmentRecord:
+    properties:
+      agent_id:
+        type: integer
+      detail:
+        items:
+          type: integer
+        type: array
+      duration:
+        type: number
+      error:
+        type: string
+      id:
+        type: integer
+      problems:
+        items:
+          type: string
+        type: array
+      remote_addr:
+        type: string
+      seq:
+        type: integer
+      size:
+        type: integer
+      status:
+        type: integer
+      stream_id:
+        type: integer
+      time:
+        type: string
+      total_ms:
+        type: number
+      url:
+        type: string
+      variant_id:
+        type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_store.Snapshot:
+    properties:
+      agent_id:
+        type: integer
+      body:
+        type: string
+      id:
+        type: integer
+      previous_body:
+        description: |-
+          PreviousBody is the playlist at the check before and PreviousTime
+          when it was received; absent when the snapshot has none.
+        type: string
+      previous_time:
+        type: string
+      problems:
+        items:
+          type: string
+        type: array
+      stream_id:
+        type: integer
+      time:
+        type: string
+      url:
+        type: string
+      variant_id:
+        type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_store.SourceSeen:
+    properties:
+      agent_id:
+        type: integer
+      first_seen:
+        type: string
+      hits:
+        type: integer
+      host:
+        type: string
+      ip:
+        type: string
+      last_seen:
+        type: string
+      software:
+        type: string
+      stream_id:
+        type: integer
+      variant_id:
+        type: integer
+      what:
+        description: playlist or segment
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_store.Usage:
+    properties:
+      database_bytes:
+        description: DatabaseBytes and JournalBytes include the write-ahead logs.
+        type: integer
+      disk_free_bytes:
+        description: |-
+          DiskFreeBytes and DiskTotalBytes describe the volume the database is
+          on; zero when that cannot be told.
+        type: integer
+      disk_total_bytes:
+        type: integer
+      journal_bytes:
+        type: integer
+      journal_max_bytes:
+        type: integer
+      journal_rows:
+        type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_store.User:
+    properties:
+      created_at:
+        type: string
+      disabled:
+        type: boolean
+      id:
+        type: integer
+      role:
+        type: string
+      username:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_store.VariantState:
+    properties:
+      agent_id:
+        type: integer
+      checked_at:
+        type: string
+      metrics:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      playlist_source:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Endpoint'
+        description: PlaylistSource and SegmentSource are the servers that last answered.
+      segment_source:
+        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Endpoint'
+      status:
+        type: string
+      variant_id:
+        type: integer
+    type: object
+  internal_api.agentRequest:
+    properties:
+      enabled:
+        type: boolean
+      name:
+        type: string
+    type: object
+  internal_api.agentStatus:
+    properties:
+      agent_id:
+        type: integer
+      agent_name:
+        type: string
+      checked_at:
+        type: string
+      status:
+        type: string
+      summary:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+    type: object
+  internal_api.agentView:
+    properties:
+      clock_offset_ms:
+        type: number
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      enroll_expires:
+        type: string
+      enrolled:
+        type: boolean
+      id:
+        type: integer
+      kind:
+        type: string
+      last_seen:
+        type: string
+      name:
+        type: string
+      online:
+        type: boolean
+      remote_addr:
+        type: string
+      streams:
+        type: integer
+      version:
+        type: string
+    type: object
+  internal_api.aggregateResponse:
+    properties:
+      from:
+        type: number
+      series:
+        additionalProperties:
+          items:
+            items:
+              format: float64
+              type: number
+            type: array
+          type: array
+        description: |-
+          Series maps a figure to [unix seconds, value] points. A step with no
+          point means zero for counts and "no data" for averages.
+        type: object
+      step:
+        type: number
+      to:
+        type: number
+    type: object
+  internal_api.apiError:
+    properties:
+      code:
+        type: string
+      error:
+        type: string
+    type: object
+  internal_api.createdToken:
+    properties:
+      created_at:
+        type: string
+      id:
+        type: integer
+      last_used_at:
+        type: string
+      name:
+        type: string
+      token:
+        type: string
+    type: object
+  internal_api.diagnoseEvent:
+    properties:
+      level:
+        type: string
+      "n":
+        description: 'Cycle: its number from one, how long it took and everything
+          it found.'
+        type: integer
+      reason:
+        description: 'End: "time" when the requested duration has passed.'
+        type: string
+      result:
+        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Result'
+      seconds:
+        type: number
+      time:
+        type: string
+      took_ms:
+        type: number
+      type:
+        description: Type is "start", "cycle" or "end".
+        type: string
+      url:
+        description: 'Start: what is being checked and for how long.'
+        type: string
+    type: object
+  internal_api.enrollment:
+    properties:
+      agent:
+        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Agent'
+      command:
+        description: Command is a ready-to-run example for starting the agent in Docker.
+        type: string
+      expires_at:
+        type: string
+      server_url:
+        type: string
+      token:
+        type: string
+    type: object
+  internal_api.extAgent:
+    properties:
+      enabled:
+        type: boolean
+      id:
+        type: integer
+      kind:
+        type: string
+      last_seen:
+        type: string
+      name:
+        type: string
+      online:
+        type: boolean
+    type: object
+  internal_api.extAgentStatus:
+    properties:
+      age_seconds:
+        type: number
+      agent_id:
+        type: integer
+      agent_name:
+        type: string
+      metrics:
+        additionalProperties:
+          format: float64
+          type: number
+        type: object
+      status:
+        type: string
+      status_code:
+        type: integer
+    type: object
+  internal_api.extStream:
+    properties:
+      enabled:
+        type: boolean
+      id:
+        type: integer
+      level:
+        type: string
+      name:
+        type: string
+      url:
+        type: string
+    type: object
+  internal_api.extStreamStatusDoc:
+    properties:
+      agents:
+        items:
+          $ref: '#/definitions/internal_api.extAgentStatus'
+        type: array
+      id:
+        type: integer
+      incidents:
+        additionalProperties:
+          type: integer
+        type: object
+      name:
+        type: string
+      status:
+        type: string
+      status_code:
+        example: 0
+        type: integer
+      variants:
+        items:
+          $ref: '#/definitions/internal_api.extVariantDoc'
+        type: array
+    type: object
+  internal_api.extVariant:
+    properties:
+      bandwidth:
+        type: integer
+      id:
+        type: integer
+      key:
+        type: string
+      kind:
+        type: string
+      name:
+        type: string
+      resolution:
+        type: string
+      stream_id:
+        type: integer
+      stream_name:
+        type: string
+    type: object
+  internal_api.extVariantDoc:
+    properties:
+      id:
+        type: integer
+      key:
+        type: string
+      kind:
+        type: string
+      states:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.VariantState'
+        type: array
+    type: object
+  internal_api.loginRequest:
+    properties:
+      password:
+        type: string
+      username:
+        type: string
+    type: object
+  internal_api.metricSeries:
+    properties:
+      metric:
+        type: string
+      series:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_metrics.Series'
+        type: array
+    type: object
+  internal_api.overviewResponse:
+    properties:
+      agents:
+        items:
+          $ref: '#/definitions/internal_api.agentView'
+        type: array
+      counts:
+        additionalProperties:
+          type: integer
+        type: object
+      incidents:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Incident'
+        type: array
+      streams:
+        items:
+          $ref: '#/definitions/internal_api.streamView'
+        type: array
+      time:
+        type: string
+    type: object
+  internal_api.passwordRequest:
+    properties:
+      current:
+        type: string
+      new:
+        type: string
+    type: object
+  internal_api.seriesResponse:
+    properties:
+      from:
+        type: number
+      metrics:
+        items:
+          $ref: '#/definitions/internal_api.metricSeries'
+        type: array
+      step:
+        type: number
+      to:
+        type: number
+    type: object
+  internal_api.serverView:
+    properties:
+      fail:
+        type: integer
+      failing_streams:
+        description: FailingStreams are up to ten of the streams in the failed state.
+        items:
+          $ref: '#/definitions/internal_api.streamRef'
+        type: array
+      host:
+        type: string
+      ip:
+        type: string
+      last_seen:
+        type: string
+      ok:
+        type: integer
+      playlists:
+        type: boolean
+      segments:
+        type: boolean
+      software:
+        type: string
+      stream_ids:
+        description: StreamIDs are all the streams counted in Streams.
+        items:
+          type: integer
+        type: array
+      streams:
+        description: |-
+          Streams is the number of streams whose playlists or segments this
+          server answered for recently; the rest split them by current state.
+        type: integer
+      warn:
+        type: integer
+    type: object
+  internal_api.streamDetail:
+    properties:
+      agent_ids:
+        items:
+          type: integer
+        type: array
+      agents:
+        items:
+          $ref: '#/definitions/internal_api.agentStatus'
+        type: array
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      id:
+        type: integer
+      insecure:
+        type: boolean
+      interval_sec:
+        type: number
+      level:
+        type: string
+      max_segments:
+        type: integer
+      name:
+        type: string
+      notes:
+        type: string
+      open_incidents:
+        additionalProperties:
+          type: integer
+        type: object
+      revision:
+        type: integer
+      status:
+        type: string
+      timeout_sec:
+        type: number
+      updated_at:
+        type: string
+      url:
+        type: string
+      variants:
+        items:
+          $ref: '#/definitions/internal_api.variantView'
+        type: array
+    type: object
+  internal_api.streamRef:
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+    type: object
+  internal_api.streamRequest:
+    properties:
+      agent_ids:
+        items:
+          type: integer
+        type: array
+      enabled:
+        type: boolean
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      insecure:
+        type: boolean
+      interval_sec:
+        type: number
+      level:
+        enum:
+        - playlist
+        - header
+        - segments
+        - container
+        type: string
+      max_segments:
+        type: integer
+      name:
+        type: string
+      notes:
+        type: string
+      timeout_sec:
+        type: number
+      url:
+        type: string
+    type: object
+  internal_api.streamView:
+    properties:
+      agent_ids:
+        items:
+          type: integer
+        type: array
+      agents:
+        items:
+          $ref: '#/definitions/internal_api.agentStatus'
+        type: array
+      created_at:
+        type: string
+      enabled:
+        type: boolean
+      headers:
+        additionalProperties:
+          type: string
+        type: object
+      id:
+        type: integer
+      insecure:
+        type: boolean
+      interval_sec:
+        type: number
+      level:
+        type: string
+      max_segments:
+        type: integer
+      name:
+        type: string
+      notes:
+        type: string
+      open_incidents:
+        additionalProperties:
+          type: integer
+        type: object
+      revision:
+        type: integer
+      status:
+        type: string
+      timeout_sec:
+        type: number
+      updated_at:
+        type: string
+      url:
+        type: string
+    type: object
+  internal_api.systemResponse:
+    properties:
+      local_streams:
+        type: integer
+      metrics:
+        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_metrics.Stats'
+      metrics_up:
+        type: boolean
+      public_url:
+        type: string
+      storage:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Usage'
+        description: Storage is how much room the database and the segment journal
+          take.
+      time:
+        type: string
+      version:
+        type: string
+    type: object
+  internal_api.timelineResponse:
+    properties:
+      from:
+        type: number
+      step:
+        type: number
+      streams:
+        additionalProperties:
+          items:
+            items:
+              format: float64
+              type: number
+            type: array
+          type: array
+        description: |-
+          Streams maps a stream ID to [unix seconds, status] points, where the
+          status is the worst seen within the step: 0 ok, 1 warning, 2 failure.
+          A step without a point had no checks.
+        type: object
+      to:
+        type: number
+    type: object
+  internal_api.tokenRequest:
+    properties:
+      name:
+        type: string
+    type: object
+  internal_api.userRequest:
+    properties:
+      disabled:
+        type: boolean
+      password:
+        type: string
+      role:
+        enum:
+        - admin
+        - viewer
+        type: string
+      username:
+        type: string
+    type: object
+  internal_api.variantView:
+    properties:
+      active:
+        type: boolean
+      avg_bandwidth:
+        type: integer
+      bandwidth:
+        type: integer
+      codecs:
+        type: string
+      frame_rate:
+        type: number
+      group:
+        type: string
+      id:
+        type: integer
+      key:
+        type: string
+      kind:
+        type: string
+      language:
+        type: string
+      last_seen:
+        type: string
+      name:
+        type: string
+      resolution:
+        type: string
+      states:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.VariantState'
+        type: array
+      stream_id:
+        type: integer
+      uri:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: HLS stream monitoring. /api/v1 is the web API (session cookie; every
+    non-GET request needs an X-Requested-With header), /api/agent/v1 is for remote
+    agents, /api/ext/v1 is the read-only API for external monitoring systems (Bearer
+    token).
+  title: hls-monitor API
+  version: "1.0"
+paths:
+  /api/agent/v1/config:
+    get:
+      description: Doubles as the agent's heartbeat. Answers 304 when the revision
+        passed in the query is still current.
+      parameters:
+      - description: Bearer agent key
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Revision the agent already has
+        in: query
+        name: revision
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.Config'
+        "304":
+          description: Not Modified
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: What the agent has to check
+      tags:
+      - agent
+  /api/agent/v1/enroll:
+    post:
+      consumes:
+      - application/json
+      description: The token works once. The key is returned only in this response.
+      parameters:
+      - description: Enrollment token
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.EnrollRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.EnrollResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Exchange an enrollment token for a permanent agent key
+      tags:
+      - agent
+  /api/agent/v1/results:
+    post:
+      consumes:
+      - application/json
+      description: 'The body may be gzip-compressed (Content-Encoding: gzip). Results
+        for streams not assigned to the agent are rejected.'
+      parameters:
+      - description: Bearer agent key
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Results
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.ResultsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.ResultsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Deliver check results
+      tags:
+      - agent
+  /api/ext/v1/discovery/agents:
+    get:
+      parameters:
+      - description: Bearer API token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api.extAgent'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Agents for low-level discovery, with reachability
+      tags:
+      - external
+  /api/ext/v1/discovery/streams:
+    get:
+      parameters:
+      - description: Bearer API token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api.extStream'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Streams for low-level discovery
+      tags:
+      - external
+  /api/ext/v1/discovery/variants:
+    get:
+      parameters:
+      - description: Bearer API token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api.extVariant'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Active variants of all streams for low-level discovery
+      tags:
+      - external
+  /api/ext/v1/status:
+    get:
+      description: 'status_code: 0 ok, 1 warning, 2 failure, 3 no data, -1 disabled.'
+      parameters:
+      - description: Bearer API token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api.extStreamStatusDoc'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Current state of all streams
+      tags:
+      - external
+  /api/ext/v1/streams/{id}/status:
+    get:
+      description: 'status_code: 0 ok, 1 warning, 2 failure, 3 no data, -1 disabled.'
+      parameters:
+      - description: Bearer API token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.extStreamStatusDoc'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Current state of one stream with per-variant metrics
+      tags:
+      - external
+  /api/v1/agents:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api.agentView'
+            type: array
+      summary: List agents
+      tags:
+      - agents
+    post:
+      consumes:
+      - application/json
+      description: Returns a one-time enrollment token. It is shown only in this response.
+      parameters:
+      - description: Agent name
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.agentRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_api.enrollment'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Register a remote agent
+      tags:
+      - agents
+  /api/v1/agents/{id}:
+    delete:
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Delete a remote agent with everything it reported
+      tags:
+      - agents
+    put:
+      consumes:
+      - application/json
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Agent settings
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.agentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Agent'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Rename an agent or switch it on or off
+      tags:
+      - agents
+  /api/v1/agents/{id}/token:
+    post:
+      description: 'Invalidates the agent''s current key: the running agent stops
+        being accepted until it enrolls again.'
+      parameters:
+      - description: Agent ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.enrollment'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Issue a new enrollment token
+      tags:
+      - agents
+  /api/v1/aggregate:
+    get:
+      description: Counts of streams by state, playlist and segment response times
+        (average and 95th percentile), errors, stalls, server changes and total bitrate,
+        as time series.
+      parameters:
+      - description: Length of the history in seconds (default 3600, max 604800)
+        in: query
+        name: range
+        type: integer
+      - description: Number of steps (default 120, max 300)
+        in: query
+        name: buckets
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.aggregateResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Figures over all streams for the overview charts
+      tags:
+      - overview
+  /api/v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Sets the session cookie. Every non-GET request to /api/v1 must
+        carry an X-Requested-With header.
+      parameters:
+      - description: Credentials
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.loginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.User'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Sign in
+      tags:
+      - auth
+  /api/v1/auth/logout:
+    post:
+      responses:
+        "204":
+          description: No Content
+      summary: Sign out
+      tags:
+      - auth
+  /api/v1/auth/me:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.User'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Current user
+      tags:
+      - auth
+  /api/v1/auth/password:
+    put:
+      consumes:
+      - application/json
+      description: Ends all sessions of the user, including the current one.
+      parameters:
+      - description: Passwords
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.passwordRequest'
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Change own password
+      tags:
+      - auth
+  /api/v1/incidents:
+    get:
+      parameters:
+      - description: Only this stream
+        in: query
+        name: stream
+        type: integer
+      - description: Only this agent
+        in: query
+        name: agent
+        type: integer
+      - description: 'true: only open, false: only closed'
+        in: query
+        name: open
+        type: boolean
+      - description: 'true: leave out informational incidents such as a change of
+          server'
+        in: query
+        name: problems
+        type: boolean
+      - description: 'Only these severities, comma-separated: info, warn, crit'
+        in: query
+        name: severity
+        type: string
+      - description: Only incidents still open at or after this Unix time
+        in: query
+        name: from
+        type: number
+      - description: Only incidents started before this Unix time
+        in: query
+        name: to
+        type: number
+      - description: Rows to return (default 200, max 2000)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Incident'
+            type: array
+      summary: Incidents, open ones first
+      tags:
+      - incidents
+  /api/v1/overview:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.overviewResponse'
+      summary: 'Dashboard data: counters, streams, agents, open incidents'
+      tags:
+      - overview
+  /api/v1/servers:
+    get:
+      description: Built from the last five minutes of checks. A stream served by
+        several servers is counted for each.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api.serverView'
+            type: array
+      summary: Servers currently answering, with the state of the streams they serve
+      tags:
+      - overview
+  /api/v1/snapshots/{id}:
+    get:
+      parameters:
+      - description: Snapshot ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Snapshot'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: One captured playlist with its text
+      tags:
+      - streams
+  /api/v1/streams:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api.streamView'
+            type: array
+      summary: List streams with their current state
+      tags:
+      - streams
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Stream settings
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.streamRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_api.streamView'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Add a stream
+      tags:
+      - streams
+  /api/v1/streams/{id}:
+    delete:
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Delete a stream with its history
+      tags:
+      - streams
+    get:
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.streamDetail'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Stream with variants and their latest metrics
+      tags:
+      - streams
+    put:
+      consumes:
+      - application/json
+      description: Replaces all settings. Checking restarts with a clean state.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Stream settings
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.streamRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.streamView'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Change a stream
+      tags:
+      - streams
+  /api/v1/streams/{id}/check:
+    post:
+      description: Starts the next local check cycle immediately. Remote agents follow
+        their own schedule.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "202":
+          description: Accepted
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Check a stream now
+      tags:
+      - streams
+  /api/v1/streams/{id}/diagnose:
+    get:
+      description: 'Runs a separate checker from the server itself, apart from the
+        regular checks: nothing it finds is stored, raises incidents or reaches the
+        charts. The response is newline-delimited JSON, one event per line: "start",
+        then a "cycle" per check with the full result, then "end". It lasts until
+        the duration passes or the client disconnects. At most three diagnoses run
+        at once.'
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 'How deep to check: playlist, header, segments or container (default:
+          the stream''s own level)'
+        in: query
+        name: level
+        type: string
+      - description: How long to run (default 120, max 600)
+        in: query
+        name: seconds
+        type: integer
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.diagnoseEvent'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Check a stream every second and stream what each check finds
+      tags:
+      - streams
+  /api/v1/streams/{id}/disable:
+    post:
+      description: Open incidents of the stream are closed.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.streamView'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Stop checking a stream
+      tags:
+      - streams
+  /api/v1/streams/{id}/enable:
+    post:
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.streamView'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Resume checking a stream
+      tags:
+      - streams
+  /api/v1/streams/{id}/segments:
+    get:
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Only this agent
+        in: query
+        name: agent
+        type: integer
+      - description: Only this variant
+        in: query
+        name: variant
+        type: integer
+      - description: Only segments with problems
+        in: query
+        name: problems
+        type: boolean
+      - description: Only segments checked before this Unix time
+        in: query
+        name: before
+        type: number
+      - description: Rows to return (default 100, max 1000)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.SegmentRecord'
+            type: array
+      summary: Journal of checked segments, newest first
+      tags:
+      - streams
+  /api/v1/streams/{id}/series:
+    get:
+      description: Returns one series per agent and variant for each requested metric.
+        Each point aggregates the samples of one step.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Comma-separated metric names, e.g. hls_segment_total_seconds
+        in: query
+        name: metric
+        required: true
+        type: string
+      - description: 'Start, Unix seconds (default: one hour ago)'
+        in: query
+        name: from
+        type: number
+      - description: 'End, Unix seconds (default: now)'
+        in: query
+        name: to
+        type: number
+      - description: 'Step in seconds (default: range / 300)'
+        in: query
+        name: step
+        type: number
+      - description: Aggregation within a step
+        enum:
+        - avg
+        - max
+        - min
+        - last
+        - sum
+        in: query
+        name: agg
+        type: string
+      - description: Only this agent
+        in: query
+        name: agent
+        type: integer
+      - description: Only this variant
+        in: query
+        name: variant
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.seriesResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Time series of a stream for charts
+      tags:
+      - streams
+  /api/v1/streams/{id}/snapshots:
+    get:
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Rows to return (default 50, max 500)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Snapshot'
+            type: array
+      summary: Playlists captured when something was wrong, without their text
+      tags:
+      - streams
+  /api/v1/streams/{id}/sources:
+    get:
+      description: Every server seen within the period, with how often it answered
+        and when it was last seen.
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: How far back to look (default 24, max 720)
+        in: query
+        name: hours
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.SourceSeen'
+            type: array
+      summary: Servers that answered for a stream's playlists and segments
+      tags:
+      - streams
+  /api/v1/system:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.systemResponse'
+      summary: Server version and the state of the time series storage
+      tags:
+      - system
+  /api/v1/timeline:
+    get:
+      description: For every stream, the worst status across agents in each step of
+        the range.
+      parameters:
+      - description: Length of the history in seconds (default 3600, max 604800)
+        in: query
+        name: range
+        type: integer
+      - description: Number of steps (default 60, max 240)
+        in: query
+        name: buckets
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.timelineResponse'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Recent status history of all streams
+      tags:
+      - overview
+  /api/v1/tokens:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.APIToken'
+            type: array
+      summary: List API tokens for external monitoring
+      tags:
+      - tokens
+    post:
+      consumes:
+      - application/json
+      description: The token value is shown only in this response.
+      parameters:
+      - description: Token name
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.tokenRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/internal_api.createdToken'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Create a read-only API token
+      tags:
+      - tokens
+  /api/v1/tokens/{id}:
+    delete:
+      parameters:
+      - description: Token ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Revoke an API token
+      tags:
+      - tokens
+  /api/v1/users:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.User'
+            type: array
+      summary: List users
+      tags:
+      - users
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: User
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.userRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.User'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Add a user
+      tags:
+      - users
+  /api/v1/users/{id}:
+    delete:
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Delete a user
+      tags:
+      - users
+    put:
+      consumes:
+      - application/json
+      description: Only the fields present in the body change. A new password or disabling
+        ends the user's sessions.
+      parameters:
+      - description: User ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Fields to change
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.userRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.User'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Change a user's role, password or access
+      tags:
+      - users
+  /healthz:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Liveness check
+      tags:
+      - system
+swagger: "2.0"

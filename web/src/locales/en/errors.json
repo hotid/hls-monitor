@@ -1,0 +1,14 @@
+{
+  "connectionToTheServerWasLost": "Connection to the server was lost",
+  "error": "Error {status}",
+  "internalServerError": "Internal server error",
+  "notEnoughRightsTheAdministratorRole": "Not enough rights: the administrator role is required",
+  "notFound": "Not found",
+  "serverIsUnavailable": "Server is unavailable",
+  "thisNameIsAlreadyTaken": "This name is already taken",
+  "thisStreamIsCheckedOnlyBy": "This stream is checked only by remote agents — they run on their own schedule",
+  "threeDiagnosesAreRunningNowNo": "Three diagnoses are running now — no more can run at the same time. Try again when one of them finishes",
+  "tooManyFailedAttemptsTryAgain": "Too many failed attempts. Try again in a few minutes",
+  "wrongUsernameOrPassword": "Wrong username or password",
+  "youNeedToSignInAgain": "You need to sign in again"
+}

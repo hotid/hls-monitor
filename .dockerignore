@@ -1,0 +1,12 @@
+.git
+.idea
+*.iml
+bin
+data
+*.db
+*.db-shm
+*.db-wal
+**/node_modules
+web/dist
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep

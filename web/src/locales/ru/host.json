@@ -1,0 +1,14 @@
+{
+  "aStreamIsListedHereIf": "Поток попадает сюда, если за последние пять минут этот сервер отдал его плейлист или сегмент. Состояние потока общее: его могут отдавать и другие серверы.",
+  "address": "Адрес",
+  "allServers": "Все серверы",
+  "lastResponse": "Последний ответ",
+  "notOKNowOnTheseStreams": "Сейчас не в порядке на этих потоках",
+  "okWithWarningsFailing": "{n} {streams}: в порядке {ok}, с предупреждениями {warn}, со сбоем {fail}",
+  "onlyServersThatRecentlyReturnedPlaylists": "Здесь показаны только серверы, от которых недавно приходили плейлисты или сегменты.",
+  "openIncidents": "Открытые инциденты",
+  "otherAddressesOfThisName": "Другие адреса этого имени",
+  "streamsOK": "Потоки в порядке",
+  "streamsOfThisServer": "Потоки этого сервера",
+  "thisServerHasNotAnsweredIn": "Этот сервер не отвечал за последние пять минут"
+}

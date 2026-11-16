@@ -1,0 +1,26 @@
+# Builds the images from this source tree instead of pulling them. Use it
+# on top of docker-compose.yml:
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up -d --build
+#
+# Always rebuild through compose ("up -d --build"): an image built by hand
+# under another tag is not the one compose runs.
+
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: server
+      args:
+        VERSION: ${HLSMON_VERSION:-dev}
+    image: hls-monitor-server:${HLSMON_VERSION:-dev}
+
+  agent:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: agent
+      args:
+        VERSION: ${HLSMON_VERSION:-dev}
+    image: hls-monitor-agent:${HLSMON_VERSION:-dev}

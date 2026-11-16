@@ -1,0 +1,20 @@
+{
+  "agentsOnlineOf": "Agents online: {online} of {total}",
+  "atLeast8CharactersChangingIt": "At least 8 characters. Changing it ends all sessions.",
+  "changePassword": "Change password",
+  "currentPassword": "Current password",
+  "data": "Data {size}",
+  "dataUpdated": "Data updated",
+  "databaseSegmentJournalOfRecordsOf": "Database {db}, segment journal {journal} of {max} (records: {rows}), {free} of {total} free on disk",
+  "diskAlmostFullFree": "Disk almost full: {free} free",
+  "hlsmonVMURLIsNotSet": "HLSMON_VM_URL is not set: charts will be empty",
+  "metricsStorageIsNotConnected": "Metrics storage is not connected",
+  "ok": "{n} OK",
+  "overview": "Overview",
+  "passwordChangedSignInWithThe": "Password changed. Sign in with the new password",
+  "queuedForWriting": "Queued for writing: {size}",
+  "sections": "Sections",
+  "signOut": "Sign out",
+  "viewOnly": "view only",
+  "withNoData": "{n} with no data"
+}

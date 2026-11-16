@@ -1,0 +1,485 @@
+package store
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/hotid/hls-monitor/internal/probe"
+)
+
+// Variant is a playlist of a stream as stored.
+type Variant struct {
+	ID       int64 `json:"id"`
+	StreamID int64 `json:"stream_id"`
+	probe.Variant
+	Active   bool      `json:"active"`
+	LastSeen time.Time `json:"last_seen"`
+}
+
+const variantCols = "id, stream_id, key, kind, uri, name, bandwidth, avg_bandwidth, resolution, codecs, frame_rate, grp, language, active, last_seen"
+
+func scanVariant(row interface{ Scan(...any) error }) (*Variant, error) {
+	var v Variant
+	var seen int64
+	if err := row.Scan(&v.ID, &v.StreamID, &v.Key, &v.Kind, &v.URI, &v.Name, &v.Bandwidth, &v.AvgBandwidth, &v.Resolution,
+		&v.Codecs, &v.FrameRate, &v.Group, &v.Language, &v.Active, &seen); err != nil {
+		return nil, notFound(err)
+	}
+	v.LastSeen = fromMs(seen)
+	return &v, nil
+}
+
+// SyncVariants stores the current set of playlists of a stream: listed ones
+// are created or refreshed, all others are marked inactive. It returns the
+// IDs of every variant the stream ever had, by key.
+func (tx *Tx) SyncVariants(ctx context.Context, streamID int64, vs []probe.Variant, now time.Time) (map[string]int64, error) {
+	if _, err := tx.q.ExecContext(ctx, "UPDATE variants SET active = 0 WHERE stream_id = ?", streamID); err != nil {
+		return nil, err
+	}
+	for _, v := range vs {
+		_, err := tx.q.ExecContext(ctx, `
+			INSERT INTO variants (stream_id, key, kind, uri, name, bandwidth, avg_bandwidth, resolution, codecs, frame_rate, grp, language, active, first_seen, last_seen)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+			ON CONFLICT (stream_id, key) DO UPDATE SET
+				kind = excluded.kind, uri = excluded.uri, name = excluded.name, bandwidth = excluded.bandwidth,
+				avg_bandwidth = excluded.avg_bandwidth, resolution = excluded.resolution, codecs = excluded.codecs,
+				frame_rate = excluded.frame_rate, grp = excluded.grp, language = excluded.language,
+				active = 1, last_seen = excluded.last_seen`,
+			streamID, v.Key, v.Kind, v.URI, v.Name, v.Bandwidth, v.AvgBandwidth, v.Resolution, v.Codecs, v.FrameRate, v.Group, v.Language,
+			toMs(now), toMs(now))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return tx.VariantIDs(ctx, streamID)
+}
+
+// VariantIDs returns the IDs of all variants of a stream by key.
+func (tx *Tx) VariantIDs(ctx context.Context, streamID int64) (map[string]int64, error) {
+	rows, err := tx.q.QueryContext(ctx, "SELECT key, id FROM variants WHERE stream_id = ?", streamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var k string
+		var id int64
+		if err := rows.Scan(&k, &id); err != nil {
+			return nil, err
+		}
+		out[k] = id
+	}
+	return out, rows.Err()
+}
+
+// EnsureVariant returns the ID of a variant, creating a placeholder when a
+// result refers to a key that was never listed (the entry playlist failing
+// before its type is known).
+func (tx *Tx) EnsureVariant(ctx context.Context, streamID int64, key string, now time.Time) (int64, error) {
+	kind := probe.KindVideo
+	switch key {
+	case probe.VariantMaster:
+		kind = probe.KindMaster
+	case probe.VariantMedia:
+		kind = probe.KindMedia
+	}
+	var id int64
+	err := tx.q.QueryRowContext(ctx, `
+		INSERT INTO variants (stream_id, key, kind, active, first_seen, last_seen) VALUES (?, ?, ?, 1, ?, ?)
+		ON CONFLICT (stream_id, key) DO UPDATE SET last_seen = excluded.last_seen
+		RETURNING id`, streamID, key, kind, toMs(now), toMs(now)).Scan(&id)
+	return id, err
+}
+
+func (s *Store) ListVariants(ctx context.Context, streamID int64) ([]*Variant, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+variantCols+" FROM variants WHERE stream_id = ? ORDER BY active DESC, kind = 'master' DESC, kind, bandwidth DESC, key", streamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Variant{}
+	for rows.Next() {
+		v, err := scanVariant(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// ListAllVariants returns the active variants of every stream.
+func (s *Store) ListAllVariants(ctx context.Context) ([]*Variant, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT "+variantCols+" FROM variants WHERE active = 1 ORDER BY stream_id, kind = 'master' DESC, kind, bandwidth DESC, key")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Variant{}
+	for rows.Next() {
+		v, err := scanVariant(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// StreamState is the latest state of a stream as seen by one agent.
+type StreamState struct {
+	StreamID  int64              `json:"stream_id"`
+	AgentID   int64              `json:"agent_id"`
+	Status    string             `json:"status"`
+	CheckedAt time.Time          `json:"checked_at"`
+	OKAt      *time.Time         `json:"ok_at"`
+	Summary   map[string]float64 `json:"summary"`
+}
+
+// VariantState is the latest state of a variant as seen by one agent.
+type VariantState struct {
+	VariantID int64              `json:"variant_id"`
+	AgentID   int64              `json:"agent_id"`
+	Status    string             `json:"status"`
+	CheckedAt time.Time          `json:"checked_at"`
+	Metrics   map[string]float64 `json:"metrics"`
+	// PlaylistSource and SegmentSource are the servers that last answered.
+	PlaylistSource *probe.Endpoint `json:"playlist_source,omitempty"`
+	SegmentSource  *probe.Endpoint `json:"segment_source,omitempty"`
+}
+
+func floatsJSON(m map[string]float64) string {
+	if m == nil {
+		m = map[string]float64{}
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+func (tx *Tx) SaveStreamState(ctx context.Context, streamID, agentID int64, status string, now time.Time, summary map[string]float64) error {
+	var okAt any
+	if status != probe.StatusFail {
+		okAt = toMs(now)
+	}
+	_, err := tx.q.ExecContext(ctx, `
+		INSERT INTO stream_state (stream_id, agent_id, status, checked_at, ok_at, summary) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (stream_id, agent_id) DO UPDATE SET
+			status = excluded.status, checked_at = excluded.checked_at,
+			ok_at = COALESCE(excluded.ok_at, stream_state.ok_at), summary = excluded.summary`,
+		streamID, agentID, status, toMs(now), okAt, floatsJSON(summary))
+	return err
+}
+
+// SaveVariantState stores the latest state of a variant. A nil source
+// leaves the stored one as it is: not every cycle downloads a segment.
+func (tx *Tx) SaveVariantState(ctx context.Context, variantID, agentID int64, status string, now time.Time, metrics map[string]float64, playlist, segment *probe.Endpoint) error {
+	enc := func(e *probe.Endpoint) any {
+		if e == nil {
+			return nil
+		}
+		b, _ := json.Marshal(e)
+		return string(b)
+	}
+	_, err := tx.q.ExecContext(ctx, `
+		INSERT INTO variant_state (variant_id, agent_id, status, checked_at, metrics, playlist_source, segment_source) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (variant_id, agent_id) DO UPDATE SET
+			status = excluded.status, checked_at = excluded.checked_at, metrics = excluded.metrics,
+			playlist_source = COALESCE(excluded.playlist_source, variant_state.playlist_source),
+			segment_source = COALESCE(excluded.segment_source, variant_state.segment_source)`,
+		variantID, agentID, status, toMs(now), floatsJSON(metrics), enc(playlist), enc(segment))
+	return err
+}
+
+// StreamStates returns the latest states; streamID 0 means all streams.
+func (s *Store) StreamStates(ctx context.Context, streamID int64) ([]*StreamState, error) {
+	q := "SELECT stream_id, agent_id, status, checked_at, ok_at, summary FROM stream_state"
+	var args []any
+	if streamID != 0 {
+		q += " WHERE stream_id = ?"
+		args = append(args, streamID)
+	}
+	rows, err := s.db.QueryContext(ctx, q+" ORDER BY stream_id, agent_id", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*StreamState{}
+	for rows.Next() {
+		var st StreamState
+		var checked int64
+		var okAt sql.NullInt64
+		var summary string
+		if err := rows.Scan(&st.StreamID, &st.AgentID, &st.Status, &checked, &okAt, &summary); err != nil {
+			return nil, err
+		}
+		st.CheckedAt = fromMs(checked)
+		st.OKAt = fromMsPtr(okAt)
+		st.Summary = map[string]float64{}
+		_ = json.Unmarshal([]byte(summary), &st.Summary)
+		out = append(out, &st)
+	}
+	return out, rows.Err()
+}
+
+// VariantMetrics returns the latest metrics one agent reported for each
+// variant of a stream, by variant ID.
+func (tx *Tx) VariantMetrics(ctx context.Context, streamID, agentID int64) (map[int64]map[string]float64, error) {
+	rows, err := tx.q.QueryContext(ctx, `
+		SELECT vs.variant_id, vs.metrics FROM variant_state vs JOIN variants v ON v.id = vs.variant_id
+		WHERE v.stream_id = ? AND vs.agent_id = ?`, streamID, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]map[string]float64{}
+	for rows.Next() {
+		var id int64
+		var raw string
+		if err := rows.Scan(&id, &raw); err != nil {
+			return nil, err
+		}
+		m := map[string]float64{}
+		_ = json.Unmarshal([]byte(raw), &m)
+		out[id] = m
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) VariantStates(ctx context.Context, streamID int64) ([]*VariantState, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT vs.variant_id, vs.agent_id, vs.status, vs.checked_at, vs.metrics, vs.playlist_source, vs.segment_source
+		FROM variant_state vs JOIN variants v ON v.id = vs.variant_id
+		WHERE v.stream_id = ? ORDER BY vs.variant_id, vs.agent_id`, streamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*VariantState{}
+	for rows.Next() {
+		var st VariantState
+		var checked int64
+		var metrics string
+		var plSrc, segSrc sql.NullString
+		if err := rows.Scan(&st.VariantID, &st.AgentID, &st.Status, &checked, &metrics, &plSrc, &segSrc); err != nil {
+			return nil, err
+		}
+		st.CheckedAt = fromMs(checked)
+		st.Metrics = map[string]float64{}
+		_ = json.Unmarshal([]byte(metrics), &st.Metrics)
+		for _, src := range []struct {
+			raw sql.NullString
+			dst **probe.Endpoint
+		}{{plSrc, &st.PlaylistSource}, {segSrc, &st.SegmentSource}} {
+			if src.raw.Valid {
+				var e probe.Endpoint
+				if json.Unmarshal([]byte(src.raw.String), &e) == nil {
+					*src.dst = &e
+				}
+			}
+		}
+		out = append(out, &st)
+	}
+	return out, rows.Err()
+}
+
+// SegmentRecord is one row of the segment journal.
+type SegmentRecord struct {
+	ID         int64           `json:"id"`
+	StreamID   int64           `json:"stream_id"`
+	AgentID    int64           `json:"agent_id"`
+	VariantID  int64           `json:"variant_id"`
+	Seq        uint64          `json:"seq"`
+	Time       time.Time       `json:"time"`
+	URL        string          `json:"url"`
+	Duration   float64         `json:"duration"`
+	Status     int             `json:"status"`
+	Error      string          `json:"error"`
+	RemoteAddr string          `json:"remote_addr"`
+	Size       int64           `json:"size"`
+	TotalMs    float64         `json:"total_ms"`
+	Problems   []string        `json:"problems"`
+	Detail     json.RawMessage `json:"detail"`
+}
+
+// Snapshot is a stored playlist text.
+type Snapshot struct {
+	ID        int64     `json:"id"`
+	StreamID  int64     `json:"stream_id"`
+	AgentID   int64     `json:"agent_id"`
+	VariantID int64     `json:"variant_id"`
+	Time      time.Time `json:"time"`
+	URL       string    `json:"url"`
+	Problems  []string  `json:"problems"`
+	Body      string    `json:"body,omitempty"`
+	// PreviousBody is the playlist at the check before and PreviousTime
+	// when it was received; absent when the snapshot has none.
+	PreviousBody string     `json:"previous_body,omitempty"`
+	PreviousTime *time.Time `json:"previous_time,omitempty"`
+}
+
+func (tx *Tx) InsertSnapshot(ctx context.Context, streamID, agentID, variantID int64, now time.Time, url string, problems []string, body, previous string, previousTime *time.Time) error {
+	var prevMs int64
+	if previousTime != nil && previous != "" {
+		prevMs = toMs(*previousTime)
+	}
+	_, err := tx.q.ExecContext(ctx,
+		"INSERT INTO playlist_snapshots (stream_id, agent_id, variant_id, time, url, problems, body, previous_body, previous_time) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		streamID, agentID, variantID, toMs(now), url, strings.Join(problems, ","), body, previous, prevMs)
+	return err
+}
+
+// ListSnapshots returns snapshots of a stream without bodies, newest first.
+func (s *Store) ListSnapshots(ctx context.Context, streamID int64, limit int) ([]*Snapshot, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id, stream_id, agent_id, variant_id, time, url, problems, '', '', previous_time FROM playlist_snapshots WHERE stream_id = ? ORDER BY time DESC, id DESC LIMIT ?",
+		streamID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Snapshot{}
+	for rows.Next() {
+		sn, err := scanSnapshot(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sn)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetSnapshot(ctx context.Context, id int64) (*Snapshot, error) {
+	return scanSnapshot(s.db.QueryRowContext(ctx,
+		"SELECT id, stream_id, agent_id, variant_id, time, url, problems, body, previous_body, previous_time FROM playlist_snapshots WHERE id = ?", id))
+}
+
+func scanSnapshot(row interface{ Scan(...any) error }) (*Snapshot, error) {
+	var sn Snapshot
+	var t, prev int64
+	var problems string
+	if err := row.Scan(&sn.ID, &sn.StreamID, &sn.AgentID, &sn.VariantID, &t, &sn.URL, &problems, &sn.Body, &sn.PreviousBody, &prev); err != nil {
+		return nil, notFound(err)
+	}
+	sn.Time = fromMs(t)
+	if prev > 0 {
+		at := fromMs(prev)
+		sn.PreviousTime = &at
+	}
+	sn.Problems = []string{}
+	if problems != "" {
+		sn.Problems = strings.Split(problems, ",")
+	}
+	return &sn, nil
+}
+
+// sourceHistory is how long a server that stopped answering is remembered.
+const sourceHistory = 30 * 24 * time.Hour
+
+// SourceSeen is one server that answered for a playlist or its segments.
+type SourceSeen struct {
+	StreamID  int64     `json:"stream_id"`
+	VariantID int64     `json:"variant_id"`
+	AgentID   int64     `json:"agent_id"`
+	What      string    `json:"what"` // playlist or segment
+	Host      string    `json:"host"`
+	IP        string    `json:"ip"`
+	Software  string    `json:"software"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+	Hits      int64     `json:"hits"`
+}
+
+// RecordSource counts one more answer from a server.
+func (tx *Tx) RecordSource(ctx context.Context, variantID, agentID int64, what string, e *probe.Endpoint, now time.Time) error {
+	_, err := tx.q.ExecContext(ctx, `
+		INSERT INTO variant_sources (variant_id, agent_id, what, host, ip, software, first_seen, last_seen)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (variant_id, agent_id, what, host, ip) DO UPDATE SET
+			software = excluded.software, last_seen = excluded.last_seen, hits = variant_sources.hits + 1`,
+		variantID, agentID, what, e.Host, e.IP, e.Headers["Server"], toMs(now), toMs(now))
+	return err
+}
+
+// ListSources returns the servers seen since a moment, most recent first:
+// for one stream, or for all streams when streamID is zero.
+func (s *Store) ListSources(ctx context.Context, streamID int64, since time.Time) ([]*SourceSeen, error) {
+	q := `SELECT v.stream_id, vs.variant_id, vs.agent_id, vs.what, vs.host, vs.ip, vs.software, vs.first_seen, vs.last_seen, vs.hits
+		FROM variant_sources vs JOIN variants v ON v.id = vs.variant_id
+		WHERE vs.last_seen >= ?`
+	args := []any{toMs(since)}
+	if streamID != 0 {
+		q += " AND v.stream_id = ?"
+		args = append(args, streamID)
+	}
+	rows, err := s.db.QueryContext(ctx, q+" ORDER BY vs.last_seen DESC, vs.host", args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*SourceSeen{}
+	for rows.Next() {
+		var r SourceSeen
+		var first, last int64
+		if err := rows.Scan(&r.StreamID, &r.VariantID, &r.AgentID, &r.What, &r.Host, &r.IP, &r.Software, &first, &last, &r.Hits); err != nil {
+			return nil, err
+		}
+		r.FirstSeen, r.LastSeen = fromMs(first), fromMs(last)
+		out = append(out, &r)
+	}
+	return out, rows.Err()
+}
+
+// Retention is how long each kind of history is kept.
+type Retention struct {
+	Segments  time.Duration
+	Snapshots time.Duration
+	// Incidents is for closed warnings and failures, Events for closed
+	// informational incidents, which are far more numerous.
+	Incidents time.Duration
+	Events    time.Duration
+}
+
+// Purge deletes journal rows, snapshots, closed incidents and sessions that
+// are past their retention. Rows go a batch at a time, so however much has
+// piled up, writers are never kept waiting for long.
+func (s *Store) Purge(ctx context.Context, keep Retention, now time.Time) (deleted int64, err error) {
+	for _, st := range []struct {
+		db     *sql.DB
+		table  string
+		cond   string
+		before time.Time
+	}{
+		{s.journal, "segments", "time < ?", now.Add(-keep.Segments)},
+		{s.db, "playlist_snapshots", "time < ?", now.Add(-keep.Snapshots)},
+		{s.db, "incidents", "ended_at IS NOT NULL AND severity = 'info' AND ended_at < ?", now.Add(-keep.Events)},
+		{s.db, "incidents", "ended_at IS NOT NULL AND ended_at < ?", now.Add(-keep.Incidents)},
+	} {
+		n, err := deleteInBatches(ctx, st.db, st.table, st.cond, toMs(st.before))
+		deleted += n
+		if err != nil {
+			return deleted, fmt.Errorf("purge %s: %w", st.table, err)
+		}
+	}
+	// Small tables without a rowid: a plain delete.
+	for q, before := range map[string]time.Time{
+		"DELETE FROM sessions WHERE expires_at < ?":       now,
+		"DELETE FROM variant_sources WHERE last_seen < ?": now.Add(-sourceHistory),
+	} {
+		res, err := s.db.ExecContext(ctx, q, toMs(before))
+		if err != nil {
+			return deleted, err
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			deleted += n
+		}
+	}
+	return deleted, nil
+}

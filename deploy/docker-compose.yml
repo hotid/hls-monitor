@@ -1,0 +1,87 @@
+# hls-monitor: server with its time series storage, from published images.
+#
+#   docker compose -f deploy/docker-compose.yml up -d
+#
+# Settings are read from the environment or from deploy/.env; see
+# deploy/.env.example. In addition:
+#
+#   HLSMON_IMAGE_PREFIX  where the images are, default ghcr.io/hotid/
+#   HLSMON_VERSION       image tag, default latest
+#
+# To build the images from this source tree instead of pulling them, add
+# docker-compose.build.yml:
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.build.yml up -d --build
+
+name: hls-monitor
+
+services:
+  server:
+    image: ${HLSMON_IMAGE_PREFIX:-ghcr.io/hotid/}hls-monitor-server:${HLSMON_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      victoriametrics:
+        condition: service_healthy
+    environment:
+      HLSMON_VM_URL: http://victoriametrics:8428
+      HLSMON_ADMIN_USER: ${HLSMON_ADMIN_USER:-admin}
+      # Empty: a password is generated on the first start and written to the log once.
+      HLSMON_ADMIN_PASSWORD: ${HLSMON_ADMIN_PASSWORD:-}
+      HLSMON_PUBLIC_URL: ${HLSMON_PUBLIC_URL:-}
+      HLSMON_AGENT_IMAGE: ${HLSMON_AGENT_IMAGE:-}
+      HLSMON_BASE_PATH: ${HLSMON_BASE_PATH:-}
+      HLSMON_TRUSTED_PROXIES: ${HLSMON_TRUSTED_PROXIES:-}
+      HLSMON_LOG_LEVEL: ${HLSMON_LOG_LEVEL:-info}
+      # Storage limits; an empty value means the built-in default.
+      HLSMON_SEGMENT_KEEP: ${HLSMON_SEGMENT_KEEP:-}
+      HLSMON_SEGMENT_KEEP_PROBLEMS: ${HLSMON_SEGMENT_KEEP_PROBLEMS:-}
+      HLSMON_SEGMENT_RETENTION: ${HLSMON_SEGMENT_RETENTION:-}
+      HLSMON_JOURNAL_MAX_MB: ${HLSMON_JOURNAL_MAX_MB:-}
+      HLSMON_SNAPSHOT_RETENTION: ${HLSMON_SNAPSHOT_RETENTION:-}
+      HLSMON_INCIDENT_RETENTION: ${HLSMON_INCIDENT_RETENTION:-}
+      HLSMON_EVENT_RETENTION: ${HLSMON_EVENT_RETENTION:-}
+    ports:
+      # Ports published by Docker bypass the host's INPUT firewall rules, so
+      # the port stays on the loopback until HLSMON_BIND opens it on purpose.
+      - "${HLSMON_BIND:-127.0.0.1}:${HLSMON_HTTP_PORT:-4000}:4000"
+    volumes:
+      - server-data:/var/lib/hls-monitor
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.156.0
+    restart: unless-stopped
+    command:
+      - -storageDataPath=/victoria-metrics-data
+      - -retentionPeriod=${HLSMON_METRICS_RETENTION:-7d}
+      # Show samples in charts a few seconds after they arrive instead of the default 30.
+      - -search.latencyOffset=5s
+    # Not published: only the server talks to it.
+    volumes:
+      - metrics-data:/victoria-metrics-data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8428/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  # A remote agent normally runs on another host; see deploy/docker-compose.agent.yml.
+  # This one is for trying agents out next to the server:
+  #   HLSMON_ENROLL_TOKEN=<token from the Agents page> \
+  #     docker compose -f deploy/docker-compose.yml --profile agent up -d agent
+  agent:
+    profiles: ["agent"]
+    image: ${HLSMON_IMAGE_PREFIX:-ghcr.io/hotid/}hls-monitor-agent:${HLSMON_VERSION:-latest}
+    restart: unless-stopped
+    depends_on:
+      server:
+        condition: service_healthy
+    environment:
+      HLSMON_SERVER_URL: http://server:4000
+      HLSMON_ENROLL_TOKEN: ${HLSMON_ENROLL_TOKEN:-}
+    volumes:
+      - agent-data:/var/lib/hls-monitor
+
+volumes:
+  server-data:
+  metrics-data:
+  agent-data:

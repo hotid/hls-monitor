@@ -1,0 +1,17 @@
+{
+  "clear": "Clear",
+  "clearFilters": "Clear filters",
+  "columnFilter": "Column filter",
+  "contains": "Contains",
+  "containsPlaceholder": "Contains…",
+  "filter": "Filter",
+  "filterIsOn": "Filter is on",
+  "filterIsOnChange": "Filter is on, change",
+  "from": "From",
+  "nothingMatchesTheFiltersInThe": "Nothing matches the filters in the column headers",
+  "of": "{n} of {total}",
+  "rangeFrom": "from",
+  "rangeTo": "to",
+  "sort": "Sort",
+  "to": "To"
+}

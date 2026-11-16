@@ -1,0 +1,6 @@
+{
+  "current": "When the problem was found, {time}",
+  "legend": "Highlighted lines are absent from the other playlist: gone on the left, new on the right.",
+  "noPrevious": "No previous playlist: the snapshot was taken before the update that started keeping them, or this was the first check of the playlist.",
+  "previous": "Previous check, {time} — {span} before the snapshot"
+}

@@ -1,0 +1,20 @@
+{
+  "agentsOnlineOf": "Агенты на связи: {online} из {total}",
+  "atLeast8CharactersChangingIt": "Не короче 8 символов. После смены все сеансы завершатся.",
+  "changePassword": "Сменить пароль",
+  "currentPassword": "Текущий пароль",
+  "data": "Данные {size}",
+  "dataUpdated": "Данные обновлены",
+  "databaseSegmentJournalOfRecordsOf": "База {db}, журнал сегментов {journal} из {max} ({rows} записей), на диске свободно {free} из {total}",
+  "diskAlmostFullFree": "Диск почти заполнен: свободно {free}",
+  "hlsmonVMURLIsNotSet": "Не задан HLSMON_VM_URL: графики будут пустыми",
+  "metricsStorageIsNotConnected": "Хранилище метрик не подключено",
+  "ok": "{n} в порядке",
+  "overview": "Обзор",
+  "passwordChangedSignInWithThe": "Пароль изменён. Войдите с новым паролем",
+  "queuedForWriting": "В очереди на запись: {size}",
+  "sections": "Разделы",
+  "signOut": "Выйти",
+  "viewOnly": "только просмотр",
+  "withNoData": "{n} без данных"
+}
