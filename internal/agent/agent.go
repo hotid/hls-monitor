@@ -1,7 +1,7 @@
 // Package agent is the remote vantage point: it enrolls with the server,
 // keeps checking the streams assigned to it and delivers the results. It
-// only makes outgoing connections and survives the server being away by
-// queueing results in memory.
+// only makes outgoing connections and survives the server being away, and
+// its own restarts, by queueing results on disk.
 package agent
 
 import (
@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/agentproto"
@@ -28,9 +28,11 @@ import (
 )
 
 const (
-	maxQueueBytes = 128 << 20
-	maxBatchBytes = 4 << 20
-	sendEvery     = 2 * time.Second
+	// DefaultQueueBytes is how much disk the queue of undelivered results
+	// may take by default.
+	DefaultQueueBytes = 1 << 30
+	maxBatchBytes     = 4 << 20
+	sendEvery         = 2 * time.Second
 )
 
 // Options configures an agent.
@@ -42,6 +44,11 @@ type Options struct {
 	KeyFile string
 	Version string
 	Log     *slog.Logger
+	// QueueDir is where undelivered results are kept; "queue" next to the
+	// key file when empty. QueueBytes bounds its size, DefaultQueueBytes
+	// when zero: beyond it the oldest results are dropped.
+	QueueDir   string
+	QueueBytes int64
 	// PollInterval overrides the configuration poll period the server suggests.
 	PollInterval time.Duration
 }
@@ -61,12 +68,10 @@ type Agent struct {
 
 	revision string
 
-	mu      sync.Mutex
-	queue   [][]byte
-	queued  int
-	dropped int
-	// removed counts results taken off the head of the queue, for any reason.
-	removed uint64
+	spool *spool
+	// writeFailed is set while results cannot be written to the queue, so
+	// that the log says it once.
+	writeFailed atomic.Bool
 }
 
 // Run starts the agent and blocks until ctx is done or the server rejects it.
@@ -86,6 +91,20 @@ func Run(ctx context.Context, opt Options) error {
 	}
 	if err := a.loadOrEnroll(ctx); err != nil {
 		return err
+	}
+	dir := opt.QueueDir
+	if dir == "" {
+		dir = filepath.Join(filepath.Dir(opt.KeyFile), "queue")
+	}
+	if opt.QueueBytes <= 0 {
+		opt.QueueBytes = DefaultQueueBytes
+	}
+	if a.spool, err = openSpool(dir, opt.QueueBytes, maxBatchBytes); err != nil {
+		return fmt.Errorf("open the result queue in %s: %w", dir, err)
+	}
+	defer a.spool.close()
+	if n, size := a.spool.queued(); n > 0 {
+		a.log.Info("undelivered results from the previous run will be sent", "results", n, "bytes", size)
 	}
 	a.run = runner.New(a.enqueue, "hls-monitor-agent/"+opt.Version, opt.Log)
 	defer a.run.Stop()
@@ -280,29 +299,21 @@ func (a *Agent) enqueue(_ context.Context, r *probe.Result) {
 		a.log.Error("cannot encode a result", "error", err)
 		return
 	}
-	a.mu.Lock()
-	a.queue = append(a.queue, b)
-	a.queued += len(b)
-	for a.queued > maxQueueBytes && len(a.queue) > 1 {
-		a.queued -= len(a.queue[0])
-		a.queue = a.queue[1:]
-		a.dropped++
-		a.removed++
+	if err := a.spool.add(b); err != nil {
+		if !a.writeFailed.Swap(true) {
+			a.log.Error("cannot write to the result queue, results are being lost", "error", err)
+		}
+		return
 	}
-	a.mu.Unlock()
-}
-
-// Queued reports how many results wait for delivery.
-func (a *Agent) Queued() int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return len(a.queue)
+	if a.writeFailed.Swap(false) {
+		a.log.Info("the result queue can be written again")
+	}
 }
 
 func (a *Agent) sendLoop(ctx context.Context) {
 	for {
 		if !sleepCtx(ctx, sendEvery) {
-			// One last attempt so that a clean shutdown loses nothing.
+			// One last attempt; what it does not deliver stays on disk.
 			fctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			a.flush(fctx)
 			cancel()
@@ -316,20 +327,11 @@ func (a *Agent) sendLoop(ctx context.Context) {
 // a delivery fails.
 func (a *Agent) flush(ctx context.Context) {
 	for ctx.Err() == nil {
-		a.mu.Lock()
-		n, size := 0, 0
-		for n < len(a.queue) && (n == 0 || size+len(a.queue[n]) <= maxBatchBytes) {
-			size += len(a.queue[n])
-			n++
+		if dropped := a.spool.takeDropped(); dropped > 0 {
+			a.log.Warn("the result queue reached its size limit, oldest results were dropped", "dropped", dropped)
 		}
-		batch := a.queue[:n:n]
-		head := a.removed
-		dropped := a.dropped
-		a.dropped = 0
-		a.mu.Unlock()
-		if dropped > 0 {
-			a.log.Warn("the result queue overflowed, oldest results were dropped", "dropped", dropped)
-		}
+		seq, batch := a.spool.next()
+		n := len(batch)
 		if n == 0 {
 			return
 		}
@@ -354,17 +356,10 @@ func (a *Agent) flush(ctx context.Context) {
 			// disabled, the batch is malformed): sending it again cannot help.
 			a.log.Warn("the server refused a batch of results", "status", status, "results", n)
 		}
-		a.mu.Lock()
-		// An overflow may have dropped some of the batch from the head while
-		// the request was in flight; those are gone already.
-		gone := int(a.removed - head)
-		left := min(max(done-gone, 0), len(a.queue))
-		for _, b := range a.queue[:left] {
-			a.queued -= len(b)
+		if err := a.spool.done(seq, batch, done); err != nil {
+			a.log.Error("cannot update the result queue; some results may be sent twice", "error", err)
+			return
 		}
-		a.queue = a.queue[left:]
-		a.removed += uint64(left)
-		a.mu.Unlock()
 		if done < n {
 			return // the server could not store the rest right now
 		}

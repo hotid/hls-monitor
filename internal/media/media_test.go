@@ -202,17 +202,25 @@ func TestRecoveryPointIsKeyframe(t *testing.T) {
 		return out
 	}
 
-	if _, vcl, rec := scanNALs(join(aud, sei, slice), false, false); vcl != 1 || !rec {
-		t.Errorf("slice after a recovery point: type %d, recovery %v; want 1, true", vcl, rec)
+	scan := func(data []byte) pictureScan {
+		var v videoScanner
+		return v.scan("h264", data, false)
 	}
-	if _, vcl, rec := scanNALs(join(aud, other, slice), false, false); vcl != 1 || rec {
-		t.Errorf("slice after another message: type %d, recovery %v; want 1, false", vcl, rec)
+	if sc := scan(join(aud, sei, slice)); sc.keys != 1 || !sc.firstKey {
+		t.Errorf("slice after a recovery point: %+v; want a keyframe", sc)
 	}
-	if _, vcl, rec := scanNALs(join(aud, slice, sei), false, false); rec {
-		t.Errorf("a message after the slice belongs to the next picture (type %d)", vcl)
+	if sc := scan(join(aud, other, slice)); sc.keys != 0 || sc.halves != 2 {
+		t.Errorf("slice after another message: %+v; want one picture, no keyframe", sc)
 	}
-	if _, vcl, _ := scanNALs(join(aud, idr), false, false); vcl != 5 {
-		t.Errorf("IDR type = %d, want 5", vcl)
+	if sc := scan(join(aud, slice, sei)); sc.firstKey || sc.keys != 0 {
+		t.Errorf("a message after the slice belongs to the next picture: %+v", sc)
+	}
+	if sc := scan(join(aud, idr)); sc.keys != 1 {
+		t.Errorf("IDR picture: %+v, want a keyframe", sc)
+	}
+	// Two pictures in one packet, the second one the keyframe.
+	if sc := scan(join(aud, slice, aud, idr)); sc.halves != 4 || sc.keys != 1 || sc.firstKey {
+		t.Errorf("slice and IDR in one packet: %+v; want two frames, one keyframe, not the first", sc)
 	}
 }
 
@@ -269,19 +277,93 @@ func TestCountPictures(t *testing.T) {
 		data []byte
 		want int
 	}{
-		"one picture with a delimiter":        {join(aud, sps, slice), 1},
-		"two pictures, each with delimiter":   {join(aud, slice, aud, slice), 2},
-		"no delimiters, two first slices":     {join(slice, slice), 2},
-		"one picture of two slices":           {join(aud, slice, more), 1},
-		"nothing recognisable is one picture": {[]byte{1, 2, 3}, 1},
+		"one picture with a delimiter":      {join(aud, sps, slice), 1},
+		"two pictures, each with delimiter": {join(aud, slice, aud, slice), 2},
+		"no delimiters, two first slices":   {join(slice, slice), 2},
+		"one picture of two slices":         {join(aud, slice, more), 1},
+		"a delimiter without a picture":     {join(aud), 0},
 	} {
-		if got := countPictures(c.data, false); got != c.want {
+		var v videoScanner
+		if got := v.scan("h264", c.data, false).halves / 2; got != c.want {
 			t.Errorf("%s: %d, want %d", name, got, c.want)
 		}
 	}
-	// HEVC: delimiter is type 35, a slice starts a picture when the first bit after the two header bytes is set.
-	hevc := join(nal(35<<1, 1), nal(1<<1, 1, 0x80), nal(1<<1, 1, 0x00), nal(35<<1, 1), nal(1<<1, 1, 0x80))
-	if got := countPictures(hevc, true); got != 2 {
-		t.Errorf("hevc: %d, want 2", got)
+	// HEVC: a slice starts a picture when the first bit after the two header bytes is set; types 16 to 23 are keyframes.
+	var v videoScanner
+	sc := v.scan("hevc", join(nal(35<<1, 1), nal(19<<1, 1, 0x80), nal(19<<1, 1, 0x00), nal(35<<1, 1), nal(1<<1, 1, 0x80)), false)
+	if sc.halves != 4 || sc.keys != 1 || !sc.firstKey {
+		t.Errorf("hevc: %+v, want two frames, the first a keyframe", sc)
+	}
+}
+
+// Interlaced H.264 coded as fields: two field pictures make one frame, and
+// the two fields of a keyframe one keyframe.
+func TestH264FieldPictures(t *testing.T) {
+	// Slice header: first_mb_in_slice=0 "1", slice_type=0 "1", pps=0 "1",
+	// frame_num (4 bits) "0000", field_pic_flag, bottom_field_flag.
+	field := func(typ byte, bottom bool) []byte {
+		b := byte(0b11100001) // ..., field_pic_flag=1
+		next := byte(0)
+		if bottom {
+			next = 0x80
+		}
+		return []byte{0, 0, 1, typ, b, next, 0xff}
+	}
+	frame := []byte{0, 0, 1, 0x41, 0b11100000, 0, 0xff}
+	v := videoScanner{fieldsPossible: true, frameNumBits: 4}
+	sc := v.scan("h264", bytes.Join([][]byte{field(0x65, false), field(0x65, true), field(0x41, false), field(0x41, true), frame}, nil), false)
+	if sc.halves != 6 || sc.keys != 1 || !sc.firstKey {
+		t.Errorf("two field pairs and a frame: %+v; want 6 half frames and 1 keyframe", sc)
+	}
+	// A field pair split between two packets is still one keyframe.
+	v = videoScanner{fieldsPossible: true, frameNumBits: 4}
+	a, b := v.scan("h264", field(0x65, false), false), v.scan("h264", field(0x65, true), false)
+	if a.keys+b.keys != 1 || a.halves+b.halves != 2 {
+		t.Errorf("a keyframe in two packets: %+v and %+v", a, b)
+	}
+}
+
+// MPEG-2: picture headers, intra pictures as keyframes, field pictures.
+func TestMPEG2Pictures(t *testing.T) {
+	seq := []byte{0, 0, 1, 0xb3, 0x2d, 0x02, 0x40, 0x33} // 720x576
+	pic := func(codingType byte) []byte { return []byte{0, 0, 1, 0x00, 0x00, codingType << 3, 0xff, 0xf8} }
+	ext := func(structure byte) []byte { return []byte{0, 0, 1, 0xb5, 0x8f, 0xff, 0xf0 | structure, 0x80} }
+	slice := []byte{0, 0, 1, 0x01, 0x12, 0x34}
+	var v videoScanner
+	sc := v.scan("mpeg2video", bytes.Join([][]byte{seq, pic(1), ext(3), slice, slice, pic(2), ext(3), slice, pic(3), ext(3), slice}, nil), false)
+	if sc.halves != 6 || sc.keys != 1 || !sc.firstKey || sc.width != 720 || sc.height != 576 {
+		t.Errorf("I, P and B frames: %+v; want 3 frames, 1 keyframe, 720x576", sc)
+	}
+	v = videoScanner{}
+	sc = v.scan("mpeg2video", bytes.Join([][]byte{pic(1), ext(1), slice, pic(2), ext(2), slice}, nil), false)
+	if sc.halves != 2 || sc.keys != 1 {
+		t.Errorf("an I field and a P field: %+v; want one frame, one keyframe", sc)
+	}
+}
+
+// The frame rate is not thrown off by dropped frames or by packets
+// without a picture.
+func TestVideoFrameDuration(t *testing.T) {
+	var timed []pesTime
+	for i := range 50 {
+		if i >= 20 && i < 28 {
+			continue // the encoder dropped eight frames
+		}
+		timed = append(timed, pesTime{int64(i) * 3600, 2})
+	}
+	timed = append(timed, pesTime{50 * 3600, 0}) // a delimiter alone
+	if dur, last := videoFrameDuration(timed); dur != 3600 || last != 0 {
+		t.Errorf("frame duration %v, last %d; want 3600 (25 fps), 0", dur, last)
+	}
+	// Two fields per packet at 25 frames per second, and one field per packet.
+	if dur, _ := videoFrameDuration([]pesTime{{0, 2}, {3600, 2}, {7200, 2}}); dur != 3600 {
+		t.Errorf("field pairs: %v, want 3600", dur)
+	}
+	if dur, _ := videoFrameDuration([]pesTime{{0, 1}, {1800, 1}, {3600, 1}}); dur != 3600 {
+		t.Errorf("single fields: %v, want 3600", dur)
+	}
+	// The fields of a frame in two packets with the same timestamp.
+	if dur, last := videoFrameDuration([]pesTime{{0, 1}, {0, 1}, {3600, 1}, {3600, 1}, {7200, 1}, {7200, 1}}); dur != 3600 || last != 2 {
+		t.Errorf("fields sharing a timestamp: %v, last %d; want 3600, 2", dur, last)
 	}
 }

@@ -27,6 +27,10 @@ func main() {
 	envflag.String(fs, &token, "enroll-token", "HLSMON_ENROLL_TOKEN", "", "one-time enrollment token; needed only on the first start")
 	envflag.String(fs, &keyFile, "key-file", "HLSMON_KEY_FILE", "data/agent.key", "file where the agent key is kept")
 	envflag.String(fs, &logLevel, "log-level", "HLSMON_LOG_LEVEL", "info", "debug, info, warn or error")
+	var queueDir string
+	var queueMaxMB int
+	envflag.String(fs, &queueDir, "queue-dir", "HLSMON_QUEUE_DIR", "", "directory for results not delivered yet; \"queue\" next to the key file when empty")
+	envflag.Int(fs, &queueMaxMB, "queue-max-mb", "HLSMON_QUEUE_MAX_MB", agent.DefaultQueueBytes>>20, "MiB of disk the undelivered results may take; beyond it the oldest are dropped")
 	var bodyMemoryMB int
 	envflag.Int(fs, &bodyMemoryMB, "body-memory-mb", "HLSMON_BODY_MEMORY_MB", probe.DefaultBodyMemory>>20, "MiB of segment bodies the checks may hold in memory at once; downloads wait for room")
 	showVersion := fs.Bool("version", false, "print the version and exit")
@@ -47,7 +51,7 @@ func main() {
 	defer stop()
 	log.Info("hls-monitor agent starting", "version", version, "server", serverURL)
 	probe.SetBodyMemory(int64(bodyMemoryMB) << 20)
-	err := agent.Run(ctx, agent.Options{ServerURL: serverURL, EnrollToken: token, KeyFile: keyFile, Version: version, Log: log})
+	err := agent.Run(ctx, agent.Options{QueueDir: queueDir, QueueBytes: int64(queueMaxMB) << 20, ServerURL: serverURL, EnrollToken: token, KeyFile: keyFile, Version: version, Log: log})
 	if err != nil {
 		log.Error("fatal", "error", err)
 		os.Exit(1)

@@ -111,7 +111,7 @@ An agent checks streams from its own network and sends the results to the server
 
 3. In the stream settings, select where it should be checked from.
 
-After the first start the agent keeps its key in a volume and no longer needs the token. While the server is unavailable, the agent continues checking and accumulates results in memory (up to 128 MB), then sends them with their original timestamps. If an agent is silent for more than 90 seconds, its streams are shown as "no data", not as a failure.
+After the first start the agent keeps its key in a volume and no longer needs the token. While the server is unavailable, the agent continues checking and keeps the results on disk, next to its key (up to 1 GB, `HLSMON_QUEUE_MAX_MB`; beyond that the oldest are dropped), then sends them with their original timestamp. The queue survives a restart of the agent; only a power failure may lose its last secondss. If an agent is silent for more than 90 seconds, its streams are shown as "no data", not as a failure.
 
 To revoke an agent's key, issue it a new token on the "Agents" page.
 
@@ -144,7 +144,7 @@ Every setting is given as a flag or an environment variable.
 
 Retention of time series is set in VictoriaMetrics (`HLSMON_METRICS_RETENTION` in compose, 7 days by default, the same as the longest chart range).
 
-Agent settings: `HLSMON_SERVER_URL`, `HLSMON_ENROLL_TOKEN`, `HLSMON_KEY_FILE` (`data/agent.key` by default; in the container it is in a volume), `HLSMON_LOG_LEVEL`.
+Agent settings: `HLSMON_SERVER_URL`, `HLSMON_ENROLL_TOKEN`, `HLSMON_KEY_FILE` (`data/agent.key` by default; in the container it is in a volume), `HLSMON_QUEUE_DIR` (undelivered results; `queue` next to the key by default), `HLSMON_QUEUE_MAX_MB` (`1024`), `HLSMON_BODY_MEMORY_MB`, `HLSMON_LOG_LEVEL`.
 
 The server does not terminate TLS itself: put a reverse proxy in front of it and specify the proxy's address in `HLSMON_TRUSTED_PROXIES`.
 

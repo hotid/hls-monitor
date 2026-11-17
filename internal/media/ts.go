@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/Eyevinn/mp4ff/avc"
 	"github.com/Eyevinn/mp4ff/hevc"
@@ -125,6 +126,11 @@ func sameTSPacket(a, b []byte) bool {
 	return bytes.Equal(a[:6], b[:6]) && bytes.Equal(a[12:], b[12:])
 }
 
+type pesTime struct {
+	pts    int64
+	halves int
+}
+
 type tsTrack struct {
 	Track
 	streamType astits.StreamType
@@ -135,11 +141,12 @@ type tsTrack struct {
 	maxPTS   int64
 
 	pesCount int
-	// pictures counts coded pictures; a PES packet usually carries one,
-	// but nothing in MPEG-TS requires that. lastPictures is how many the
-	// last PES packet carried.
-	pictures      int
-	lastPictures  int
+	// halves counts coded pictures in half frames, see pictureScan.
+	halves int
+	// timed lists the PES packets that have a timestamp, with how much
+	// picture each carries: what the frame rate is measured by.
+	timed         []pesTime
+	video         videoScanner
 	keyPTS        []int64
 	spsDone       bool
 	adtsFrames    int
@@ -254,39 +261,49 @@ func handlePES(t *tsTrack, d *astits.DemuxerData) {
 
 	switch t.Kind {
 	case KindVideo:
-		key := false
-		if d.FirstPacket != nil && d.FirstPacket.AdaptationField != nil {
-			key = d.FirstPacket.AdaptationField.RandomAccessIndicator
-		}
-		switch t.Codec {
-		case "h264":
-			sps, vcl, recovery := scanNALs(d.PES.Data, false, !t.spsDone)
-			// Broadcast encoders often never send an IDR picture: decoding
-			// starts at a picture announced by a recovery point message.
-			key = key || vcl == 5 || recovery
-			if sps != nil && !t.spsDone {
-				t.spsDone = true
-				applyH264SPS(&t.Track, sps)
-			}
-		case "hevc":
-			sps, vcl, _ := scanNALs(d.PES.Data, true, !t.spsDone)
-			key = key || (vcl >= 16 && vcl <= 23)
-			if sps != nil && !t.spsDone {
-				t.spsDone = true
-				applyHEVCSPS(&t.Track, sps)
+		before := t.video
+		sc := t.video.scan(t.Codec, d.PES.Data, !t.spsDone)
+		if sc.sps != nil && t.Codec == "h264" && !t.spsDone {
+			// Whether a slice is a field is told by the parameter set that
+			// has just been found: read the packet again knowing it.
+			t.spsDone = true
+			if sps := applyH264SPS(&t.Track, sc.sps); sps != nil {
+				before.setH264SPS(sps)
+				t.video = before
+				sc = t.video.scan(t.Codec, d.PES.Data, false)
 			}
 		}
-		t.lastPictures = 1
-		if t.Codec == "h264" || t.Codec == "hevc" {
-			t.lastPictures = countPictures(d.PES.Data, t.Codec == "hevc")
+		if !sc.known {
+			sc.halves = 2 // a codec that is not read: one frame per packet
 		}
-		t.pictures += t.lastPictures
-		if t.pesCount == 1 {
-			t.FirstKeyframe = key
+		// The random access indicator marks a packet decoding can start at.
+		if rai := d.FirstPacket != nil && d.FirstPacket.AdaptationField != nil && d.FirstPacket.AdaptationField.RandomAccessIndicator; rai && sc.halves > 0 && !sc.firstKey {
+			sc.firstKey = true
+			sc.keys++
 		}
-		if key {
-			t.Keyframes++
-			if hasPTS {
+		if !t.spsDone {
+			switch {
+			case sc.sps != nil && t.Codec == "hevc":
+				t.spsDone = true
+				applyHEVCSPS(&t.Track, sc.sps)
+			case sc.width > 0:
+				t.spsDone = true
+				t.Width, t.Height = sc.width, sc.height
+			}
+		}
+		if t.halves == 0 && sc.halves > 0 {
+			t.FirstKeyframe = sc.firstKey
+		}
+		t.halves += sc.halves
+		t.Keyframes += sc.keys
+		if !hasPTS && len(t.timed) > 0 {
+			// The second field of a frame often comes in a packet of its
+			// own without a timestamp: it is shown with the first.
+			t.timed[len(t.timed)-1].halves += sc.halves
+		}
+		if hasPTS {
+			t.timed = append(t.timed, pesTime{pts, sc.halves})
+			if sc.keys > 0 {
 				t.keyPTS = append(t.keyPTS, pts)
 			}
 		}
@@ -304,6 +321,44 @@ func handlePES(t *tsTrack, d *astits.DemuxerData) {
 	}
 }
 
+// videoFrameDuration returns the duration of a frame in clock ticks, zero
+// when it cannot be told, and how much picture (in half frames) the packet
+// with the latest timestamp carries.
+//
+// The duration is the median distance between neighbouring timestamps, each
+// divided by the frames its packet carries. Unlike the span divided by the
+// number of frames, it is not thrown off by frames the encoder dropped or
+// by a packet without a picture.
+func videoFrameDuration(timed []pesTime) (frameDur float64, lastHalves int) {
+	if len(timed) == 0 {
+		return 0, 0
+	}
+	all := append([]pesTime(nil), timed...)
+	sort.SliceStable(all, func(i, j int) bool { return all[i].pts < all[j].pts })
+	// The two fields of a frame may come in two packets with one
+	// timestamp: together they are what is shown at that time.
+	sorted := all[:1]
+	for _, p := range all[1:] {
+		if last := &sorted[len(sorted)-1]; p.pts == last.pts {
+			last.halves += p.halves
+		} else {
+			sorted = append(sorted, p)
+		}
+	}
+	lastHalves = sorted[len(sorted)-1].halves
+	var steps []float64
+	for i := 0; i+1 < len(sorted); i++ {
+		if d := sorted[i+1].pts - sorted[i].pts; d > 0 && sorted[i].halves > 0 {
+			steps = append(steps, float64(d)*2/float64(sorted[i].halves))
+		}
+	}
+	if len(steps) == 0 {
+		return 0, lastHalves
+	}
+	sort.Float64s(steps)
+	return steps[len(steps)/2], lastHalves
+}
+
 func finalizeTSTrack(t *tsTrack) {
 	t.Frames = t.pesCount
 	if !t.havePTS {
@@ -318,14 +373,18 @@ func finalizeTSTrack(t *tsTrack) {
 		t.Frames = t.adtsFrames
 		end = t.lastPESPTS + int64(float64(t.lastPESFrames)*1024*tsClock/float64(t.SampleRate))
 		end = max(end, t.maxPTS)
-	case t.Kind == KindVideo && t.pictures > t.lastPictures && span > 0:
-		// Timestamps come one per PES packet, pictures may come several:
-		// the span covers every picture but those of the last packet.
-		// For field-coded interlaced video this is the field rate.
-		t.Frames = t.pictures
-		frameDur := float64(span) / float64(t.pictures-t.lastPictures)
-		end = t.maxPTS + int64(frameDur*float64(t.lastPictures))
-		t.FPS = roundTo(tsClock/frameDur, 3)
+	case t.Kind == KindVideo:
+		t.Frames = (t.halves + 1) / 2
+		frameDur, last := videoFrameDuration(t.timed)
+		if frameDur == 0 && t.Frames > 1 {
+			frameDur = float64(span) / float64(t.Frames-1)
+		}
+		if frameDur > 0 {
+			t.FPS = roundTo(tsClock/frameDur, 3)
+			// The packet with the latest timestamp lasts as long as the
+			// pictures in it; one without a picture still takes a frame.
+			end = t.maxPTS + int64(frameDur*float64(max(last, 2))/2)
+		}
 	case t.pesCount > 1 && span > 0:
 		frameDur := float64(span) / float64(t.pesCount-1)
 		end = t.maxPTS + int64(frameDur)
@@ -347,98 +406,15 @@ func finalizeTSTrack(t *tsTrack) {
 	}
 }
 
-// scanNALs walks an Annex B byte stream up to the first VCL NAL unit.
-// It returns the SPS payload (when wantSPS and present before the first VCL
-// unit), the type of that first VCL unit, or -1 when there is none, and
-// whether an H.264 recovery point message precedes it.
-func scanNALs(data []byte, isHEVC, wantSPS bool) (sps []byte, vclType int, recovery bool) {
-	startCode := []byte{0, 0, 1}
-	pos := 0
-	for {
-		i := bytes.Index(data[pos:], startCode)
-		if i < 0 {
-			return sps, -1, recovery
-		}
-		nal := pos + i + 3
-		if nal >= len(data) {
-			return sps, -1, recovery
-		}
-		var typ int
-		if isHEVC {
-			typ = int(data[nal]>>1) & 0x3f
-		} else {
-			typ = int(data[nal]) & 0x1f
-		}
-		isVCL := (isHEVC && typ <= 31) || (!isHEVC && typ >= 1 && typ <= 5)
-		if isVCL {
-			return sps, typ, recovery
-		}
-		if !isHEVC && typ == 6 && !recovery {
-			end := len(data)
-			if j := bytes.Index(data[nal:], startCode); j >= 0 {
-				end = nal + j
-			}
-			recovery = hasRecoveryPoint(data[nal+1 : end])
-		}
-		isSPS := (isHEVC && typ == 33) || (!isHEVC && typ == 7)
-		if isSPS && wantSPS && sps == nil {
-			end := len(data)
-			if j := bytes.Index(data[nal:], startCode); j >= 0 {
-				end = nal + j
-			}
-			sps = bytes.TrimRight(data[nal:end], "\x00")
-		}
-		pos = nal
-	}
-}
-
-// countPictures counts the coded pictures in the payload of one PES
-// packet: access unit delimiters when the stream has them, otherwise
-// slices that begin a picture. It never returns less than one.
-func countPictures(data []byte, isHEVC bool) int {
-	startCode := []byte{0, 0, 1}
-	delimiters, firstSlices := 0, 0
-	pos := 0
-	for {
-		i := bytes.Index(data[pos:], startCode)
-		if i < 0 {
-			break
-		}
-		nal := pos + i + 3
-		pos = nal
-		if isHEVC {
-			if nal+2 >= len(data) {
-				break
-			}
-			switch typ := int(data[nal]>>1) & 0x3f; {
-			case typ == 35:
-				delimiters++
-			case typ <= 31 && data[nal+2]&0x80 != 0: // first_slice_segment_in_pic_flag
-				firstSlices++
-			}
-			continue
-		}
-		if nal+1 >= len(data) {
-			break
-		}
-		switch typ := int(data[nal]) & 0x1f; {
-		case typ == 9:
-			delimiters++
-		case typ >= 1 && typ <= 5 && data[nal+1]&0x80 != 0: // first_mb_in_slice is 0
-			firstSlices++
-		}
-	}
-	return max(delimiters, firstSlices, 1)
-}
-
-func applyH264SPS(t *Track, nalu []byte) {
+func applyH264SPS(t *Track, nalu []byte) *avc.SPS {
 	sps, err := avc.ParseSPSNALUnit(nalu, true)
 	if err != nil || sps == nil {
-		return
+		return nil
 	}
 	t.Width, t.Height = int(sps.Width), int(sps.Height)
 	t.Profile = h264Profile(sps.Profile)
 	t.Level = fmt.Sprintf("%d.%d", sps.Level/10, sps.Level%10)
+	return sps
 }
 
 func applyHEVCSPS(t *Track, nalu []byte) {
@@ -533,17 +509,7 @@ func roundTo(v float64, digits int) float64 {
 // hasRecoveryPoint reports whether an H.264 SEI NAL unit payload carries a
 // recovery point message (payload type 6).
 func hasRecoveryPoint(sei []byte) bool {
-	// Drop emulation prevention bytes: 00 00 03 stands for 00 00.
-	if bytes.Contains(sei, []byte{0, 0, 3}) {
-		clean := make([]byte, 0, len(sei))
-		for i := 0; i < len(sei); i++ {
-			if i >= 2 && sei[i] == 3 && sei[i-1] == 0 && sei[i-2] == 0 {
-				continue
-			}
-			clean = append(clean, sei[i])
-		}
-		sei = clean
-	}
+	sei = unescape(sei)
 	pos := 0
 	// The last byte is the trailing bits, not a message.
 	for pos+1 < len(sei) {
