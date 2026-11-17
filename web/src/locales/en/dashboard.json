@@ -39,7 +39,7 @@
   "requestsByServer": "Requests by server",
   "requestsByServerHint": "How many requests of the checks per second every server answers: it shows how the balancer spreads the streams and whether a server has dropped out.",
   "retransmitsPerStep": "Retransmissions per step",
-  "roundTripTime": "Round trip time to the servers",
+  "roundTripTime": "RTT over all streams",
   "roundTripTimeHint": "By the kernel's count on the connections the checks use, over all streams. The kernel times a segment until it is acknowledged, and a server often acknowledges a request together with its answer, so the figure is a few milliseconds above the delay of the network alone. What is worth watching is how it changes.",
   "rttByServer": "RTT by server",
   "rttByServerHint": "Round trip time to every server by the kernel's count, from all vantage points together. A few milliseconds above the delay of the network alone; what is worth watching is the difference between servers and how it changes.",

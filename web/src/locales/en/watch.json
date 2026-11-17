@@ -15,7 +15,7 @@
   "chartDelayHint": "Where the time of fetching one segment goes: waiting for the origin's first byte, downloading from it, waiting for the agent to take the request, the way from the agent to the server, the way from the server to this browser.",
   "chartLoss": "Loss and failures, per second",
   "chartLossHint": "Retransmissions are loss on the way from the agent to the server, counted by the agent, who sends. From the origin the monitor only receives, so loss on that way shows as segments arriving out of order — a sign of loss, not a count of it. The rest is what the player ran into.",
-  "chartRTT": "Round trip time",
+  "chartRTT": "RTT",
   "chartRTTHint": "By the kernel's count on the connections in use: from the vantage point to the origin, and from the agent to the server (the smallest of the agent's last half a minute). Read on Linux only.",
   "chartRate": "Bitrate",
   "chartRateHint": "What the playlist declares for the quality being played, and what the segments really take: their size over their duration.",

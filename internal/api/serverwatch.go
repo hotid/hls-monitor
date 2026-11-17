@@ -38,6 +38,16 @@ const (
 // ServerWatchEvery is how often WatchServers is meant to be called.
 const ServerWatchEvery = serverWatchEvery
 
+// serverKinds are the problems that can be a server's: those of answering
+// at all. What is wrong with the content of a stream is the stream's, on
+// however many streams of one server it shows.
+var serverKinds = map[string]bool{
+	probe.ProbPlaylistUnreachable: true, probe.ProbPlaylistHTTP: true, probe.ProbPlaylistParse: true,
+	probe.ProbPlaylistStale: true, probe.ProbPlaylistEmpty: true,
+	probe.ProbSegmentUnreachable: true, probe.ProbSegmentHTTP: true, probe.ProbSegmentTruncated: true, probe.ProbSegmentSlow: true,
+	probe.ProbKeyUnavailable: true, probe.ProbInitUnavailable: true,
+}
+
 // serverIncidentDetails is what a server's incident tells besides its message.
 type serverIncidentDetails struct {
 	// Streams had the problem at the latest look; Example is what one of
@@ -81,7 +91,7 @@ func (s *Server) WatchServers(ctx context.Context) {
 	for _, in := range incidents {
 		// Only what is there now: an incident stays open for a while after
 		// the problem is gone, and one whose agent fell silent says nothing.
-		if !in.Active || now.Sub(in.LastSeen) > 2*time.Minute {
+		if !serverKinds[in.Kind] || !in.Active || now.Sub(in.LastSeen) > 2*time.Minute {
 			continue
 		}
 		node := incidentServer(in.Details)
@@ -119,8 +129,19 @@ func (s *Server) WatchServers(ctx context.Context) {
 		report(store.ServerIncident{Host: k.host, IP: k.ip, Kind: k.kind, Severity: g.severity, Streams: len(g.streams),
 			Message: fmt.Sprintf("%d streams at once: %s", len(g.streams), g.example)}, d)
 	}
+	// Loss that hovers about the limit would begin and end all the time:
+	// an incident that is open goes on until the loss is down to half of it.
+	losing := map[[2]string]bool{}
+	if openNow, err := s.st.ListServerIncidents(ctx, true, 2000); err == nil {
+		for _, in := range openNow {
+			if in.Kind == KindNetworkLoss {
+				losing[[2]string{in.Host, in.IP}] = true
+			}
+		}
+	}
 	for k, n := range s.serverNetworks(ctx, now) {
-		if !n.Lossy {
+		still := losing[k] && n.Requests >= lossyRequests && n.Retransmits/n.Requests > lossyShare/2
+		if !n.Lossy && !still {
 			continue
 		}
 		report(store.ServerIncident{Host: k[0], IP: k[1], Kind: KindNetworkLoss, Severity: probe.SevWarn,

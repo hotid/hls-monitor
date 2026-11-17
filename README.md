@@ -100,7 +100,7 @@ The interval set for a stream is an upper bound: if the playlist window is short
 
 Segments are downloaded once each: every cycle fetches only those that appeared since the previous one. For ended broadcasts and VOD, segments are checked one per cycle, round-robin.
 
-A problem that persists for several cycles becomes an incident. An incident is closed after three clean cycles in a row and no sooner than 30 seconds after the problem was last seen. The playlist text at the moment the problem started is saved.
+A problem that persists for several cycles becomes an incident. An incident is closed after three clean cycles in a row and no sooner than 30 seconds after the problem was last seen. The playlist text at the moment the problem started is saved. A problem that comes back within ten minutes of ending continues the same incident: it tells how many times it began, and its duration leaves out the pauses. When three or more streams of one server have the same problem of answering at once — an HTTP error, an unreachable or stale playlist, failing segments — that is an incident of the server, one line with the streams listed instead of one per stream; so is a server to which more than 5 % of the requests needed a TCP retransmission.
 
 The details of an incident also say where to look for its cause: whether the other vantage points saw the same problem, and whether other streams served by the same server had it at the same time. It is a guess from that evidence, and is worded as one.
 

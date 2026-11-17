@@ -81,7 +81,7 @@
   "ratio": "Ratio",
   "ratioToBANDWIDTHFromTheMultivariant": "Ratio to BANDWIDTH from the multivariant playlist",
   "retransmits": "Sent again by the monitor",
-  "roundTripTime": "Round trip time to the server",
+  "roundTripTime": "RTT to the server",
   "roundTripTimeHint": "By the kernel's count on the connection the answer came over: the network between the vantage point and the server, without the server's own time.",
   "segmentBitrate": "Segment bitrate",
   "segmentDoesNotStartWithA": "Segment does not start with a keyframe",

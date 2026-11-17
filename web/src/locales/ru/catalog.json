@@ -81,7 +81,7 @@
   "ratio": "Отношение",
   "ratioToBANDWIDTHFromTheMultivariant": "Отношение к BANDWIDTH из мастер-плейлиста",
   "retransmits": "Отправлено повторно монитором",
-  "roundTripTime": "Время туда-обратно до сервера",
+  "roundTripTime": "RTT до сервера",
   "roundTripTimeHint": "По счёту ядра на соединении, по которому пришёл ответ: сеть между точкой наблюдения и сервером, без времени самого сервера.",
   "segmentBitrate": "Битрейт сегментов",
   "segmentDoesNotStartWithA": "Сегмент начинается не с ключевого кадра",

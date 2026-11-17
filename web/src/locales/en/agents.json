@@ -26,7 +26,7 @@
   "latinLettersDigitsDotHyphenAnd": "Latin letters, digits, dot, hyphen and underscore. Usually the place the agent will watch from.",
   "linkFailing": "Requests to the server fail: {failed} of {total}",
   "linkHint": "Measured by the agent on its own requests. TCP segments sent again since the agent started: {n}.",
-  "linkSlow": "The way to the server is slow: round trip {ms} ms",
+  "linkSlow": "The way to the server is slow: RTT {ms} ms",
   "newToken": "New token",
   "offline": "Offline",
   "online": "Online",
