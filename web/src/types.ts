@@ -292,7 +292,7 @@ export interface SystemInfo {
   version: string
   time: string
   local_streams: number
-  metrics: { enabled: boolean; queued_bytes: number; dropped_batches: number }
+  metrics: { enabled: boolean; queued_bytes: number; disk_bytes: number; dropped_batches: number }
   metrics_up: boolean
   public_url: string
   storage: {

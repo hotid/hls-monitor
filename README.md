@@ -142,6 +142,7 @@ Every setting is given as a flag or an environment variable.
 | `HLSMON_JOURNAL_MAX_MB` | `-journal-max-mb` | `512` | Size in MiB that the journal file cannot exceed |
 | `HLSMON_BODY_MEMORY_MB` | `-body-memory-mb` | `1024` | MiB of segment bodies all local checks together may hold in memory; a download waits when there is no room. The agent has the same setting |
 | `HLSMON_PRIVATE_NETWORKS` | `-private-networks` | `same` | Whether checks may connect to addresses that are not public (loopback, private, link-local, carrier and container ranges). `same`: only for a stream whose own address is such — a stream on a public address cannot lead the monitor inside by a redirect or by what its playlists name; `allow`: no restriction; `deny`: never. Applied to the address actually connected to, after name resolution; not applied when requests go through a proxy. The agent has the same setting |
+| `HLSMON_METRICS_QUEUE_MAX_MB` | `-metrics-queue-max-mb` | `1024` | MiB of disk for samples VictoriaMetrics has not taken yet. They are kept compressed (about twelvefold) in `metrics-queue` next to the database while it is away and across restarts of the server, and written with their original time when it returns; beyond the limit the oldest are dropped |
 | `HLSMON_SNAPSHOT_RETENTION` | `-snapshot-retention` | `168h` | Retention of playlist snapshots |
 | `HLSMON_INCIDENT_RETENTION` | `-incident-retention` | `2160h` | Retention of closed incidents |
 | `HLSMON_EVENT_RETENTION` | `-event-retention` | `168h` | Retention of closed events (informational incidents) |
@@ -165,6 +166,24 @@ location /hls-monitor/ {
     client_max_body_size 64m;                   # batches of results from agents
 }
 ```
+
+## Backup
+
+Everything that is configured lives in the server's volume: `hls-monitor.db` (streams, users, tokens, agent keys, incidents) and `hls-monitor-journal.db` (the segment journal; restoring it is optional). The database runs in WAL mode, so the file of a running server must not be copied: the copy may be inconsistent. Stop the server for a few seconds — agents keep their results meanwhile and deliver them afterwards:
+
+```sh
+docker compose stop server
+docker run --rm -v hls-monitor_server-data:/data:ro -v "$PWD":/backup alpine tar czf /backup/hls-monitor-data.tgz -C /data .
+docker compose start server
+```
+
+Restore into an empty volume, with the server stopped:
+
+```sh
+docker run --rm -v hls-monitor_server-data:/data -v "$PWD":/backup:ro alpine tar xzf /backup/hls-monitor-data.tgz -C /data
+```
+
+Numeric series live in the volume of VictoriaMetrics and are not part of this copy; without them only the charts of the past are lost. They are backed up with [the means of VictoriaMetrics](https://docs.victoriametrics.com/victoriametrics/single-server-victoriametrics/#how-to-work-with-snapshots).
 
 ## Users
 

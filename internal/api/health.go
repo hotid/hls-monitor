@@ -202,7 +202,8 @@ func (s *Server) selfMetrics(c *gin.Context) {
 	if mx.Enabled {
 		metric("hlsmon_time_series_up", "gauge", "1 when the time series storage answers.", flag(s.mx.Healthy(ctx)))
 	}
-	metric("hlsmon_time_series_queued_bytes", "gauge", "Samples waiting to be written to it.", float64(mx.QueuedBytes))
+	metric("hlsmon_time_series_queued_bytes", "gauge", "Samples waiting in memory to be written to it.", float64(mx.QueuedBytes))
+	metric("hlsmon_time_series_disk_bytes", "gauge", "Samples waiting on disk, compressed: it is, or was until now, away.", float64(mx.DiskBytes))
 	metric("hlsmon_time_series_dropped_batches_total", "counter", "Batches of samples given up.", float64(mx.DroppedBatches))
 
 	agents, err := s.st.ListAgents(ctx)

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -741,5 +742,67 @@ func TestSelfDiagnostics(t *testing.T) {
 	admin.want(http.StatusOK, "GET", "/api/v1/system", nil, &sys)
 	if sys.Load.Overloaded || sys.Results.Failed != 0 {
 		t.Errorf("system = %+v", sys)
+	}
+}
+
+// Series of a deleted stream are removed from the time series storage
+// even when it is away at that moment, and once more after everything
+// that was on its way there has arrived.
+func TestSeriesOfDeletedStreamAreRemoved(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var mu sync.Mutex
+	var deleted []string
+	down := true
+	vm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if down {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		if r.URL.Path == "/api/v1/admin/tsdb/delete_series" {
+			deleted = append(deleted, r.URL.Query().Get("match[]"))
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer vm.Close()
+	mx := metrics.New(vm.URL, slog.New(slog.DiscardHandler))
+	srv := New(Config{Version: "test"}, st, mx, ingest.New(st, mx, nil), nil, nil, slog.New(slog.DiscardHandler))
+	now := time.Now()
+	srv.now = func() time.Time { return now }
+
+	s, err := st.CreateStream(ctx, store.StreamInput{Name: "gone", URL: "http://x/a.m3u8", Enabled: true, Level: "header"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteStream(ctx, s.ID); err != nil {
+		t.Fatal(err)
+	}
+	pending := func() int { p, _ := st.SeriesDeletions(ctx); return len(p) }
+	got := func() []string { mu.Lock(); defer mu.Unlock(); return append([]string(nil), deleted...) }
+
+	srv.PurgeSeries(ctx)
+	if pending() != 1 || len(got()) != 0 {
+		t.Fatalf("while the storage is away the deletion must wait: pending %d, deleted %v", pending(), got())
+	}
+	mu.Lock()
+	down = false
+	mu.Unlock()
+	srv.PurgeSeries(ctx)
+	if d := got(); len(d) != 1 || d[0] != `{stream="1"}` {
+		t.Fatalf("deleted = %v", d)
+	}
+	if pending() != 1 {
+		t.Fatal("samples may still be on their way: the deletion must be repeated later")
+	}
+	now = now.Add(3 * time.Minute)
+	srv.PurgeSeries(ctx)
+	if len(got()) != 2 || pending() != 0 {
+		t.Errorf("deleted %v, pending %d", got(), pending())
 	}
 }

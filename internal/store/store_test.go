@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -240,5 +241,80 @@ func TestStreamsRebuildKeepsReferences(t *testing.T) {
 	}
 	if v, _ := s.ListVariants(ctx, 7); len(v) != 0 {
 		t.Errorf("deleting a stream no longer cascades: %+v", v)
+	}
+}
+
+// Time series live elsewhere and carry the identifiers of streams and
+// agents: one that was deleted is never given to something new, and its
+// series are remembered as still to be deleted.
+func TestRetiredIdentifiers(t *testing.T) {
+	st, err := Open(context.Background(), filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	now := time.Now()
+	stream := func(name string) int64 {
+		s, err := st.CreateStream(ctx, StreamInput{Name: name, URL: "http://x/" + name + ".m3u8", Enabled: true, Level: "header", AgentIDs: []int64{LocalAgentID}}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s.ID
+	}
+	agent := func(name string) int64 {
+		a, err := st.CreateAgent(ctx, name, []byte(name), now.Add(time.Hour), now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a.ID
+	}
+
+	a, b := stream("a"), stream("b")
+	if a != 1 || b != 2 {
+		t.Fatalf("stream ids = %d, %d", a, b)
+	}
+	// The newest one is deleted: without the record of it, its number
+	// would be the next one given out.
+	if err := st.DeleteStream(ctx, b); err != nil {
+		t.Fatal(err)
+	}
+	if c := stream("c"); c != 3 {
+		t.Errorf("a new stream got id %d: the id of the deleted one, or not the next", c)
+	}
+	if err := st.DeleteStream(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	if d := stream("d"); d != 4 {
+		t.Errorf("stream id = %d, want 4", d)
+	}
+
+	first := agent("edge-1")
+	if first != LocalAgentID+1 {
+		t.Fatalf("agent id = %d", first)
+	}
+	if err := st.DeleteAgent(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	if second := agent("edge-2"); second != first+1 {
+		t.Errorf("a new agent got id %d, want %d", second, first+1)
+	}
+
+	pending, err := st.SeriesDeletions(ctx)
+	if err != nil || len(pending) != 3 {
+		t.Fatalf("pending deletions = %+v, %v", pending, err)
+	}
+	seen := map[string]bool{}
+	for _, d := range pending {
+		seen[fmt.Sprintf("%s/%d", d.Label, d.ID)] = true
+	}
+	if !seen["stream/1"] || !seen["stream/2"] || !seen["agent/2"] {
+		t.Errorf("pending deletions = %+v", pending)
+	}
+	if err := st.SeriesDeleted(ctx, "stream", 1); err != nil {
+		t.Fatal(err)
+	}
+	if pending, _ = st.SeriesDeletions(ctx); len(pending) != 2 {
+		t.Errorf("after one was carried out: %+v", pending)
 	}
 }

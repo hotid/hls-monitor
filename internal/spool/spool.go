@@ -1,4 +1,7 @@
-package agent
+// Package spool keeps records on disk until whoever they are for has taken
+// them: an agent's results until the server stored them, the server's
+// samples until the time series storage did.
+package spool
 
 import (
 	"encoding/binary"
@@ -12,16 +15,15 @@ import (
 	"time"
 )
 
-// The spool keeps results on disk until the server has taken them, so that
-// neither a long outage of the server nor a restart of the agent loses
-// them. It is a directory of files, each a batch: records of a four-byte
-// big-endian length and the JSON of one result. Results are appended to
-// the newest file; the sender takes the oldest one, and deletes it once the
-// server has stored it. A file is never larger than one request, unless a
-// single result is.
+// A spool is a directory of files, each a batch: records of a four-byte
+// big-endian length and their bytes. Records are appended to the newest
+// file; the sender takes the oldest one, and deletes it once the receiver
+// has it. A file is never larger than one request, unless a single record
+// is. Neither a long outage of the receiver nor a restart of the sender
+// loses what is in it.
 //
 // A file is synced when it is closed, not on every record: a power failure
-// may lose the last seconds of results, a crash or a restart of the agent
+// may lose the last seconds of records, a crash or a restart of the process
 // loses nothing. A record cut short by a crash ends the file it is in.
 
 const spoolExt = ".q"
@@ -34,7 +36,8 @@ type spoolFile struct {
 	created time.Time
 }
 
-type spool struct {
+// Spool is a queue of records on disk. It is safe for concurrent use.
+type Spool struct {
 	dir      string
 	maxBytes int64
 	maxFile  int64
@@ -50,11 +53,13 @@ type spool struct {
 	droppedTotal int64
 }
 
-func openSpool(dir string, maxBytes, maxFile int64) (*spool, error) {
+// Open opens the spool in dir, creating it if needed. maxBytes bounds its
+// size: beyond it the oldest records are dropped. maxFile bounds a batch.
+func Open(dir string, maxBytes, maxFile int64) (*Spool, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	s := &spool{dir: dir, maxBytes: maxBytes, maxFile: maxFile}
+	s := &Spool{dir: dir, maxBytes: maxBytes, maxFile: maxFile}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
@@ -92,7 +97,7 @@ func openSpool(dir string, maxBytes, maxFile int64) (*spool, error) {
 	return s, nil
 }
 
-func (s *spool) path(seq uint64) string {
+func (s *Spool) path(seq uint64) string {
 	return filepath.Join(s.dir, fmt.Sprintf("%016d%s", seq, spoolExt))
 }
 
@@ -116,7 +121,7 @@ func readSpoolFile(path string) ([][]byte, error) {
 }
 
 // seal closes the file being written. The caller holds the lock.
-func (s *spool) seal() {
+func (s *Spool) seal() {
 	if s.active != nil {
 		_ = s.active.Sync()
 		_ = s.active.Close()
@@ -124,8 +129,8 @@ func (s *spool) seal() {
 	}
 }
 
-// add appends one result.
-func (s *spool) add(b []byte) error {
+// Add appends one result.
+func (s *Spool) Add(b []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.active != nil && s.files[len(s.files)-1].size+int64(len(b)) > s.maxFile {
@@ -165,7 +170,7 @@ func (s *spool) add(b []byte) error {
 }
 
 // remove deletes the i-th file. The caller holds the lock.
-func (s *spool) remove(i int) {
+func (s *Spool) remove(i int) {
 	f := s.files[i]
 	if i == len(s.files)-1 {
 		s.seal()
@@ -175,9 +180,9 @@ func (s *spool) remove(i int) {
 	s.files = append(s.files[:i], s.files[i+1:]...)
 }
 
-// next returns the oldest batch and its number; nil when the spool is
+// Next returns the oldest batch and its number; nil when the spool is
 // empty. A file that cannot be read is given up.
-func (s *spool) next() (seq uint64, records [][]byte) {
+func (s *Spool) Next() (seq uint64, records [][]byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for len(s.files) > 0 {
@@ -194,9 +199,9 @@ func (s *spool) next() (seq uint64, records [][]byte) {
 	return 0, nil
 }
 
-// done tells that the first n records of the batch are not to be sent
+// Done tells that the first n records of the batch are not to be sent
 // again. The rest, if any, stays at the head of the spool.
-func (s *spool) done(seq uint64, records [][]byte, n int) error {
+func (s *Spool) Done(seq uint64, records [][]byte, n int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.files) == 0 || s.files[0].seq != seq {
@@ -241,8 +246,8 @@ func writeSynced(path string, data []byte) error {
 	return errors.Join(err, f.Close())
 }
 
-// queued reports how many results wait and how many bytes they take.
-func (s *spool) queued() (records int, bytes int64) {
+// Queued reports how many results wait and how many bytes they take.
+func (s *Spool) Queued() (records int, bytes int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, f := range s.files {
@@ -251,9 +256,9 @@ func (s *spool) queued() (records int, bytes int64) {
 	return records, s.total
 }
 
-// stats reports what waits, how long the oldest of it has been waiting and
+// Stats reports what waits, how long the oldest of it has been waiting and
 // how many results were dropped for space since the start.
-func (s *spool) stats() (records int, bytes int64, oldest time.Duration, dropped int64) {
+func (s *Spool) Stats() (records int, bytes int64, oldest time.Duration, dropped int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, f := range s.files {
@@ -265,7 +270,7 @@ func (s *spool) stats() (records int, bytes int64, oldest time.Duration, dropped
 	return records, s.total, oldest, s.droppedTotal
 }
 
-func (s *spool) takeDropped() int {
+func (s *Spool) TakeDropped() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := s.dropped
@@ -273,7 +278,7 @@ func (s *spool) takeDropped() int {
 	return n
 }
 
-func (s *spool) close() {
+func (s *Spool) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.seal()

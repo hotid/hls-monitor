@@ -2161,6 +2161,9 @@ const docTemplate = `{
         "github_com_hotid_hls-monitor_internal_metrics.Stats": {
             "type": "object",
             "properties": {
+                "disk_bytes": {
+                    "type": "integer"
+                },
                 "dropped_batches": {
                     "type": "integer"
                 },
@@ -2168,6 +2171,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "queued_bytes": {
+                    "description": "QueuedBytes wait in memory, DiskBytes (compressed) on disk.",
                     "type": "integer"
                 }
             }
@@ -2538,6 +2542,10 @@ const docTemplate = `{
                     "description": "Behind counts the streams whose latest cycle started later than it\nshould have by more than its own interval, not counting the time the\ncheck before it took: a stream that answers slowly makes its own\nchecks late, and that is reported as its problem. What is left is\nthe runner's: results that wait to be stored, a processor that is\nbusy.",
                     "type": "integer"
                 },
+                "crashed_cycles": {
+                    "description": "Crashed counts the cycles that ended in a fault of the checking\ncode itself; each is in the log with its stack.",
+                    "type": "integer"
+                },
                 "cycles": {
                     "description": "Cycles counts the cycles made since the start, Unreliable those of\nthem made while the process was overloaded.",
                     "type": "integer"
@@ -2551,6 +2559,10 @@ const docTemplate = `{
                 },
                 "running": {
                     "description": "Running is how many cycles are being made right now.",
+                    "type": "integer"
+                },
+                "short_cycles": {
+                    "description": "Short counts the cycles that started late and therefore looked only\nat the latest segment of each playlist, to catch up.",
                     "type": "integer"
                 },
                 "streams": {

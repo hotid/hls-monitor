@@ -53,7 +53,7 @@ func scanAgent(row interface{ Scan(...any) error }) (*Agent, error) {
 // CreateAgent registers a remote agent that can enroll with the given token hash.
 func (s *Store) CreateAgent(ctx context.Context, name string, enrollHash []byte, enrollExpires, now time.Time) (*Agent, error) {
 	res, err := s.db.ExecContext(ctx,
-		"INSERT INTO agents (name, kind, enroll_hash, enroll_expires, created_at) VALUES (?, 'remote', ?, ?, ?)",
+		"INSERT INTO agents (id, name, kind, enroll_hash, enroll_expires, created_at) VALUES ("+nextID("agents", "agent")+", ?, 'remote', ?, ?, ?)",
 		name, enrollHash, toMs(enrollExpires), toMs(now))
 	if isUnique(err) {
 		return nil, ErrConflict
@@ -106,7 +106,13 @@ func (s *Store) DeleteAgent(ctx context.Context, id int64) error {
 	if id == LocalAgentID {
 		return ErrLocalAgent
 	}
-	if err := affected(s.db.ExecContext(ctx, "DELETE FROM agents WHERE id = ?", id)); err != nil {
+	err := s.Tx(ctx, func(tx *Tx) error {
+		if err := affected(tx.q.ExecContext(ctx, "DELETE FROM agents WHERE id = ?", id)); err != nil {
+			return err
+		}
+		return tx.retire(ctx, "agent", id)
+	})
+	if err != nil {
 		return err
 	}
 	return s.dropJournal(ctx, "agent_id", id)

@@ -26,6 +26,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/runner"
 	"github.com/hotid/hls-monitor/internal/selfstat"
+	"github.com/hotid/hls-monitor/internal/spool"
 )
 
 const (
@@ -69,7 +70,7 @@ type Agent struct {
 
 	revision string
 
-	spool *spool
+	spool *spool.Spool
 	// writeFailed is set while results cannot be written to the queue, so
 	// that the log says it once.
 	writeFailed atomic.Bool
@@ -81,7 +82,7 @@ func (a *Agent) status() agentproto.Status {
 	var st agentproto.Status
 	if a.spool != nil {
 		var oldest time.Duration
-		st.QueueResults, st.QueueBytes, oldest, st.QueueDropped = a.spool.stats()
+		st.QueueResults, st.QueueBytes, oldest, st.QueueDropped = a.spool.Stats()
 		st.QueueOldestSec = float64(oldest.Milliseconds()) / 1000
 	}
 	st.QueueFailing = a.writeFailed.Load()
@@ -122,11 +123,11 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.QueueBytes <= 0 {
 		opt.QueueBytes = DefaultQueueBytes
 	}
-	if a.spool, err = openSpool(dir, opt.QueueBytes, maxBatchBytes); err != nil {
+	if a.spool, err = spool.Open(dir, opt.QueueBytes, maxBatchBytes); err != nil {
 		return fmt.Errorf("open the result queue in %s: %w", dir, err)
 	}
-	defer a.spool.close()
-	if n, size := a.spool.queued(); n > 0 {
+	defer a.spool.Close()
+	if n, size := a.spool.Queued(); n > 0 {
 		a.log.Info("undelivered results from the previous run will be sent", "results", n, "bytes", size)
 	}
 	a.run = runner.New(a.enqueue, "hls-monitor-agent/"+opt.Version, opt.Log)
@@ -329,7 +330,7 @@ func (a *Agent) enqueue(_ context.Context, r *probe.Result) {
 		a.log.Error("cannot encode a result", "error", err)
 		return
 	}
-	if err := a.spool.add(b); err != nil {
+	if err := a.spool.Add(b); err != nil {
 		if !a.writeFailed.Swap(true) {
 			a.log.Error("cannot write to the result queue, results are being lost", "error", err)
 		}
@@ -357,10 +358,10 @@ func (a *Agent) sendLoop(ctx context.Context) {
 // a delivery fails.
 func (a *Agent) flush(ctx context.Context) {
 	for ctx.Err() == nil {
-		if dropped := a.spool.takeDropped(); dropped > 0 {
+		if dropped := a.spool.TakeDropped(); dropped > 0 {
 			a.log.Warn("the result queue reached its size limit, oldest results were dropped", "dropped", dropped)
 		}
-		seq, batch := a.spool.next()
+		seq, batch := a.spool.Next()
 		n := len(batch)
 		if n == 0 {
 			return
@@ -386,7 +387,7 @@ func (a *Agent) flush(ctx context.Context) {
 			// disabled, the batch is malformed): sending it again cannot help.
 			a.log.Warn("the server refused a batch of results", "status", status, "results", n)
 		}
-		if err := a.spool.done(seq, batch, done); err != nil {
+		if err := a.spool.Done(seq, batch, done); err != nil {
 			a.log.Error("cannot update the result queue; some results may be sent twice", "error", err)
 			return
 		}

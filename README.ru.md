@@ -142,6 +142,7 @@ Compose поднимает два контейнера: сервер и Victoria
 | `HLSMON_JOURNAL_MAX_MB` | `-journal-max-mb` | `512` | Размер в МиБ, который файл журнала не может превысить |
 | `HLSMON_BODY_MEMORY_MB` | `-body-memory-mb` | `1024` | Сколько МиБ тел сегментов все локальные проверки вместе могут держать в памяти; при нехватке загрузка ждёт. У агента та же настройка |
 | `HLSMON_PRIVATE_NETWORKS` | `-private-networks` | `same` | Можно ли проверкам соединяться с непубличными адресами (loopback, частные, link-local, операторские и контейнерные диапазоны). `same`: только для потока, чей собственный адрес такой, — поток с публичным адресом не уведёт монитор внутрь ни редиректом, ни тем, что названо в его плейлистах; `allow`: без ограничений; `deny`: никогда. Проверяется адрес, с которым реально устанавливается соединение, после разрешения имени; при работе через прокси не применяется. У агента та же настройка |
+| `HLSMON_METRICS_QUEUE_MAX_MB` | `-metrics-queue-max-mb` | `1024` | Сколько МиБ диска отведено значениям, которые VictoriaMetrics ещё не приняла. Пока она недоступна и при перезапусках сервера они лежат сжатыми (примерно в двенадцать раз) в `metrics-queue` рядом с базой и записываются с исходным временем, когда она возвращается; сверх лимита удаляются самые старые |
 | `HLSMON_SNAPSHOT_RETENTION` | `-snapshot-retention` | `168h` | Срок хранения снимков плейлистов |
 | `HLSMON_INCIDENT_RETENTION` | `-incident-retention` | `2160h` | Срок хранения закрытых инцидентов |
 | `HLSMON_EVENT_RETENTION` | `-event-retention` | `168h` | Срок хранения закрытых событий (информационных инцидентов) |
@@ -165,6 +166,24 @@ location /hls-monitor/ {
     client_max_body_size 64m;                   # пачки результатов от агентов
 }
 ```
+
+## Резервная копия
+
+Всё, что настроено, лежит в томе сервера: `hls-monitor.db` (потоки, пользователи, токены, ключи агентов, инциденты) и `hls-monitor-journal.db` (журнал сегментов, восстанавливать не обязательно). База работает в режиме WAL, поэтому копировать файл у работающего сервера нельзя: копия может оказаться несогласованной. Остановите сервер на несколько секунд — агенты в это время копят результаты у себя и дошлют их:
+
+```sh
+docker compose stop server
+docker run --rm -v hls-monitor_server-data:/data:ro -v "$PWD":/backup alpine tar czf /backup/hls-monitor-data.tgz -C /data .
+docker compose start server
+```
+
+Восстановление — на пустой том, при остановленном сервере:
+
+```sh
+docker run --rm -v hls-monitor_server-data:/data -v "$PWD":/backup:ro alpine tar xzf /backup/hls-monitor-data.tgz -C /data
+```
+
+Числовые ряды живут в томе VictoriaMetrics и в копию не входят; без них пропадут только графики за прошлое. Их копия делается [средствами VictoriaMetrics](https://docs.victoriametrics.com/victoriametrics/single-server-victoriametrics/#how-to-work-with-snapshots).
 
 ## Пользователи
 

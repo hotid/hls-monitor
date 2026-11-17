@@ -399,14 +399,7 @@ func (s *Server) deleteStream(c *gin.Context) {
 		return
 	}
 	s.configChanged(ctx)
-	// Series are removed in the background: it does not have to hold the response.
-	go func() {
-		dctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := s.mx.DeleteStream(dctx, id); err != nil {
-			s.log.Warn("cannot delete series of a removed stream", "stream", id, "error", err)
-		}
-	}()
+	s.purgeSeriesSoon()
 	c.Status(http.StatusNoContent)
 }
 

@@ -212,11 +212,14 @@ definitions:
     type: object
   github_com_hotid_hls-monitor_internal_metrics.Stats:
     properties:
+      disk_bytes:
+        type: integer
       dropped_batches:
         type: integer
       enabled:
         type: boolean
       queued_bytes:
+        description: QueuedBytes wait in memory, DiskBytes (compressed) on disk.
         type: integer
     type: object
   github_com_hotid_hls-monitor_internal_probe.Endpoint:
@@ -493,6 +496,11 @@ definitions:
           the runner's: results that wait to be stored, a processor that is
           busy.
         type: integer
+      crashed_cycles:
+        description: |-
+          Crashed counts the cycles that ended in a fault of the checking
+          code itself; each is in the log with its stack.
+        type: integer
       cycles:
         description: |-
           Cycles counts the cycles made since the start, Unreliable those of
@@ -507,6 +515,11 @@ definitions:
         type: number
       running:
         description: Running is how many cycles are being made right now.
+        type: integer
+      short_cycles:
+        description: |-
+          Short counts the cycles that started late and therefore looked only
+          at the latest segment of each playlist, to catch up.
         type: integer
       streams:
         type: integer

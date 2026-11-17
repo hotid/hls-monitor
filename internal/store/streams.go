@@ -106,8 +106,8 @@ func (s *Store) CreateStream(ctx context.Context, in StreamInput, now time.Time)
 	var id int64
 	err := s.Tx(ctx, func(tx *Tx) error {
 		res, err := tx.q.ExecContext(ctx, `
-			INSERT INTO streams (name, url, enabled, level, interval_sec, timeout_sec, max_segments, headers, insecure, notes, created_at, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			INSERT INTO streams (id, name, url, enabled, level, interval_sec, timeout_sec, max_segments, headers, insecure, notes, created_at, updated_at)
+			VALUES (`+nextID("streams", "stream")+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			in.Name, in.URL, in.Enabled, in.Level, in.IntervalSec, in.TimeoutSec, in.MaxSegments,
 			headersJSON(in.Headers), in.Insecure, in.Notes, toMs(now), toMs(now))
 		if err != nil {
@@ -174,10 +174,71 @@ func (s *Store) SetStreamEnabled(ctx context.Context, id int64, enabled bool, no
 
 // DeleteStream removes a stream with all its history.
 func (s *Store) DeleteStream(ctx context.Context, id int64) error {
-	if err := affected(s.db.ExecContext(ctx, "DELETE FROM streams WHERE id = ?", id)); err != nil {
+	err := s.Tx(ctx, func(tx *Tx) error {
+		if err := affected(tx.q.ExecContext(ctx, "DELETE FROM streams WHERE id = ?", id)); err != nil {
+			return err
+		}
+		return tx.retire(ctx, "stream", id)
+	})
+	if err != nil {
 		return err
 	}
 	return s.dropJournal(ctx, "stream_id", id)
+}
+
+// nextID is the SQL of the identifier for a new row: above every one in
+// use and every one retired.
+func nextID(table, kind string) string {
+	return `(SELECT MAX(COALESCE((SELECT MAX(id) FROM ` + table + `), 0), COALESCE((SELECT last FROM retired_ids WHERE kind = '` + kind + `'), 0)) + 1)`
+}
+
+// retire records that an identifier is never to be given out again and
+// that its time series are to be deleted.
+func (tx *Tx) retire(ctx context.Context, kind string, id int64) error {
+	if _, err := tx.q.ExecContext(ctx, `
+		INSERT INTO retired_ids (kind, last) VALUES (?, ?)
+		ON CONFLICT (kind) DO UPDATE SET last = MAX(last, excluded.last)`, kind, id); err != nil {
+		return err
+	}
+	_, err := tx.q.ExecContext(ctx, `
+		INSERT INTO series_deletions (label, id, created_at) VALUES (?, ?, ?)
+		ON CONFLICT (label, id) DO NOTHING`, kind, id, toMs(time.Now()))
+	return err
+}
+
+// SeriesDeletion is a set of time series waiting to be deleted: every
+// series whose label has this value.
+type SeriesDeletion struct {
+	Label     string
+	ID        int64
+	CreatedAt time.Time
+}
+
+// SeriesDeletions lists what is still to be deleted from the time series
+// storage.
+func (s *Store) SeriesDeletions(ctx context.Context) ([]SeriesDeletion, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT label, id, created_at FROM series_deletions ORDER BY created_at")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SeriesDeletion
+	for rows.Next() {
+		var d SeriesDeletion
+		var at int64
+		if err := rows.Scan(&d.Label, &d.ID, &at); err != nil {
+			return nil, err
+		}
+		d.CreatedAt = fromMs(at)
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// SeriesDeleted forgets a deletion that has been carried out.
+func (s *Store) SeriesDeleted(ctx context.Context, label string, id int64) error {
+	_, err := s.db.ExecContext(ctx, "DELETE FROM series_deletions WHERE label = ? AND id = ?", label, id)
+	return err
 }
 
 func (s *Store) GetStream(ctx context.Context, id int64) (*Stream, error) {

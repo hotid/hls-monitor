@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"compress/gzip"
 	"context"
 	"io"
 	"math"
@@ -110,5 +111,132 @@ func TestDisabledClient(t *testing.T) {
 	}
 	if s, err := c.QueryRange(context.Background(), "x", time.Now(), time.Now(), time.Second); err != nil || len(s) != 0 {
 		t.Errorf("disabled query = %v, %v", s, err)
+	}
+}
+
+// importServer stands in for VictoriaMetrics: it can be down, and keeps
+// the lines it was given, whether compressed or not.
+type importServer struct {
+	*httptest.Server
+	mu     sync.Mutex
+	status int
+	lines  []string
+}
+
+func newImportServer(t *testing.T) *importServer {
+	s := &importServer{status: http.StatusNoContent}
+	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.status != http.StatusNoContent {
+			http.Error(w, "no", s.status)
+			return
+		}
+		var body io.Reader = r.Body
+		if r.Header.Get("Content-Encoding") == "gzip" {
+			zr, err := gzip.NewReader(r.Body)
+			if err != nil {
+				t.Errorf("bad gzip body: %v", err)
+				http.Error(w, "bad gzip", http.StatusBadRequest)
+				return
+			}
+			body = zr
+		}
+		b, err := io.ReadAll(body)
+		if err != nil {
+			t.Errorf("reading the body: %v", err)
+		}
+		s.lines = append(s.lines, strings.Split(strings.TrimSpace(string(b)), "\n")...)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(s.Close)
+	return s
+}
+
+func (s *importServer) set(status int) { s.mu.Lock(); s.status = status; s.mu.Unlock() }
+func (s *importServer) count() int     { s.mu.Lock(); defer s.mu.Unlock(); return len(s.lines) }
+
+func manySamples(n int, from time.Time) []Sample {
+	out := make([]Sample, n)
+	for i := range out {
+		out[i] = Sample{Name: "hls_segment_total_seconds", Stream: int64(i%400 + 1), Agent: 1, Variant: int64(i%900 + 1), Value: float64(i) / 7, Time: from.Add(time.Duration(i) * time.Millisecond)}
+	}
+	return out
+}
+
+// VictoriaMetrics is away for longer than memory can hold, and the server
+// is restarted meanwhile: nothing is lost.
+func TestSamplesWaitOnDisk(t *testing.T) {
+	vm := newImportServer(t)
+	vm.set(http.StatusServiceUnavailable)
+	dir := t.TempDir()
+	ts := time.UnixMilli(1700000000000)
+
+	c := New(vm.URL, nil)
+	if err := c.UseDisk(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	// More than is kept in memory: it goes to disk as it comes.
+	const n = 150000
+	for i := 0; i < n; i += 1000 {
+		c.Write(manySamples(1000, ts.Add(time.Duration(i)*time.Second)))
+	}
+	st := c.Stats()
+	if st.DiskBytes == 0 || st.QueuedBytes > spillBytes || st.DroppedBatches != 0 || !c.Backlog() {
+		t.Fatalf("samples must have gone to disk: %+v", st)
+	}
+	if raw := n * 80; st.DiskBytes > int64(raw/4) {
+		t.Errorf("the queue on disk takes %d bytes for about %d of samples: not compressed?", st.DiskBytes, raw)
+	}
+	// The server stops: what is still in memory is written out.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c.Run(ctx)
+
+	c = New(vm.URL, nil)
+	if err := c.UseDisk(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	if !c.Backlog() {
+		t.Fatal("the samples of the previous run are gone")
+	}
+	if err := c.Flush(context.Background()); err == nil {
+		t.Fatal("flush must fail while VictoriaMetrics is away")
+	}
+	vm.set(http.StatusNoContent)
+	if err := c.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := vm.count(); got != n {
+		t.Errorf("VictoriaMetrics received %d samples, want %d", got, n)
+	}
+	if st := c.Stats(); st.DiskBytes != 0 || st.QueuedBytes != 0 || st.DroppedBatches != 0 || c.Backlog() {
+		t.Errorf("after delivery: %+v", st)
+	}
+}
+
+// A batch VictoriaMetrics will not take is dropped and counted; it does
+// not hold up what comes after it.
+func TestRefusedBatchIsDropped(t *testing.T) {
+	vm := newImportServer(t)
+	vm.set(http.StatusBadRequest)
+	c := New(vm.URL, nil)
+	c.Write(manySamples(10, time.UnixMilli(1700000000000)))
+	if err := c.Flush(context.Background()); err != nil {
+		t.Fatalf("a refused batch must not be an error to retry: %v", err)
+	}
+	if st := c.Stats(); st.QueuedBytes != 0 || st.DroppedBatches != 1 {
+		t.Errorf("stats = %+v", st)
+	}
+	vm.set(http.StatusNoContent)
+	c.Write(manySamples(5, time.UnixMilli(1700000100000)))
+	if err := c.Flush(context.Background()); err != nil || vm.count() != 5 {
+		t.Errorf("what came after must be delivered: %v, %d", err, vm.count())
+	}
+	// Too many requests is a fault of the moment: the batch waits.
+	vm.set(http.StatusTooManyRequests)
+	c.Write(manySamples(5, time.UnixMilli(1700000200000)))
+	if err := c.Flush(context.Background()); err == nil || c.Stats().QueuedBytes == 0 {
+		t.Errorf("a busy storage must be retried: %v %+v", err, c.Stats())
 	}
 }

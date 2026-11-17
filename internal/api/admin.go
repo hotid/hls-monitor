@@ -181,6 +181,7 @@ func (s *Server) deleteAgent(c *gin.Context) {
 	if s.storeError(c, s.st.DeleteAgent(c.Request.Context(), id)) {
 		return
 	}
+	s.purgeSeriesSoon()
 	c.Status(http.StatusNoContent)
 }
 

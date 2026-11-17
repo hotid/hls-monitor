@@ -125,7 +125,7 @@ async function savePassword() {
         <span v-if="!live.system.metrics.enabled" class="item hide-narrow" :title="t('shell.hlsmonVMURLIsNotSet')">
           <span class="dot warn" />{{ t('shell.metricsStorageIsNotConnected') }}
         </span>
-        <span v-else-if="!live.system.metrics_up" class="item hide-narrow" :title="t('shell.queuedForWriting', { size: fmtBytes(live.system.metrics.queued_bytes) })">
+        <span v-else-if="!live.system.metrics_up" class="item hide-narrow" :title="t('shell.queuedForWriting', { size: fmtBytes(live.system.metrics.queued_bytes + (live.system.metrics.disk_bytes ?? 0)) })">
           <span class="dot fail" />{{ t('common.metricsStorageIsUnavailable') }}
         </span>
         <span

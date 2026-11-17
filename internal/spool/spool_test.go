@@ -1,4 +1,4 @@
-package agent
+package spool
 
 import (
 	"fmt"
@@ -10,17 +10,17 @@ import (
 
 func rec(i int) []byte { return []byte(fmt.Sprintf(`{"n":%04d,"pad":"0123456789"}`, i)) }
 
-func drain(t *testing.T, s *spool) (got []string) {
+func drain(t *testing.T, s *Spool) (got []string) {
 	t.Helper()
 	for {
-		seq, batch := s.next()
+		seq, batch := s.Next()
 		if len(batch) == 0 {
 			return got
 		}
 		for _, b := range batch {
 			got = append(got, string(b))
 		}
-		if err := s.done(seq, batch, len(batch)); err != nil {
+		if err := s.Done(seq, batch, len(batch)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -29,12 +29,12 @@ func drain(t *testing.T, s *spool) (got []string) {
 // Results written before a restart are delivered after it, in order.
 func TestSpoolSurvivesRestart(t *testing.T) {
 	dir := t.TempDir()
-	s, err := openSpool(dir, 1<<20, 100)
+	s, err := Open(dir, 1<<20, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := range 10 {
-		if err := s.add(rec(i)); err != nil {
+		if err := s.Add(rec(i)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -47,14 +47,14 @@ func TestSpoolSurvivesRestart(t *testing.T) {
 	_, _ = f.Write([]byte{0, 0, 0, 200, 'x'})
 	_ = f.Close()
 
-	s, err = openSpool(dir, 1<<20, 100)
+	s, err = Open(dir, 1<<20, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n, _ := s.queued(); n != 10 {
+	if n, _ := s.Queued(); n != 10 {
 		t.Fatalf("after reopening %d results are queued, want 10", n)
 	}
-	if err := s.add(rec(10)); err != nil {
+	if err := s.Add(rec(10)); err != nil {
 		t.Fatal(err)
 	}
 	got := drain(t, s)
@@ -73,21 +73,21 @@ func TestSpoolSurvivesRestart(t *testing.T) {
 
 // The server stored a part of a batch: only the rest is sent again.
 func TestSpoolPartialDelivery(t *testing.T) {
-	s, err := openSpool(t.TempDir(), 1<<20, 1<<20)
+	s, err := Open(t.TempDir(), 1<<20, 1<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := range 5 {
-		_ = s.add(rec(i))
+		_ = s.Add(rec(i))
 	}
-	seq, batch := s.next()
+	seq, batch := s.Next()
 	if len(batch) != 5 {
 		t.Fatalf("batch of %d, want 5", len(batch))
 	}
-	if err := s.done(seq, batch, 2); err != nil {
+	if err := s.Done(seq, batch, 2); err != nil {
 		t.Fatal(err)
 	}
-	_ = s.add(rec(5)) // arrives while the rest waits
+	_ = s.Add(rec(5)) // arrives while the rest waits
 	got := drain(t, s)
 	if len(got) != 4 || got[0] != string(rec(2)) || got[3] != string(rec(5)) {
 		t.Fatalf("after 2 of 5 were stored the queue gave %v", got)
@@ -96,17 +96,17 @@ func TestSpoolPartialDelivery(t *testing.T) {
 
 // Over the size limit the oldest results are dropped, the newest kept.
 func TestSpoolSizeLimit(t *testing.T) {
-	s, err := openSpool(t.TempDir(), 300, 100)
+	s, err := Open(t.TempDir(), 300, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := range 40 {
-		_ = s.add(rec(i))
+		_ = s.Add(rec(i))
 	}
-	if _, size := s.queued(); size > 300 {
+	if _, size := s.Queued(); size > 300 {
 		t.Errorf("the queue takes %d bytes, limit 300", size)
 	}
-	dropped := s.takeDropped()
+	dropped := s.TakeDropped()
 	got := drain(t, s)
 	if dropped == 0 || dropped+len(got) != 40 || got[len(got)-1] != string(rec(39)) {
 		t.Errorf("dropped %d, kept %d of 40, last kept %s", dropped, len(got), got[len(got)-1])
@@ -114,28 +114,28 @@ func TestSpoolSizeLimit(t *testing.T) {
 }
 
 func TestSpoolStatistics(t *testing.T) {
-	s, err := openSpool(t.TempDir(), 250, 100)
+	s, err := Open(t.TempDir(), 250, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.close()
-	if n, size, oldest, dropped := s.stats(); n != 0 || size != 0 || oldest != 0 || dropped != 0 {
+	defer s.Close()
+	if n, size, oldest, dropped := s.Stats(); n != 0 || size != 0 || oldest != 0 || dropped != 0 {
 		t.Errorf("empty spool: %d %d %s %d", n, size, oldest, dropped)
 	}
 	rec := make([]byte, 60)
 	for range 6 {
-		if err := s.add(rec); err != nil {
+		if err := s.Add(rec); err != nil {
 			t.Fatal(err)
 		}
 	}
 	time.Sleep(20 * time.Millisecond)
-	n, size, oldest, dropped := s.stats()
+	n, size, oldest, dropped := s.Stats()
 	if n+int(dropped) != 6 || dropped == 0 || size != int64(n*60) || oldest < 20*time.Millisecond || oldest > 5*time.Second {
 		t.Errorf("stats: %d results, %d bytes, oldest %s, dropped %d", n, size, oldest, dropped)
 	}
 	// What was dropped stays counted after the log line about it.
-	s.takeDropped()
-	if _, _, _, again := s.stats(); again != dropped {
+	s.TakeDropped()
+	if _, _, _, again := s.Stats(); again != dropped {
 		t.Errorf("dropped total = %d, want %d", again, dropped)
 	}
 }

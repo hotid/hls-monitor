@@ -47,7 +47,7 @@ type config struct {
 	segmentRetention                               time.Duration
 	eventRetention                                 time.Duration
 	segmentKeep, segmentKeepProblems, journalMaxMB int
-	bodyMemoryMB                                   int
+	bodyMemoryMB, metricsQueueMB                   int
 	privateNetworks                                string
 	snapshotRetention                              time.Duration
 	incidentRetention                              time.Duration
@@ -72,6 +72,7 @@ func parseConfig() config {
 	envflag.Int(fs, &c.segmentKeep, "segment-keep", "HLSMON_SEGMENT_KEEP", 100, "how many journal rows are kept per variant and agent")
 	envflag.Int(fs, &c.segmentKeepProblems, "segment-keep-problems", "HLSMON_SEGMENT_KEEP_PROBLEMS", 500, "the same for segments that had problems")
 	envflag.Int(fs, &c.journalMaxMB, "journal-max-mb", "HLSMON_JOURNAL_MAX_MB", 512, "size in MiB the segment journal file cannot exceed")
+	envflag.Int(fs, &c.metricsQueueMB, "metrics-queue-max-mb", "HLSMON_METRICS_QUEUE_MAX_MB", metrics.DefaultQueueBytes>>20, "MiB of disk for samples VictoriaMetrics has not taken yet, kept next to the database; beyond it the oldest are dropped")
 	envflag.Int(fs, &c.bodyMemoryMB, "body-memory-mb", "HLSMON_BODY_MEMORY_MB", probe.DefaultBodyMemory>>20, "MiB of segment bodies the local checks may hold in memory at once; downloads wait for room")
 	envflag.String(fs, &c.privateNetworks, "private-networks", "HLSMON_PRIVATE_NETWORKS", "same", "whether local checks may connect to addresses that are not public: same (only for streams whose own address is such), allow or deny")
 	envflag.Duration(fs, &c.eventRetention, "event-retention", "HLSMON_EVENT_RETENTION", 7*24*time.Hour, "how long closed informational incidents are kept")
@@ -127,6 +128,9 @@ func run(cfg config, log *slog.Logger) error {
 	mx := metrics.New(cfg.vmURL, log)
 	if !mx.Enabled() {
 		log.Warn("no VictoriaMetrics URL configured: charts will be empty, only current state and incidents are kept")
+	}
+	if err := mx.UseDisk(filepath.Join(filepath.Dir(cfg.dbPath), "metrics-queue"), int64(cfg.metricsQueueMB)<<20); err != nil {
+		return fmt.Errorf("open the queue of samples: %w", err)
 	}
 	ing := ingest.New(st, mx, log)
 
@@ -283,6 +287,7 @@ func housekeeping(ctx context.Context, st *store.Store, srv *api.Server, cfg con
 			doPurge()
 		case <-sync.C:
 			srv.SyncLocal(ctx)
+			srv.PurgeSeries(ctx)
 		}
 	}
 }
