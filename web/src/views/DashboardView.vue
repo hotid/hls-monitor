@@ -56,6 +56,7 @@ const orange = '#f4a261'
 const red = '#e63946'
 
 const summaryCharts: SummaryChart[] = [
+  // Where things stand.
   {
     id: 'states', title: t('dashboard.streamsByStatus'), hint: t('dashboard.howManyStreamsWereInEach'), unit: 'count', steps: true, zeroFill: true,
     colors: [red, orange, green],
@@ -76,12 +77,35 @@ const summaryCharts: SummaryChart[] = [
     ],
   },
   {
+    id: 'bitrate', title: t('dashboard.totalBitrateOfStreams'), hint: t('dashboard.sumOfTheBitratesOfStreams'), unit: 'bps',
+    series: [
+      { id: 'bitrate_total', label: t('dashboard.bitrateOfStreams') },
+      { id: 'check_traffic', label: t('dashboard.trafficOfChecks') },
+    ],
+  },
+  // How fast the servers answer.
+  {
     id: 'playlist-time', title: t('common.playlistResponse'), hint: t('dashboard.playlistRequestTimeOverAllStreams'), unit: 's',
     series: [
       { id: 'playlist_time_avg', label: t('dashboard.average') },
       { id: 'playlist_time_p95', label: '95 %' },
     ],
   },
+  {
+    id: 'segment-ttfb', title: t('dashboard.segmentFirstByte'), hint: t('dashboard.timeToTheFirstByteOf'), unit: 's',
+    series: [
+      { id: 'segment_ttfb_avg', label: t('dashboard.average') },
+      { id: 'segment_ttfb_p95', label: '95 %' },
+    ],
+  },
+  {
+    id: 'entry-time', title: t('dashboard.entryTime'), hint: t('dashboard.entryTimeHint'), unit: 's',
+    series: [
+      { id: 'entry_time_avg', label: t('dashboard.average') },
+      { id: 'entry_time_p95', label: '95 %' },
+    ],
+  },
+  // The network, over all streams.
   {
     id: 'rtt', title: t('dashboard.roundTripTime'), hint: t('dashboard.roundTripTimeHint'), unit: 's',
     series: [
@@ -97,6 +121,16 @@ const summaryCharts: SummaryChart[] = [
     ],
   },
   {
+    id: 'connect', title: t('dashboard.connectionSetup'), hint: t('dashboard.connectionSetupHint'), unit: 's',
+    series: [
+      { id: 'connect_avg', label: t('dashboard.connectAverage') },
+      { id: 'connect_p95', label: t('dashboard.connect95') },
+      { id: 'dns_avg', label: 'DNS' },
+      { id: 'tls_avg', label: 'TLS' },
+    ],
+  },
+  // The same by server.
+  {
     id: 'rtt-by-server', title: t('dashboard.rttByServer'), hint: t('dashboard.rttByServerHint'), unit: 's', perServer: 'rtt',
     series: [],
   },
@@ -108,43 +142,14 @@ const summaryCharts: SummaryChart[] = [
     id: 'requests-by-server', title: t('dashboard.requestsByServer'), hint: t('dashboard.requestsByServerHint'), unit: 'count', perServer: 'requests',
     series: [],
   },
-  {
-    id: 'connect', title: t('dashboard.connectionSetup'), hint: t('dashboard.connectionSetupHint'), unit: 's',
-    series: [
-      { id: 'connect_avg', label: t('dashboard.connectAverage') },
-      { id: 'connect_p95', label: t('dashboard.connect95') },
-      { id: 'dns_avg', label: 'DNS' },
-      { id: 'tls_avg', label: 'TLS' },
-    ],
-  },
-  {
-    id: 'entry-time', title: t('dashboard.entryTime'), hint: t('dashboard.entryTimeHint'), unit: 's',
-    series: [
-      { id: 'entry_time_avg', label: t('dashboard.average') },
-      { id: 'entry_time_p95', label: '95 %' },
-    ],
-  },
+  // What the balancer does.
   {
     id: 'entry-redirects', title: t('dashboard.entryRedirects'), hint: t('dashboard.entryRedirectsHint'), unit: 'count',
     series: [{ id: 'entry_redirects_avg', label: t('dashboard.redirectsPerRequest') }],
   },
   {
-    id: 'segment-ttfb', title: t('dashboard.segmentFirstByte'), hint: t('dashboard.timeToTheFirstByteOf'), unit: 's',
-    series: [
-      { id: 'segment_ttfb_avg', label: t('dashboard.average') },
-      { id: 'segment_ttfb_p95', label: '95 %' },
-    ],
-  },
-  {
     id: 'source-changes', title: t('common.answeringServerChanges'), hint: t('dashboard.howManyTimesAPlaylistCame'), unit: 'count', steps: true, zeroFill: true,
     series: [{ id: 'source_changes', label: t('dashboard.changesPerStep') }],
-  },
-  {
-    id: 'bitrate', title: t('dashboard.totalBitrateOfStreams'), hint: t('dashboard.sumOfTheBitratesOfStreams'), unit: 'bps',
-    series: [
-      { id: 'bitrate_total', label: t('dashboard.bitrateOfStreams') },
-      { id: 'check_traffic', label: t('dashboard.trafficOfChecks') },
-    ],
   },
 ]
 
