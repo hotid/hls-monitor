@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -261,5 +262,28 @@ func TestReachIsEnforced(t *testing.T) {
 	}
 	if resp, err = c.Get(ctx, Request{URL: srv.URL}); err != nil || resp.Status != 200 {
 		t.Fatalf("no restriction by default: %v", err)
+	}
+}
+
+func TestConnectionFigures(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the kernel's figures of a connection are read on Linux only")
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, 64<<10))
+	}))
+	defer srv.Close()
+	c := New(Options{})
+	for i := range 2 {
+		resp, err := c.Get(context.Background(), Request{URL: srv.URL})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.TCP == nil || resp.TCP.RTT <= 0 || resp.TCP.RTT > time.Second {
+			t.Fatalf("request %d: connection figures = %+v", i+1, resp.TCP)
+		}
+		if i == 1 && !resp.ConnReused {
+			t.Error("the second request must reuse the connection, and still have its figures")
+		}
 	}
 }

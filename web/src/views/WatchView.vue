@@ -4,7 +4,8 @@ import type Hls from 'hls.js'
 import { ApiError, api, basePath } from '@/api'
 import { fmtAgo, fmtBits, fmtNumber } from '@/format'
 import { t } from '@/i18n'
-import type { StreamDetail, WatchInfo, WatchSource, WatchVantage } from '@/types'
+import type { FetchInfo, StreamDetail, WatchInfo, WatchSource, WatchVantage } from '@/types'
+import TimeChart, { type ChartLine } from '@/components/TimeChart.vue'
 
 const props = defineProps<{ id: number }>()
 
@@ -21,6 +22,7 @@ const video = ref<HTMLVideoElement | null>(null)
 let hls: Hls | null = null
 /** New addresses were asked for after the old ones were refused. */
 let renewed = false
+let lastSample = 0
 let timer = 0
 
 interface Quality {
@@ -52,6 +54,150 @@ interface Trouble {
 const troubles = ref<Trouble[]>([])
 /** The browser cannot play what the stream carries. */
 const unsupported = ref(false)
+
+// ── History of the session, for the charts ────────────────────────────
+// Every figure is sampled once a second: what happens per segment (how
+// long each hop took, how fast it was) keeps its latest value in between,
+// so that the lines are lines and not scattered dots.
+const windowSec = 600
+type Series = Record<string, [number, number][]>
+let series: Series = {}
+/** Latest values, written by the player's events and read by the sampler. */
+let latest: Record<string, number> = {}
+/** Counted since the last sample: losses, failures, stalls. */
+let counted: Record<string, number> = {}
+/** Running totals the counts are differences of. */
+let totals: { link?: number; ooo?: number; oooConn?: string; frames?: number } = {}
+const sampled = ref(0)
+const startedAt = ref(0)
+
+function resetHistory() {
+  series = {}
+  latest = {}
+  counted = {}
+  totals = {}
+  startedAt.value = Math.floor(Date.now() / 1000)
+  sampled.value++
+}
+
+function sample() {
+  const now = Math.floor(Date.now() / 1000)
+  const put = (key: string, v: number | undefined) => {
+    if (v === undefined || !Number.isFinite(v)) return
+    const s = (series[key] ??= [])
+    s.push([now, v])
+    while (s.length && s[0]![0] < now - windowSec) s.shift()
+  }
+  for (const [k, v] of Object.entries(latest)) put(k, v)
+  // Counts are per second; a second in which nothing went wrong is a zero.
+  for (const k of ['retransmits', 'outOfOrder', 'failed', 'stalls', 'dropped']) put(k, counted[k] ?? 0)
+  counted = {}
+  sampled.value++
+}
+
+/** What the server tells about how a fetch went, hop by hop. */
+function fetchInfo(details: unknown): FetchInfo | null {
+  const xhr = details as XMLHttpRequest | undefined
+  if (typeof xhr?.getResponseHeader !== 'function') return null
+  try {
+    const raw = xhr.getResponseHeader('X-Fetch-Info')
+    return raw ? (JSON.parse(atob(raw)) as FetchInfo) : null
+  } catch {
+    return null
+  }
+}
+
+/** Figures that come with every answer, playlist or segment. */
+function noteHops(info: FetchInfo | null, connection: string) {
+  if (!info) return
+  if (info.origin?.measured) {
+    latest.rttOrigin = (info.origin.rtt_ms ?? 0) / 1000
+    // The kernel counts for the life of a connection; a smaller figure,
+    // or another server, is a new connection.
+    const now = info.origin.out_of_order ?? 0
+    if (totals.oooConn === connection && totals.ooo !== undefined && now >= totals.ooo) {
+      counted.outOfOrder = (counted.outOfOrder ?? 0) + (now - totals.ooo)
+    }
+    totals.ooo = now
+    totals.oooConn = connection
+  }
+  if (info.link?.measured) {
+    latest.rttLink = info.link.rtt_ms / 1000
+    if (totals.link !== undefined && info.link.retransmits >= totals.link) {
+      counted.retransmits = (counted.retransmits ?? 0) + (info.link.retransmits - totals.link)
+    }
+    totals.link = info.link.retransmits
+  }
+}
+
+interface ChartDef {
+  id: string
+  title: string
+  hint: string
+  unit: 's' | 'bps' | 'count'
+  steps?: boolean
+  lines: { key: string; label: string; agent?: boolean }[]
+}
+const chartDefs = computed<ChartDef[]>(() => [
+  {
+    id: 'buffer', title: t('watch.chartBuffer'), hint: t('watch.chartBufferHint'), unit: 's',
+    lines: [
+      { key: 'buffer', label: t('watch.buffer') },
+      { key: 'latency', label: t('watch.latency') },
+    ],
+  },
+  {
+    id: 'rate', title: t('watch.chartRate'), hint: t('watch.chartRateHint'), unit: 'bps',
+    lines: [
+      { key: 'declared', label: t('watch.lineDeclared') },
+      { key: 'actual', label: t('watch.lineActual') },
+      { key: 'speedOrigin', label: t('watch.lineSpeedOrigin') },
+      { key: 'speedRelay', label: t('watch.lineSpeedRelay'), agent: true },
+      { key: 'speedBrowser', label: t('watch.lineSpeedBrowser') },
+      { key: 'estimate', label: t('watch.lineEstimate') },
+    ],
+  },
+  {
+    id: 'delay', title: t('watch.chartDelay'), hint: t('watch.chartDelayHint'), unit: 's',
+    lines: [
+      { key: 'originTTFB', label: t('watch.lineOriginTTFB') },
+      { key: 'originBody', label: t('watch.lineOriginBody') },
+      { key: 'relayWait', label: t('watch.lineRelayWait'), agent: true },
+      { key: 'relayUpload', label: t('watch.lineRelayUpload'), agent: true },
+      { key: 'browser', label: t('watch.lineBrowser') },
+    ],
+  },
+  {
+    id: 'rtt', title: t('watch.chartRTT'), hint: t('watch.chartRTTHint'), unit: 's',
+    lines: [
+      { key: 'rttOrigin', label: t('watch.lineRTTOrigin') },
+      { key: 'rttLink', label: t('watch.lineRTTLink'), agent: true },
+    ],
+  },
+  {
+    id: 'loss', title: t('watch.chartLoss'), hint: t('watch.chartLossHint'), unit: 'count', steps: true,
+    lines: [
+      { key: 'retransmits', label: t('watch.lineRetransmits'), agent: true },
+      { key: 'outOfOrder', label: t('watch.lineOutOfOrder') },
+      { key: 'failed', label: t('watch.lineFailed') },
+      { key: 'stalls', label: t('watch.stalls') },
+      { key: 'dropped', label: t('watch.dropped') },
+    ],
+  },
+])
+const charts = computed(() => {
+  void sampled.value
+  const to = Math.floor(Date.now() / 1000)
+  // A window that grows with the session up to its full length.
+  const from = Math.max(startedAt.value, to - windowSec)
+  const viaAgent = vantage.value !== 1
+  return chartDefs.value.map((c) => ({
+    ...c,
+    from,
+    to: Math.max(to, from + 60),
+    lines: c.lines.filter((l) => viaAgent || !l.agent).map((l): ChartLine => ({ label: l.label, points: series[l.key] ?? [] })),
+  }))
+})
 
 const source = computed(() => sources.value[sourceIndex.value])
 /** The server asked directly passed the request on: the one that answers. */
@@ -136,6 +282,7 @@ async function start() {
   dropped.value = 0
   quality.value = -1
   state.value = 'loading'
+  resetHistory()
 
   // The player is a large library needed on this page only.
   const { default: HlsLib } = await import('hls.js')
@@ -163,13 +310,45 @@ async function start() {
   })
   player.on(HlsLib.Events.LEVEL_SWITCHED, (_e, data) => {
     const l = player.levels[data.level]
-    if (l) playing.value = { label: levelLabel(l.height, l.width, 0, l.name), bitrate: l.bitrate }
+    if (l) {
+      playing.value = { label: levelLabel(l.height, l.width, 0, l.name), bitrate: l.bitrate }
+      latest.declared = l.bitrate
+    }
+  })
+  player.on(HlsLib.Events.LEVEL_LOADED, (_e, data) => {
+    const xhr = data.networkDetails as XMLHttpRequest | undefined
+    noteHops(fetchInfo(xhr), (typeof xhr?.getResponseHeader === 'function' && xhr.getResponseHeader('X-Upstream')) || '')
   })
   player.on(HlsLib.Events.FRAG_LOADED, (_e, data) => {
     renewed = false
     const xhr = data.networkDetails as XMLHttpRequest | undefined
     const from = typeof xhr?.getResponseHeader === 'function' ? xhr.getResponseHeader('X-Upstream') : null
     if (from) upstream.value = from
+    if (data.frag.type !== 'main') return
+
+    // The last hop, as the browser saw it: until the first byte the server
+    // was fetching, after it the segment travelled here.
+    const st = data.frag.stats
+    const bytes = st.total || st.loaded
+    const travel = (st.loading.end - st.loading.first) / 1000
+    latest.browser = Math.max(travel, 0)
+    if (travel > 0.001 && bytes) latest.speedBrowser = (bytes * 8) / travel
+    if (data.frag.duration > 0 && bytes) latest.actual = (bytes * 8) / data.frag.duration
+
+    const info = fetchInfo(xhr)
+    noteHops(info, from ?? '')
+    if (info?.origin) {
+      const o = info.origin
+      latest.originTTFB = o.ttfb_ms / 1000
+      latest.originBody = Math.max(o.total_ms - o.ttfb_ms, 0) / 1000
+      // A segment that arrives in a millisecond says nothing of the speed.
+      if (o.total_ms - o.ttfb_ms > 1) latest.speedOrigin = (o.bytes * 8) / ((o.total_ms - o.ttfb_ms) / 1000)
+    }
+    if (info?.relay) {
+      latest.relayWait = info.relay.wait_ms / 1000
+      latest.relayUpload = info.relay.upload_ms / 1000
+      if (info.relay.upload_ms > 1) latest.speedRelay = (info.relay.bytes * 8) / (info.relay.upload_ms / 1000)
+    }
   })
   player.on(HlsLib.Events.ERROR, (_e, data) => {
     const code = data.response?.code
@@ -192,6 +371,7 @@ async function start() {
         break
       case HlsLib.ErrorDetails.BUFFER_STALLED_ERROR:
         stalls.value++
+        counted.stalls = (counted.stalls ?? 0) + 1
         text = t('watch.ranOutOfBuffer')
         break
       case HlsLib.ErrorDetails.MANIFEST_INCOMPATIBLE_CODECS_ERROR:
@@ -215,6 +395,7 @@ async function start() {
       void changeVantage()
       return
     }
+    if (data.type === HlsLib.ErrorTypes.NETWORK_ERROR) counted.failed = (counted.failed ?? 0) + 1
     note(text, data.fatal, [data.details, data.error?.message, data.reason].filter(Boolean).join(': ').slice(0, 300))
     if (!data.fatal) return
     // The library gives up on these; what can be retried is retried once more.
@@ -238,6 +419,15 @@ async function start() {
     buffer.value = ahead
     latency.value = Number.isFinite(hls.latency) && hls.latency > 0 ? hls.latency : null
     dropped.value = el.getVideoPlaybackQuality?.().droppedVideoFrames ?? 0
+    latest.buffer = ahead
+    if (latency.value !== null) latest.latency = latency.value
+    if (Number.isFinite(hls.bandwidthEstimate) && hls.bandwidthEstimate > 0) latest.estimate = hls.bandwidthEstimate
+    if (totals.frames !== undefined && dropped.value >= totals.frames) counted.dropped = (counted.dropped ?? 0) + (dropped.value - totals.frames)
+    totals.frames = dropped.value
+    if (Date.now() - lastSample >= 1000) {
+      lastSample = Date.now()
+      sample()
+    }
     if (state.value !== 'failed') {
       state.value = el.readyState >= 3 && !el.paused ? 'playing' : el.readyState < 3 && el.currentTime > 0 ? 'stalled' : state.value === 'playing' ? 'stalled' : 'loading'
       if (el.paused && el.readyState >= 3) state.value = 'playing'
@@ -303,8 +493,24 @@ onBeforeUnmount(stop)
       <div v-if="loadError" class="notice error">{{ loadError }}</div>
 
       <div class="watch">
-        <div class="screen panel">
-          <video ref="video" controls muted playsinline />
+        <div class="main">
+          <div class="screen panel">
+            <video ref="video" controls muted playsinline />
+          </div>
+          <div v-if="startedAt" class="charts">
+            <TimeChart
+              v-for="c in charts"
+              :key="c.id"
+              :title="c.title"
+              :hint="c.hint"
+              :unit="c.unit"
+              :lines="c.lines"
+              :from="c.from"
+              :to="c.to"
+              :step="1"
+              :steps="c.steps"
+            />
+          </div>
         </div>
 
         <div class="side">
@@ -398,6 +604,16 @@ onBeforeUnmount(stop)
   width: 100%;
   aspect-ratio: 16 / 9;
   background: #000;
+}
+.main {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
+  gap: 12px;
 }
 .side {
   display: grid;

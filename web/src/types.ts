@@ -23,6 +23,37 @@ export interface WatchSource {
   url: string
 }
 
+/** How one fetch for a viewer went, hop by hop (the X-Fetch-Info header). */
+export interface FetchInfo {
+  /** The request to the origin, made by the server or by the agent. */
+  origin?: {
+    dns_ms: number
+    connect_ms: number
+    tls_ms: number
+    ttfb_ms: number
+    total_ms: number
+    bytes: number
+    redirects?: number
+    reused?: boolean
+    measured?: boolean
+    rtt_ms?: number
+    out_of_order?: number
+  }
+  /** The way through the agent; absent when the server fetched itself. */
+  relay?: { wait_ms: number; upload_ms: number; bytes: number; total_ms: number }
+  link?: AgentLink
+}
+
+/** The way from an agent to the server, as the agent sees it. */
+export interface AgentLink {
+  rtt_ms: number
+  retransmits: number
+  request_ms: number
+  requests: number
+  failures: number
+  measured: boolean
+}
+
 /** A place a stream can be watched from. */
 export interface WatchVantage {
   id: number
@@ -150,6 +181,8 @@ export interface AgentStatus {
   cpu_cores: number
   cpu_limit: number
   memory_bytes: number
+  link?: AgentLink
+  fetches?: boolean
 }
 
 export interface Enrollment {

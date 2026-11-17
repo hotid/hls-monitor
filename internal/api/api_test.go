@@ -682,7 +682,7 @@ func TestSelfDiagnostics(t *testing.T) {
 	// An agent tells about itself with every request.
 	agent := e.client()
 	agent.headers["Authorization"] = "Bearer " + enrolled.Key
-	agent.headers[agentproto.HeaderStatus] = `{"queue_results":7,"queue_bytes":4096,"queue_oldest_sec":12.5,"queue_dropped":3,"overloaded":"processor","streams":2,"behind":1}`
+	agent.headers[agentproto.HeaderStatus] = `{"queue_results":7,"queue_bytes":4096,"queue_oldest_sec":12.5,"queue_dropped":3,"overloaded":"processor","streams":2,"behind":1,"link":{"rtt_ms":42.5,"retransmits":9,"request_ms":120,"requests":300,"failures":2,"measured":true}}`
 	agent.want(http.StatusOK, "GET", "/api/agent/v1/config", nil, nil)
 
 	var agents []agentView
@@ -714,6 +714,9 @@ func TestSelfDiagnostics(t *testing.T) {
 		`hlsmon_agent_queue_oldest_seconds{agent="edge-1"} 12.5`,
 		`hlsmon_agent_queue_dropped_total{agent="edge-1"} 3`,
 		`hlsmon_agent_overloaded{agent="edge-1"} 1`,
+		`hlsmon_agent_link_rtt_seconds{agent="edge-1"} 0.0425`,
+		`hlsmon_agent_link_retransmits_total{agent="edge-1"} 9`,
+		`hlsmon_agent_link_failures_total{agent="edge-1"} 2`,
 	} {
 		if !strings.Contains(string(body), want+"\n") {
 			t.Errorf("metrics lack %q", want)
@@ -721,6 +724,9 @@ func TestSelfDiagnostics(t *testing.T) {
 	}
 	if strings.Contains(string(body), "not-yet") {
 		t.Error("an agent that was never connected must not be in the metrics")
+	}
+	if strings.Contains(string(body), `hlsmon_agent_link_rtt_seconds{agent="local"}`) {
+		t.Error("the server's own checks have no link to the server to report")
 	}
 	// Every sample line is a name, optional labels and a number.
 	sample := regexp.MustCompile(`^[a-z_]+(\{[a-z_]+="[^"]*"(,[a-z_]+="[^"]*")*\})? -?[0-9.e+]+$`)
@@ -879,6 +885,15 @@ func TestWatchThroughTheServer(t *testing.T) {
 	}
 	if up := hdr.Get("X-Upstream"); !strings.HasPrefix(up, "127.0.0.1:") {
 		t.Errorf("X-Upstream = %q", up)
+	}
+	// How the fetch went is told to the page, for its charts.
+	var info fetchInfo
+	raw, err := base64.StdEncoding.DecodeString(hdr.Get("X-Fetch-Info"))
+	if err != nil || json.Unmarshal(raw, &info) != nil || info.Origin == nil || info.Origin.Bytes != int64(len(seg)) || info.Origin.TotalMs <= 0 || info.Relay != nil {
+		t.Errorf("X-Fetch-Info = %s (%v)", raw, err)
+	}
+	if !strings.HasPrefix(hdr.Get("Server-Timing"), "origin;dur=") {
+		t.Errorf("Server-Timing = %q", hdr.Get("Server-Timing"))
 	}
 
 	// Nothing but what the server signed is served.

@@ -75,6 +75,7 @@ type Agent struct {
 	// that the log says it once.
 	writeFailed atomic.Bool
 	load        *selfstat.Monitor
+	link        linkWatch
 }
 
 // status is what the agent reports about itself.
@@ -86,6 +87,7 @@ func (a *Agent) status() agentproto.Status {
 		st.QueueOldestSec = float64(oldest.Milliseconds()) / 1000
 	}
 	st.QueueFailing = a.writeFailed.Load()
+	st.Link = a.link.report()
 	st.Fetches = true
 	load := a.load.Status()
 	if load.Overloaded {
@@ -244,8 +246,12 @@ func (a *Agent) request(ctx context.Context, method, path, query string, body []
 			req.Header.Set(agentproto.HeaderStatus, string(b))
 		}
 	}
-	resp, err := a.hc.Do(req)
+	// Requests held open by the server while it has no work say nothing
+	// about how long the way to it takes.
+	conn, done := a.link.watch(req, path != "/api/agent/v1/fetch" || method != http.MethodGet)
+	resp, err := a.hc.Do(conn)
 	if err != nil {
+		done(false)
 		var ue *url.Error
 		if errors.As(err, &ue) {
 			err = ue.Err
@@ -254,6 +260,7 @@ func (a *Agent) request(ctx context.Context, method, path, query string, body []
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	done(err == nil)
 	if err != nil {
 		return 0, err
 	}

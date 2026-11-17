@@ -54,6 +54,14 @@ function notes(a: Agent): { cls: string; text: string; hint?: string }[] {
       hint: t('agents.queueWaitingHint', { size: fmtBytes(st.queue_bytes) }),
     })
   }
+  // The way to the server: everything the agent reports travels it.
+  const link = st.link
+  if (link) {
+    if (link.measured && link.rtt_ms >= 300) out.push({ cls: 'warn', text: t('agents.linkSlow', { ms: Math.round(link.rtt_ms) }), hint: t('agents.linkHint', { n: link.retransmits }) })
+    if (link.requests >= 20 && link.failures / link.requests >= 0.05) {
+      out.push({ cls: 'fail', text: t('agents.linkFailing', { failed: link.failures, total: link.requests }), hint: t('agents.linkHint', { n: link.retransmits }) })
+    }
+  }
   if (st.queue_dropped > 0) out.push({ cls: 'fail', text: t('agents.queueDropped', { n: st.queue_dropped }, st.queue_dropped) })
   return out
 }

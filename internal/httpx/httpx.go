@@ -160,6 +160,9 @@ type Response struct {
 	// CertNotAfter is the leaf certificate expiry, zero for plain HTTP.
 	CertNotAfter time.Time
 	ConnReused   bool
+	// TCP is what the kernel knew about the connection that gave the final
+	// response, read once the body was in; nil where that cannot be told.
+	TCP *TCPInfo
 
 	DNS     time.Duration
 	Connect time.Duration
@@ -274,6 +277,7 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 
 	res := &Response{URL: rq.URL, ContentLength: -1}
 	var start, dnsStart, connStart, tlsStart time.Time
+	var lastConn net.Conn
 	trace := &httptrace.ClientTrace{
 		DNSStart: func(httptrace.DNSStartInfo) { dnsStart = time.Now() },
 		DNSDone: func(httptrace.DNSDoneInfo) {
@@ -297,6 +301,7 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 			res.ConnReused = i.Reused
 			if i.Conn != nil {
 				res.RemoteAddr = i.Conn.RemoteAddr().String()
+				lastConn = i.Conn
 			}
 			rt.addrs = append(rt.addrs, res.RemoteAddr)
 			if res.RemoteAddr != "" {
@@ -372,6 +377,11 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, rq.MaxBody+1))
 	res.Total = time.Since(start)
+	if lastConn != nil {
+		if info, ok := ConnInfo(lastConn); ok {
+			res.TCP = &info
+		}
+	}
 	if int64(len(body)) > rq.MaxBody {
 		body = body[:rq.MaxBody]
 		res.Truncated = true

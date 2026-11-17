@@ -69,6 +69,34 @@ definitions:
       url:
         type: string
     type: object
+  github_com_hotid_hls-monitor_internal_agentproto.Link:
+    properties:
+      failures:
+        type: integer
+      measured:
+        description: |-
+          Measured is false where the kernel's figures cannot be read (the
+          agent does not run on Linux): RTTMs and Retransmits mean nothing.
+        type: boolean
+      request_ms:
+        description: RequestMs is how long the latest delivery of results took.
+        type: number
+      requests:
+        description: |-
+          Requests and Failures count the requests to the server since the
+          start and those of them that got no answer.
+        type: integer
+      retransmits:
+        description: |-
+          Retransmits counts the TCP segments the agent had to send again
+          since it started: loss on the way to the server.
+        type: integer
+      rtt_ms:
+        description: |-
+          RTTMs is the round trip time to the server, by the kernel's count on
+          the latest request; zero where the agent cannot read it.
+        type: number
+    type: object
   github_com_hotid_hls-monitor_internal_agentproto.ResultsRequest:
     properties:
       results:
@@ -101,6 +129,10 @@ definitions:
           Fetches tells that the agent takes requests to fetch something for
           the server (see FetchRequest); older agents do not.
         type: boolean
+      link:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.Link'
+        description: Link is how the agent's connection to the server is doing.
       memory_bytes:
         type: integer
       overloaded:

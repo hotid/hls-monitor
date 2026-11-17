@@ -5,6 +5,7 @@ package relay
 
 import (
 	"context"
+	"time"
 
 	"github.com/hotid/hls-monitor/internal/agentproto"
 	"github.com/hotid/hls-monitor/internal/httpx"
@@ -24,6 +25,12 @@ func Fetch(ctx context.Context, hc *httpx.Client, job agentproto.FetchRequest) (
 		return res, nil
 	}
 	res.Status, res.FinalURL, res.RemoteAddr, res.Inside = resp.Status, resp.FinalURL, resp.RemoteAddr, resp.Inside
+	ms := func(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
+	res.Timing = &agentproto.FetchTiming{DNSMs: ms(resp.DNS), ConnectMs: ms(resp.Connect), TLSMs: ms(resp.TLS), TTFBMs: ms(resp.TTFB),
+		TotalMs: ms(resp.Total), Bytes: resp.Size, Redirects: resp.Redirects, Reused: resp.ConnReused}
+	if resp.TCP != nil {
+		res.Timing.Measured, res.Timing.RTTMs, res.Timing.OutOfOrder = true, ms(resp.TCP.RTT), int64(resp.TCP.OutOfOrder)
+	}
 	if resp.Header != nil {
 		res.ContentType, res.ContentRange, res.AcceptRanges = resp.Header.Get("Content-Type"), resp.Header.Get("Content-Range"), resp.Header.Get("Accept-Ranges")
 	}

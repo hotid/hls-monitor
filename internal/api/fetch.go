@@ -39,6 +39,20 @@ type fetchJob struct {
 type fetchDone struct {
 	res  agentproto.FetchResult
 	body []byte
+	// upload is how long the body took to arrive from the agent.
+	upload time.Duration
+}
+
+// relayTiming is how the way through an agent went, in milliseconds.
+type relayTiming struct {
+	// WaitMs is how long the request waited for the agent to take it.
+	WaitMs float64 `json:"wait_ms"`
+	// UploadMs is how long what the agent fetched took to reach the
+	// server, Bytes how much it was.
+	UploadMs float64 `json:"upload_ms"`
+	Bytes    int64   `json:"bytes"`
+	// TotalMs is the whole of it, the agent's own fetch included.
+	TotalMs float64 `json:"total_ms"`
 }
 
 // relays holds the work waiting for agents and the work they have taken.
@@ -63,7 +77,9 @@ func (r *relays) queue(agent int64) chan *fetchJob {
 }
 
 // fetchThroughAgent has an agent fetch what job names.
-func (s *Server) fetchThroughAgent(ctx context.Context, agent int64, req agentproto.FetchRequest) (agentproto.FetchResult, []byte) {
+func (s *Server) fetchThroughAgent(ctx context.Context, agent int64, req agentproto.FetchRequest) (agentproto.FetchResult, []byte, *relayTiming) {
+	start := time.Now()
+	ms := func(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 	var id [12]byte
 	_, _ = rand.Read(id[:])
 	req.ID = hex.EncodeToString(id[:])
@@ -83,15 +99,16 @@ func (s *Server) fetchThroughAgent(ctx context.Context, agent int64, req agentpr
 	select {
 	case q <- job:
 	case <-hand.C:
-		return agentproto.FetchResult{Error: "the agent is not taking requests: it is out of contact, busy or too old for this"}, nil
+		return agentproto.FetchResult{Error: "the agent is not taking requests: it is out of contact, busy or too old for this"}, nil, nil
 	case <-ctx.Done():
-		return agentproto.FetchResult{Error: ctx.Err().Error()}, nil
+		return agentproto.FetchResult{Error: ctx.Err().Error()}, nil, nil
 	}
+	waited := time.Since(start)
 	select {
 	case d := <-job.done:
-		return d.res, d.body
+		return d.res, d.body, &relayTiming{WaitMs: ms(waited), UploadMs: ms(d.upload), Bytes: int64(len(d.body)), TotalMs: ms(time.Since(start))}
 	case <-ctx.Done():
-		return agentproto.FetchResult{Error: "the agent did not answer in time"}, nil
+		return agentproto.FetchResult{Error: "the agent did not answer in time"}, nil, &relayTiming{WaitMs: ms(waited), TotalMs: ms(time.Since(start))}
 	}
 }
 
@@ -151,12 +168,13 @@ func (s *Server) agentFetchResult(c *gin.Context) {
 		badRequest(c, "invalid "+agentproto.HeaderFetchResult+" header")
 		return
 	}
+	began := time.Now()
 	body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, playMaxBody+1))
 	if err != nil {
 		res.Error = "the agent's answer broke off: " + err.Error()
 	}
 	select {
-	case job.done <- fetchDone{res: res, body: body}:
+	case job.done <- fetchDone{res: res, body: body, upload: time.Since(began)}:
 	default:
 	}
 	c.Status(http.StatusNoContent)

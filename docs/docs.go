@@ -2124,6 +2124,34 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_hotid_hls-monitor_internal_agentproto.Link": {
+            "type": "object",
+            "properties": {
+                "failures": {
+                    "type": "integer"
+                },
+                "measured": {
+                    "description": "Measured is false where the kernel's figures cannot be read (the\nagent does not run on Linux): RTTMs and Retransmits mean nothing.",
+                    "type": "boolean"
+                },
+                "request_ms": {
+                    "description": "RequestMs is how long the latest delivery of results took.",
+                    "type": "number"
+                },
+                "requests": {
+                    "description": "Requests and Failures count the requests to the server since the\nstart and those of them that got no answer.",
+                    "type": "integer"
+                },
+                "retransmits": {
+                    "description": "Retransmits counts the TCP segments the agent had to send again\nsince it started: loss on the way to the server.",
+                    "type": "integer"
+                },
+                "rtt_ms": {
+                    "description": "RTTMs is the round trip time to the server, by the kernel's count on\nthe latest request; zero where the agent cannot read it.",
+                    "type": "number"
+                }
+            }
+        },
         "github_com_hotid_hls-monitor_internal_agentproto.ResultsRequest": {
             "type": "object",
             "properties": {
@@ -2168,6 +2196,14 @@ const docTemplate = `{
                 "fetches": {
                     "description": "Fetches tells that the agent takes requests to fetch something for\nthe server (see FetchRequest); older agents do not.",
                     "type": "boolean"
+                },
+                "link": {
+                    "description": "Link is how the agent's connection to the server is doing.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.Link"
+                        }
+                    ]
                 },
                 "memory_bytes": {
                     "type": "integer"

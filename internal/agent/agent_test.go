@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hotid/hls-monitor/internal/agentproto"
 	"github.com/hotid/hls-monitor/internal/api"
 	"github.com/hotid/hls-monitor/internal/auth"
 	"github.com/hotid/hls-monitor/internal/hlstest"
@@ -350,6 +353,32 @@ func TestWatchThroughAgent(t *testing.T) {
 	}
 	if !strings.HasPrefix(hdr.Get("X-Upstream"), "127.0.0.1:") {
 		t.Errorf("X-Upstream = %q", hdr.Get("X-Upstream"))
+	}
+	// The page is told how each hop went: the agent's request to the
+	// origin, the way from the agent to the server, and the agent's link.
+	var info struct {
+		Origin *agentproto.FetchTiming `json:"origin"`
+		Relay  *struct {
+			TotalMs float64 `json:"total_ms"`
+			Bytes   int64   `json:"bytes"`
+		} `json:"relay"`
+		Link *agentproto.Link `json:"link"`
+	}
+	raw, err := base64.StdEncoding.DecodeString(hdr.Get("X-Fetch-Info"))
+	if err != nil || json.Unmarshal(raw, &info) != nil {
+		t.Fatalf("X-Fetch-Info = %q: %v", hdr.Get("X-Fetch-Info"), err)
+	}
+	if info.Origin == nil || info.Origin.Bytes != int64(len(direct)) || info.Relay == nil || info.Relay.Bytes != int64(len(direct)) || info.Relay.TotalMs <= 0 {
+		t.Errorf("fetch info = %s", raw)
+	}
+	if info.Link == nil || info.Link.Requests == 0 {
+		t.Errorf("the agent's link is not reported: %s", raw)
+	}
+	if runtime.GOOS == "linux" && (!info.Link.Measured || !info.Origin.Measured) {
+		t.Errorf("on Linux the kernel's figures must be read: %s", raw)
+	}
+	if st := hdr.Get("Server-Timing"); !strings.Contains(st, "relay_upload;dur=") {
+		t.Errorf("Server-Timing = %q", st)
 	}
 	// Several at once: a player asks for a playlist and segments together.
 	var wg sync.WaitGroup

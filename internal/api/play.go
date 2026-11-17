@@ -315,11 +315,19 @@ func (s *Server) play(c *gin.Context) {
 	}
 	var res agentproto.FetchResult
 	var body []byte
+	info := fetchInfo{}
 	if tok.Agent == 0 || tok.Agent == store.LocalAgentID {
 		res, body = s.fetchLocal(ctx, job)
 	} else {
-		res, body = s.fetchThroughAgent(ctx, tok.Agent, job)
+		res, body, info.Relay = s.fetchThroughAgent(ctx, tok.Agent, job)
+		s.reportsMu.Lock()
+		if rep, ok := s.reports[tok.Agent]; ok {
+			info.Link = rep.status.Link
+		}
+		s.reportsMu.Unlock()
 	}
+	info.Origin = res.Timing
+	s.describeFetch(c, info)
 	if errors.Is(c.Request.Context().Err(), context.Canceled) {
 		c.Abort() // the viewer went away
 		return
@@ -368,6 +376,38 @@ func (s *Server) play(c *gin.Context) {
 		ct = "application/octet-stream"
 	}
 	c.Data(res.Status, ct, body)
+}
+
+// fetchInfo is how a fetch for a viewer went, hop by hop. The player's
+// page draws its charts from it.
+type fetchInfo struct {
+	// Origin is the request to the origin, made by the server or by the
+	// agent the stream is watched through.
+	Origin *agentproto.FetchTiming `json:"origin,omitempty"`
+	// Relay is the way through the agent, Link what the agent says of its
+	// connection to the server; both absent when the server fetched itself.
+	Relay *relayTiming     `json:"relay,omitempty"`
+	Link  *agentproto.Link `json:"link,omitempty"`
+}
+
+// describeFetch tells the viewer's browser how the fetch went: in the
+// standard Server-Timing header, which browsers show in their own tools,
+// and in full in X-Fetch-Info, base64 of the JSON of a fetchInfo.
+func (s *Server) describeFetch(c *gin.Context, info fetchInfo) {
+	var parts []string
+	if info.Origin != nil {
+		parts = append(parts, "origin;dur="+strconv.FormatFloat(info.Origin.TotalMs, 'f', 1, 64))
+	}
+	if info.Relay != nil {
+		parts = append(parts, "relay_wait;dur="+strconv.FormatFloat(info.Relay.WaitMs, 'f', 1, 64),
+			"relay_upload;dur="+strconv.FormatFloat(info.Relay.UploadMs, 'f', 1, 64))
+	}
+	if len(parts) > 0 {
+		c.Header("Server-Timing", strings.Join(parts, ", "))
+	}
+	if b, err := json.Marshal(info); err == nil {
+		c.Header("X-Fetch-Info", base64.StdEncoding.EncodeToString(b))
+	}
 }
 
 // fetchLocal fetches from the server itself.

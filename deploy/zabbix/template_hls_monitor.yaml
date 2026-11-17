@@ -604,6 +604,101 @@ zabbix_export:
           tags:
           - tag: scope
             value: performance
+      - uuid: 9b9375f59df042639c4fe4e96bc6aea8
+        name: 'HLS agent {#AGENT}: round trip time to the server'
+        type: DEPENDENT
+        key: hlsmon.agent.link.rtt[{#AGENT}]
+        delay: '0'
+        value_type: FLOAT
+        units: s
+        description: By the kernel's count on the agent's own requests; 0 where the agent cannot read it.
+        preprocessing:
+        - type: PROMETHEUS_PATTERN
+          parameters:
+          - hlsmon_agent_link_rtt_seconds{agent="{#AGENT}"}
+          - value
+          - ''
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: hlsmon.metrics.get
+        tags:
+        - tag: component
+          value: agent
+        trigger_prototypes:
+        - uuid: 4925ed48223449a280264739e4e930e4
+          expression: min(/HLS monitor by HTTP/hlsmon.agent.link.rtt[{#AGENT}],5m)>{$HLSMON.AGENT.LINK.RTT}
+          name: 'HLS agent {#AGENT}: the way to the server is slow'
+          priority: WARNING
+          description: The round trip time from the agent to the server has been above {$HLSMON.AGENT.LINK.RTT} s for 5 minutes. Results of the agent's checks arrive late, and a stream watched through it stalls for no fault of its own.
+          tags:
+          - tag: scope
+            value: performance
+      - uuid: 8b9fddaaa3174c4d8866ba89a6e7a287
+        name: 'HLS agent {#AGENT}: TCP retransmissions to the server per second'
+        type: DEPENDENT
+        key: hlsmon.agent.link.retransmits[{#AGENT}]
+        delay: '0'
+        value_type: FLOAT
+        units: /s
+        description: 'Segments the agent had to send to the server again: loss on the way, counted by the one who sends.'
+        preprocessing:
+        - type: PROMETHEUS_PATTERN
+          parameters:
+          - hlsmon_agent_link_retransmits_total{agent="{#AGENT}"}
+          - value
+          - ''
+          error_handler: DISCARD_VALUE
+        - type: CHANGE_PER_SECOND
+          parameters:
+          - ''
+        master_item:
+          key: hlsmon.metrics.get
+        tags:
+        - tag: component
+          value: agent
+        trigger_prototypes:
+        - uuid: bf93779be46f4fafbc102f390a754e47
+          expression: min(/HLS monitor by HTTP/hlsmon.agent.link.retransmits[{#AGENT}],5m)>{$HLSMON.AGENT.LINK.RETRANS}
+          name: 'HLS agent {#AGENT}: the way to the server loses packets'
+          priority: WARNING
+          description: 'The agent has been sending more than {$HLSMON.AGENT.LINK.RETRANS} TCP segments a second to the server again for 5 minutes: the way between them loses packets.'
+          tags:
+          - tag: scope
+            value: performance
+      - uuid: 1c8394104fdb4418a7bdb6f95f105ccd
+        name: 'HLS agent {#AGENT}: failed requests to the server per second'
+        type: DEPENDENT
+        key: hlsmon.agent.link.failures[{#AGENT}]
+        delay: '0'
+        value_type: FLOAT
+        units: /s
+        preprocessing:
+        - type: PROMETHEUS_PATTERN
+          parameters:
+          - hlsmon_agent_link_failures_total{agent="{#AGENT}"}
+          - value
+          - ''
+          error_handler: DISCARD_VALUE
+        - type: CHANGE_PER_SECOND
+          parameters:
+          - ''
+        master_item:
+          key: hlsmon.metrics.get
+        tags:
+        - tag: component
+          value: agent
+        trigger_prototypes:
+        - uuid: 1802e394bb87439daa823611aba3ed94
+          expression: min(/HLS monitor by HTTP/hlsmon.agent.link.failures[{#AGENT}],5m)>0
+          name: 'HLS agent {#AGENT}: requests to the server fail'
+          priority: AVERAGE
+          description: For 5 minutes some of the agent's requests to the server have got no answer. It keeps its results and sends them again, but they arrive late.
+          tags:
+          - tag: scope
+            value: performance
+          dependencies:
+          - name: 'HLS monitor: the server does not answer'
+            expression: nodata(/HLS monitor by HTTP/hlsmon.ready,{$HLSMON.NODATA.TIME})=1
       - uuid: a87de3f28a6d4dd59701d892b12134ac
         name: 'HLS agent {#AGENT}: cannot write to the queue'
         type: DEPENDENT
@@ -753,6 +848,12 @@ zabbix_export:
     - tag: target
       value: hls-monitor
     macros:
+    - macro: '{$HLSMON.AGENT.LINK.RETRANS}'
+      value: '5'
+      description: TCP retransmissions a second from an agent to the server
+    - macro: '{$HLSMON.AGENT.LINK.RTT}'
+      value: '0.3'
+      description: Round trip time from an agent to the server, seconds
     - macro: '{$HLSMON.AGENT.OFFLINE.TIME}'
       value: 5m
       description: How long an agent may be out of contact

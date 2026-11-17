@@ -258,6 +258,25 @@ func (s *Server) selfMetrics(c *gin.Context) {
 	series("hlsmon_agent_queue_oldest_seconds", "gauge", "How long the oldest of them has been waiting.", func(st *agentproto.Status) float64 { return st.QueueOldestSec })
 	series("hlsmon_agent_queue_dropped_total", "counter", "Results the agent dropped because its queue was full.", func(st *agentproto.Status) float64 { return float64(st.QueueDropped) })
 	series("hlsmon_agent_queue_failing", "gauge", "1 while the agent cannot write to its queue.", func(st *agentproto.Status) float64 { return flag(st.QueueFailing) })
+	// The server's own checks have no way to the server to speak of.
+	link := func(name, typ, help string, get func(l *agentproto.Link) float64) {
+		first := true
+		for _, r := range rows {
+			if r.st == nil || r.st.Link == nil {
+				continue
+			}
+			h := ""
+			if first {
+				h, first = help, false
+			}
+			metric(name, typ, h, get(r.st.Link), "agent", r.name)
+		}
+	}
+	link("hlsmon_agent_link_rtt_seconds", "gauge", "Round trip time from the agent to the server, by the kernel's count; 0 where it cannot be read.", func(l *agentproto.Link) float64 { return l.RTTMs / 1000 })
+	link("hlsmon_agent_link_retransmits_total", "counter", "TCP segments the agent had to send to the server again: loss on the way.", func(l *agentproto.Link) float64 { return float64(l.Retransmits) })
+	link("hlsmon_agent_link_request_seconds", "gauge", "How long the agent's latest request to the server took.", func(l *agentproto.Link) float64 { return l.RequestMs / 1000 })
+	link("hlsmon_agent_link_requests_total", "counter", "Requests the agent made to the server.", func(l *agentproto.Link) float64 { return float64(l.Requests) })
+	link("hlsmon_agent_link_failures_total", "counter", "Of them, those that got no answer.", func(l *agentproto.Link) float64 { return float64(l.Failures) })
 	series("hlsmon_agent_cpu_cores", "gauge", "Processors used by the agent.", func(st *agentproto.Status) float64 { return st.CPUCores })
 	series("hlsmon_agent_memory_bytes", "gauge", "Memory of the agent.", func(st *agentproto.Status) float64 { return float64(st.MemoryBytes) })
 

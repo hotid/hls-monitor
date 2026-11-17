@@ -74,11 +74,16 @@ func (a *Agent) fetch(ctx context.Context, job agentproto.FetchRequest) {
 	req.Header.Set(agentproto.HeaderVersion, a.opt.Version)
 	req.Header.Set(agentproto.HeaderTime, strconv.FormatInt(time.Now().UnixMilli(), 10))
 	req.Header.Set(agentproto.HeaderFetchResult, base64.StdEncoding.EncodeToString(meta))
+	// Returning a segment is the largest thing the agent sends: the best
+	// look at the way to the server there is.
+	req, done := a.link.watch(req, false)
 	resp, err := a.hc.Do(req)
 	if err != nil {
+		done(false)
 		a.log.Debug("cannot return what was fetched for a viewer", "error", err)
 		return
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
+	done(true)
 }

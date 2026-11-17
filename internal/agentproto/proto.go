@@ -37,9 +37,56 @@ type Status struct {
 	CPUCores    float64 `json:"cpu_cores"`
 	CPULimit    float64 `json:"cpu_limit"`
 	MemoryBytes int64   `json:"memory_bytes"`
+	// Link is how the agent's connection to the server is doing.
+	Link *Link `json:"link,omitempty"`
 	// Fetches tells that the agent takes requests to fetch something for
 	// the server (see FetchRequest); older agents do not.
 	Fetches bool `json:"fetches,omitempty"`
+}
+
+// Link describes the way from an agent to the server, as the agent sees
+// it on the requests it makes all the time. A stream watched through an
+// agent, and every result of its checks, travels this way: when it is bad,
+// what arrives late or not at all is no fault of the stream.
+type Link struct {
+	// RTTMs is the round trip time to the server, by the kernel's count on
+	// the latest request; zero where the agent cannot read it.
+	RTTMs float64 `json:"rtt_ms"`
+	// Retransmits counts the TCP segments the agent had to send again
+	// since it started: loss on the way to the server.
+	Retransmits int64 `json:"retransmits"`
+	// RequestMs is how long the latest delivery of results took.
+	RequestMs float64 `json:"request_ms"`
+	// Requests and Failures count the requests to the server since the
+	// start and those of them that got no answer.
+	Requests int64 `json:"requests"`
+	Failures int64 `json:"failures"`
+	// Measured is false where the kernel's figures cannot be read (the
+	// agent does not run on Linux): RTTMs and Retransmits mean nothing.
+	Measured bool `json:"measured"`
+}
+
+// FetchTiming is how one fetch went, in milliseconds.
+type FetchTiming struct {
+	DNSMs     float64 `json:"dns_ms"`
+	ConnectMs float64 `json:"connect_ms"`
+	TLSMs     float64 `json:"tls_ms"`
+	// TTFBMs is from the request to the first byte of the answer, TotalMs
+	// to the last one.
+	TTFBMs  float64 `json:"ttfb_ms"`
+	TotalMs float64 `json:"total_ms"`
+	Bytes   int64   `json:"bytes"`
+	// Redirects is how many were followed; Reused tells that no new
+	// connection was needed.
+	Redirects int  `json:"redirects,omitempty"`
+	Reused    bool `json:"reused,omitempty"`
+	// Of the connection to the origin, by the kernel's count; Measured
+	// is false where that cannot be read. OutOfOrder counts segments that
+	// arrived out of order over the life of the connection: the only sign
+	// of loss a receiver has, and not a certain one.
+	Measured   bool    `json:"measured,omitempty"`
+	RTTMs      float64 `json:"rtt_ms,omitempty"`
+	OutOfOrder int64   `json:"out_of_order,omitempty"`
 }
 
 // An agent accepts no connections, so when the server wants something
@@ -84,6 +131,8 @@ type FetchResult struct {
 	FinalURL   string `json:"final_url,omitempty"`
 	RemoteAddr string `json:"remote_addr,omitempty"`
 	Inside     bool   `json:"inside,omitempty"`
+	// Timing is how the request to the origin went.
+	Timing *FetchTiming `json:"timing,omitempty"`
 }
 
 // EnrollRequest exchanges a one-time enrollment token for a permanent key.
