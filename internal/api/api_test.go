@@ -931,3 +931,26 @@ func TestRewritePlaylist(t *testing.T) {
 		}
 	}
 }
+
+// With a key that is kept, an address given before a restart of the
+// server works after it.
+func TestPlayKeySurvivesRestart(t *testing.T) {
+	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	mx := metrics.New("", nil)
+	key := []byte("0123456789abcdef0123456789abcdef")
+	tok := playToken{URL: "http://x/a.m3u8", Stream: 1, Expires: time.Now().Add(time.Hour).Unix()}
+	before := New(Config{PlayKey: key}, st, mx, ingest.New(st, mx, nil), nil, nil, nil)
+	after := New(Config{PlayKey: key}, st, mx, ingest.New(st, mx, nil), nil, nil, nil)
+	other := New(Config{}, st, mx, ingest.New(st, mx, nil), nil, nil, nil)
+	signed := before.signPlay(tok)
+	if got, ok := after.openPlay(signed); !ok || got.URL != tok.URL {
+		t.Error("the same key must accept the address after a restart")
+	}
+	if _, ok := other.openPlay(signed); ok {
+		t.Error("another key must refuse it")
+	}
+}

@@ -44,6 +44,10 @@ type Config struct {
 	// EnrollTTL is how long an enrollment token stays valid.
 	EnrollTTL      time.Duration
 	TrustedProxies []string
+	// PlayKey signs the addresses handed to players of watched streams.
+	// A key that survives restarts keeps open players working across
+	// them; when empty, one is made for the life of the process.
+	PlayKey []byte
 	// Load watches the server process itself; may be nil.
 	Load *selfstat.Monitor
 }
@@ -95,8 +99,11 @@ func New(cfg Config, st *store.Store, mx *metrics.Client, ing *ingest.Ingester, 
 	s := &Server{cfg: cfg, st: st, mx: mx, ing: ing, local: local, log: log, now: time.Now, logins: newLoginLimiter(), diagnoses: make(chan struct{}, maxDiagnoses), reports: map[int64]agentReport{}}
 
 	s.fetchPoll, s.fetchHandOver = fetchPoll, fetchHandOver
-	s.playKey = make([]byte, 32)
-	_, _ = rand.Read(s.playKey)
+	s.playKey = cfg.PlayKey
+	if len(s.playKey) < 16 {
+		s.playKey = make([]byte, 32)
+		_, _ = rand.Read(s.playKey)
+	}
 	s.playSecure = httpx.New(httpx.Options{UserAgent: "hls-monitor/" + cfg.Version})
 	s.playInsecure = httpx.New(httpx.Options{UserAgent: "hls-monitor/" + cfg.Version, InsecureSkipVerify: true})
 

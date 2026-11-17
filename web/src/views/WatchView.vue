@@ -19,6 +19,8 @@ const loadError = ref<string | null>(null)
 
 const video = ref<HTMLVideoElement | null>(null)
 let hls: Hls | null = null
+/** New addresses were asked for after the old ones were refused. */
+let renewed = false
 let timer = 0
 
 interface Quality {
@@ -164,6 +166,7 @@ async function start() {
     if (l) playing.value = { label: levelLabel(l.height, l.width, 0, l.name), bitrate: l.bitrate }
   })
   player.on(HlsLib.Events.FRAG_LOADED, (_e, data) => {
+    renewed = false
     const xhr = data.networkDetails as XMLHttpRequest | undefined
     const from = typeof xhr?.getResponseHeader === 'function' ? xhr.getResponseHeader('X-Upstream') : null
     if (from) upstream.value = from
@@ -204,6 +207,13 @@ async function start() {
       case HlsLib.ErrorDetails.LEVEL_PARSING_ERROR:
         text = t('watch.playlistCannotBeParsed')
         break
+    }
+    // The addresses given to the player have expired, or the server was
+    // started anew with another key: ask for new ones, once.
+    if (code === 403 && !renewed) {
+      renewed = true
+      void changeVantage()
+      return
     }
     note(text, data.fatal, [data.details, data.error?.message, data.reason].filter(Boolean).join(': ').slice(0, 300))
     if (!data.fatal) return

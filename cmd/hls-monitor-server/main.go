@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
@@ -185,6 +186,7 @@ func run(cfg config, log *slog.Logger) error {
 		BasePath:       basePath,
 		TrustedProxies: proxies,
 		Load:           load,
+		PlayKey:        playKey(filepath.Join(filepath.Dir(cfg.dbPath), "play.key"), log),
 	}, st, mx, ing, local, webui.Handler(basePath), log)
 	srv.SyncLocal(ctx)
 
@@ -218,6 +220,24 @@ func run(cfg config, log *slog.Logger) error {
 		err = nil
 	}
 	return err
+}
+
+// playKey reads the key that signs the addresses given to players, making
+// it on the first start. Without a file that can be kept the key lives as
+// long as the process, and players open across a restart have to be
+// started again.
+func playKey(path string, log *slog.Logger) []byte {
+	if b, err := os.ReadFile(path); err == nil && len(b) >= 32 {
+		return b
+	}
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		return nil
+	}
+	if err := os.WriteFile(path, key, 0o600); err != nil {
+		log.Warn("cannot keep the key for watching streams; open players will stop at every restart", "error", err)
+	}
+	return key
 }
 
 // ensureAdmin creates the first administrator when there are no users.
