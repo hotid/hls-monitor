@@ -88,7 +88,10 @@ const summaryCharts: SummaryChart[] = [
   },
   {
     id: 'out-of-order', title: t('dashboard.signsOfLoss'), hint: t('dashboard.signsOfLossHint'), unit: 'count', steps: true, zeroFill: true,
-    series: [{ id: 'out_of_order', label: t('dashboard.outOfOrderPerStep') }],
+    series: [
+      { id: 'retransmits', label: t('dashboard.retransmitsPerStep') },
+      { id: 'out_of_order', label: t('dashboard.outOfOrderPerStep') },
+    ],
   },
   {
     id: 'segment-ttfb', title: t('dashboard.segmentFirstByte'), hint: t('dashboard.timeToTheFirstByteOf'), unit: 's',

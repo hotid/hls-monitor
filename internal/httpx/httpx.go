@@ -66,8 +66,12 @@ func New(o Options) *Client {
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
 		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          200,
-		MaxIdleConnsPerHost:   8,
+		// One client serves every stream, and checks come in bursts: dozens
+		// of requests to one server at once. A connection that finds no
+		// room among the idle ones is closed and opened again a moment
+		// later, so the room is for a burst, not for the average.
+		MaxIdleConns:          1024,
+		MaxIdleConnsPerHost:   128,
 		IdleConnTimeout:       60 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: time.Second,

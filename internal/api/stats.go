@@ -169,6 +169,7 @@ var aggregates = []struct{ id, expr string }{
 	{"rtt_avg", `avg(avg_over_time(hls_tcp_rtt_seconds[%[1]ds]))`},
 	{"rtt_p95", `quantile(0.95, avg_over_time(hls_tcp_rtt_seconds[%[1]ds]))`},
 	{"out_of_order", `sum(sum_over_time(hls_tcp_out_of_order[%[1]ds]))`},
+	{"retransmits", `sum(sum_over_time(hls_tcp_retransmits[%[1]ds]))`},
 	{"segment_errors", `sum(sum_over_time(hls_segment_errors[%[1]ds]))`},
 	{"segments_checked", `sum(sum_over_time(hls_segments_checked[%[1]ds]))`},
 	{"segments_missed", `sum(sum_over_time(hls_segments_missed[%[1]ds]))`},
