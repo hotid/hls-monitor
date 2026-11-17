@@ -22,7 +22,6 @@ const video = ref<HTMLVideoElement | null>(null)
 let hls: Hls | null = null
 /** New addresses were asked for after the old ones were refused. */
 let renewed = false
-let lastSample = 0
 let timer = 0
 
 interface Quality {
@@ -77,21 +76,35 @@ function resetHistory() {
   counted = {}
   totals = {}
   startedAt.value = Math.floor(Date.now() / 1000)
+  sampledSecond = 0
   sampled.value++
 }
 
+/** The last second a sample was written for. */
+let sampledSecond = 0
+
+// Called a few times a second; writes one sample for every second that has
+// passed. A timer does not fire on the second: without filling in, the
+// seconds it steps over are holes in the lines. A long silence — the tab
+// was asleep — stays a hole: nothing was observed then.
 function sample() {
   const now = Math.floor(Date.now() / 1000)
-  const put = (key: string, v: number | undefined) => {
-    if (v === undefined || !Number.isFinite(v)) return
-    const s = (series[key] ??= [])
-    s.push([now, v])
-    while (s.length && s[0]![0] < now - windowSec) s.shift()
+  if (now <= sampledSecond) return
+  const from = now - sampledSecond > 5 ? now : sampledSecond + 1
+  for (let sec = from; sec <= now; sec++) {
+    const put = (key: string, v: number | undefined) => {
+      if (v === undefined || !Number.isFinite(v)) return
+      const s = (series[key] ??= [])
+      s.push([sec, v])
+      while (s.length && s[0]![0] < sec - windowSec) s.shift()
+    }
+    for (const [k, v] of Object.entries(latest)) put(k, v)
+    // Counts are per second; a second in which nothing went wrong is a
+    // zero, and what was counted belongs to the latest one.
+    for (const k of ['retransmits', 'outOfOrder', 'failed', 'stalls', 'dropped']) put(k, sec === now ? (counted[k] ?? 0) : 0)
   }
-  for (const [k, v] of Object.entries(latest)) put(k, v)
-  // Counts are per second; a second in which nothing went wrong is a zero.
-  for (const k of ['retransmits', 'outOfOrder', 'failed', 'stalls', 'dropped']) put(k, counted[k] ?? 0)
   counted = {}
+  sampledSecond = now
   sampled.value++
 }
 
@@ -429,10 +442,7 @@ async function start() {
     if (Number.isFinite(hls.bandwidthEstimate) && hls.bandwidthEstimate > 0) latest.estimate = hls.bandwidthEstimate
     if (totals.frames !== undefined && dropped.value >= totals.frames) counted.dropped = (counted.dropped ?? 0) + (dropped.value - totals.frames)
     totals.frames = dropped.value
-    if (Date.now() - lastSample >= 1000) {
-      lastSample = Date.now()
-      sample()
-    }
+    sample()
     if (state.value !== 'failed') {
       state.value = el.readyState >= 3 && !el.paused ? 'playing' : el.readyState < 3 && el.currentTime > 0 ? 'stalled' : state.value === 'playing' ? 'stalled' : 'loading'
       if (el.paused && el.readyState >= 3) state.value = 'playing'

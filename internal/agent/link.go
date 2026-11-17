@@ -19,13 +19,41 @@ type linkWatch struct {
 	// seen is, per connection, the retransmissions already counted: the
 	// kernel counts them for the life of a connection, and one connection
 	// serves many requests.
-	seen        map[string]uint32
+	seen map[string]uint32
+	// rtts are the round trip times read in the last rttWindow. Most of
+	// the agent's requests wait long for their answer, and on those the
+	// kernel's figure includes the time the server put off acknowledging
+	// the request; the smallest of the recent ones does not.
+	rtts        []rttSample
 	rtt         time.Duration
 	retransmits int64
 	lastRequest time.Duration
 	requests    int64
 	failures    int64
 	measured    bool
+}
+
+type rttSample struct {
+	at  time.Time
+	rtt time.Duration
+}
+
+const rttWindow = 30 * time.Second
+
+// noteRTT adds a reading and returns the smallest of the recent ones.
+func (l *linkWatch) noteRTT(now time.Time, rtt time.Duration) time.Duration {
+	keep := l.rtts[:0]
+	for _, s := range l.rtts {
+		if now.Sub(s.at) <= rttWindow {
+			keep = append(keep, s)
+		}
+	}
+	l.rtts = append(keep, rttSample{now, rtt})
+	least := rtt
+	for _, s := range l.rtts {
+		least = min(least, s.rtt)
+	}
+	return least
 }
 
 // watch prepares a request to the server to be measured. The request it
@@ -60,7 +88,7 @@ func (l *linkWatch) watch(req *http.Request, timed bool) (*http.Request, func(ok
 		if !have {
 			return
 		}
-		l.measured, l.rtt = true, info.RTT
+		l.measured, l.rtt = true, l.noteRTT(time.Now(), info.RTT)
 		if l.seen == nil {
 			l.seen = map[string]uint32{}
 		}

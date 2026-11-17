@@ -10,9 +10,9 @@ import (
 // TCPInfo is what the kernel knows about a connection. The counters run
 // for the life of the connection, which may serve many requests.
 type TCPInfo struct {
-	// RTT is the round trip time: the smallest the kernel saw in the last
-	// minutes, which leaves out acknowledgements the other side delayed.
-	// RTTVar is how much the smoothed time varies.
+	// RTT is the smoothed round trip time, RTTVar how much it varies. On a
+	// connection that waits long for its answer it includes the time the
+	// other side put off its acknowledgement.
 	RTT    time.Duration
 	RTTVar time.Duration
 	// Retransmits counts the segments this side had to send again: the
