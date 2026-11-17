@@ -49,6 +49,14 @@ const troubles = ref<Trouble[]>([])
 const unsupported = ref(false)
 
 const source = computed(() => sources.value[sourceIndex.value])
+/** The server asked directly passed the request on: the one that answers. */
+const passedOn = computed(() => {
+  const asked = source.value
+  const got = upstream.value.split(' ')[0] ?? ''
+  if (!asked || asked.kind !== 'server' || !asked.host || !got) return ''
+  const bare = (h: string) => h.replace(/:\d+$/, '').toLowerCase()
+  return bare(got) === bare(asked.host) ? '' : bare(got)
+})
 
 function sourceLabel(s: WatchSource): string {
   if (s.kind === 'configured') return t('watch.asConfigured')
@@ -277,6 +285,7 @@ onBeforeUnmount(stop)
                 <template v-else>{{ t('watch.serverNotSeenHint') }}</template>
               </span>
               <span v-if="source" class="help mono address">{{ source.address }}</span>
+              <span v-if="passedOn" class="help passed-on">{{ t('watch.passedOn', { asked: source?.host ?? '', got: passedOn }) }}</span>
             </div>
             <div class="field">
               <label for="watch-quality">{{ t('watch.quality') }}</label>
@@ -361,6 +370,9 @@ onBeforeUnmount(stop)
 }
 .address {
   word-break: break-all;
+}
+.passed-on {
+  color: var(--accent-warm);
 }
 .troubles {
   display: grid;

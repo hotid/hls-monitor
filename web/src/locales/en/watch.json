@@ -14,6 +14,7 @@
   "latencyHint": "How far the point being played is behind the newest segment of the playlist.",
   "lead": "The stream as the monitor sees it: the server requests playlists and segments itself, from where it makes its checks, and passes them to this page. Ask the stream's own address, or one particular server behind it.",
   "nowPlaying": "Playing now",
+  "passedOn": "{asked} did not serve the stream itself: it passed the request on to {got}.",
   "play": "Play",
   "playlistAnswered": "Playlist: HTTP {code}",
   "playlistCannotBeParsed": "The playlist could not be parsed by the player",
