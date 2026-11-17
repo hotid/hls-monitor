@@ -956,6 +956,51 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/server-incidents": {
+            "get": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "description": "What is wrong with a server rather than with one stream: the same problem on several of its streams at once (the kind is that of the streams' problem), or the way to it losing packets (network_loss). A problem that comes back within ten minutes continues the same incident.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "incidents"
+                ],
+                "summary": "Incidents of servers, open ones first",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "true: only open",
+                        "name": "open",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Rows to return (default 200, max 2000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.ServerIncident"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/servers": {
             "get": {
                 "description": "Built from the last five minutes of checks. A stream served by several servers is counted for each.",
@@ -2962,6 +3007,10 @@ const docTemplate = `{
         "github_com_hotid_hls-monitor_internal_store.Incident": {
             "type": "object",
             "properties": {
+                "active": {
+                    "description": "Active tells that the problem was there at the latest check; an open\nincident that is not active is waiting to see whether it is over.",
+                    "type": "boolean"
+                },
                 "agent_id": {
                     "type": "integer"
                 },
@@ -2978,8 +3027,15 @@ const docTemplate = `{
                 "ended_at": {
                     "type": "string"
                 },
+                "episodes": {
+                    "description": "Episodes is how many times the problem began within this incident:\none that comes back soon after it went away is the same incident.\nIdleSeconds is how long it was away between them.",
+                    "type": "integer"
+                },
                 "id": {
                     "type": "integer"
+                },
+                "idle_seconds": {
+                    "type": "number"
                 },
                 "kind": {
                     "type": "string"
@@ -3065,6 +3121,53 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "variant_id": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.ServerIncident": {
+            "type": "object",
+            "properties": {
+                "details": {
+                    "description": "Details name the streams concerned at the latest look.",
+                    "type": "object"
+                },
+                "ended_at": {
+                    "type": "string"
+                },
+                "episodes": {
+                    "description": "Episodes is how many times it began; IdleSeconds how long it was\naway between them.",
+                    "type": "integer"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "idle_seconds": {
+                    "type": "number"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "kind": {
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "severity": {
+                    "type": "string"
+                },
+                "started_at": {
+                    "type": "string"
+                },
+                "streams": {
+                    "description": "Streams is the largest number of streams that had the problem at once.",
                     "type": "integer"
                 }
             }
@@ -3660,6 +3763,13 @@ const docTemplate = `{
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.Incident"
+                    }
+                },
+                "server_incidents": {
+                    "description": "ServerIncidents are the open incidents of servers.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.ServerIncident"
                     }
                 },
                 "streams": {

@@ -300,7 +300,7 @@ function keyframe(seg: SegmentDetail): boolean | undefined {
 function asIncident(f: Finding): Incident {
   return {
     id: 0, stream_id: props.id, stream_name: info.value?.name ?? '', agent_id: 0, agent_name: '', variant_id: 0, variant_key: f.variant, variant_kind: '',
-    kind: f.kind, severity: f.severity, message: f.message, started_at: f.first, last_seen: f.last, ended_at: null, count: f.count, details: f.details,
+    kind: f.kind, severity: f.severity, message: f.message, started_at: f.first, last_seen: f.last, ended_at: null, count: f.count, episodes: 1, idle_seconds: 0, active: true, details: f.details,
   }
 }
 </script>

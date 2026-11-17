@@ -280,6 +280,8 @@ func housekeeping(ctx context.Context, st *store.Store, srv *api.Server, cfg con
 	defer purge.Stop()
 	sync := time.NewTicker(time.Minute)
 	defer sync.Stop()
+	watch := time.NewTicker(api.ServerWatchEvery)
+	defer watch.Stop()
 	doPurge := func() {
 		now := time.Now()
 		deleted, err := st.Purge(ctx, store.Retention{
@@ -305,6 +307,8 @@ func housekeeping(ctx context.Context, st *store.Store, srv *api.Server, cfg con
 			return
 		case <-purge.C:
 			doPurge()
+		case <-watch.C:
+			srv.WatchServers(ctx)
 		case <-sync.C:
 			srv.SyncLocal(ctx)
 			srv.PurgeSeries(ctx)

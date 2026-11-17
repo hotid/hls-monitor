@@ -209,8 +209,31 @@ export interface Incident {
   last_seen: string
   ended_at: string | null
   count: number
+  /** How many times the problem began within the incident, and how long it was away between them. */
+  episodes: number
+  idle_seconds: number
+  /** The problem was there at the latest check. */
+  active: boolean
   /** The figures the incident was concluded from; absent for old incidents. */
   details?: Record<string, unknown>
+}
+
+/** Something wrong with a server rather than with one stream. */
+export interface ServerIncident {
+  id: number
+  host: string
+  ip: string
+  /** The kind of the streams' problem, or "network_loss". */
+  kind: string
+  severity: 'warn' | 'crit'
+  message: string
+  streams: number
+  started_at: string
+  last_seen: string
+  ended_at: string | null
+  episodes: number
+  idle_seconds: number
+  details?: { streams?: { id: number; name: string }[]; example?: string; requests?: number; retransmits?: number }
 }
 
 /** Evidence of where an incident's cause is. */
@@ -229,6 +252,7 @@ export interface Overview {
   streams: Stream[]
   agents: Agent[]
   incidents: Incident[]
+  server_incidents: ServerIncident[]
 }
 
 export interface Timeline {

@@ -686,6 +686,11 @@ definitions:
     type: object
   github_com_hotid_hls-monitor_internal_store.Incident:
     properties:
+      active:
+        description: |-
+          Active tells that the problem was there at the latest check; an open
+          incident that is not active is waiting to see whether it is over.
+        type: boolean
       agent_id:
         type: integer
       agent_name:
@@ -697,8 +702,16 @@ definitions:
         type: object
       ended_at:
         type: string
+      episodes:
+        description: |-
+          Episodes is how many times the problem began within this incident:
+          one that comes back soon after it went away is the same incident.
+          IdleSeconds is how long it was away between them.
+        type: integer
       id:
         type: integer
+      idle_seconds:
+        type: number
       kind:
         type: string
       last_seen:
@@ -755,6 +768,41 @@ definitions:
       url:
         type: string
       variant_id:
+        type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_store.ServerIncident:
+    properties:
+      details:
+        description: Details name the streams concerned at the latest look.
+        type: object
+      ended_at:
+        type: string
+      episodes:
+        description: |-
+          Episodes is how many times it began; IdleSeconds how long it was
+          away between them.
+        type: integer
+      host:
+        type: string
+      id:
+        type: integer
+      idle_seconds:
+        type: number
+      ip:
+        type: string
+      kind:
+        type: string
+      last_seen:
+        type: string
+      message:
+        type: string
+      severity:
+        type: string
+      started_at:
+        type: string
+      streams:
+        description: Streams is the largest number of streams that had the problem
+          at once.
         type: integer
     type: object
   github_com_hotid_hls-monitor_internal_store.Snapshot:
@@ -1163,6 +1211,11 @@ definitions:
       incidents:
         items:
           $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Incident'
+        type: array
+      server_incidents:
+        description: ServerIncidents are the open incidents of servers.
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.ServerIncident'
         type: array
       streams:
         items:
@@ -2259,6 +2312,36 @@ paths:
       summary: A playlist or a segment of a watched stream
       tags:
       - streams
+  /api/v1/server-incidents:
+    get:
+      description: 'What is wrong with a server rather than with one stream: the same
+        problem on several of its streams at once (the kind is that of the streams''
+        problem), or the way to it losing packets (network_loss). A problem that comes
+        back within ten minutes continues the same incident.'
+      parameters:
+      - description: 'true: only open'
+        in: query
+        name: open
+        type: boolean
+      - description: Rows to return (default 200, max 2000)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.ServerIncident'
+            type: array
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: Incidents of servers, open ones first
+      tags:
+      - incidents
   /api/v1/servers:
     get:
       description: Built from the last five minutes of checks. A stream served by

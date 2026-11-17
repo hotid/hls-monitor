@@ -27,13 +27,21 @@ type Incident struct {
 	EndedAt     *time.Time `json:"ended_at"`
 	Count       int64      `json:"count"`
 	CleanCycles int        `json:"-"`
+	// Episodes is how many times the problem began within this incident:
+	// one that comes back soon after it went away is the same incident.
+	// IdleSeconds is how long it was away between them.
+	Episodes    int     `json:"episodes"`
+	IdleSeconds float64 `json:"idle_seconds"`
+	// Active tells that the problem was there at the latest check; an open
+	// incident that is not active is waiting to see whether it is over.
+	Active bool `json:"active"`
 	// Details are the figures of the latest occurrence that had any.
 	Details json.RawMessage `json:"details,omitempty" swaggertype:"object"`
 }
 
 const incidentSelect = `
 	SELECT i.id, i.stream_id, s.name, i.agent_id, a.name, i.variant_id, v.key, v.kind,
-	       i.kind, i.severity, i.message, i.started_at, i.last_seen, i.ended_at, i.count, i.clean_cycles, i.details
+	       i.kind, i.severity, i.message, i.started_at, i.last_seen, i.ended_at, i.count, i.clean_cycles, i.details, i.episodes, i.idle_ms
 	FROM incidents i
 	JOIN streams s ON s.id = i.stream_id
 	JOIN agents a ON a.id = i.agent_id
@@ -47,8 +55,9 @@ func scanIncidents(rows *sql.Rows) ([]*Incident, error) {
 		var started, last int64
 		var ended sql.NullInt64
 		var details string
+		var idle int64
 		if err := rows.Scan(&in.ID, &in.StreamID, &in.StreamName, &in.AgentID, &in.AgentName, &in.VariantID, &in.VariantKey, &in.VariantKind,
-			&in.Kind, &in.Severity, &in.Message, &started, &last, &ended, &in.Count, &in.CleanCycles, &details); err != nil {
+			&in.Kind, &in.Severity, &in.Message, &started, &last, &ended, &in.Count, &in.CleanCycles, &details, &in.Episodes, &idle); err != nil {
 			return nil, err
 		}
 		if details != "" {
@@ -56,6 +65,8 @@ func scanIncidents(rows *sql.Rows) ([]*Incident, error) {
 		}
 		in.StartedAt, in.LastSeen = fromMs(started), fromMs(last)
 		in.EndedAt = fromMsPtr(ended)
+		in.IdleSeconds = float64(idle) / 1000
+		in.Active = !ended.Valid && in.CleanCycles == 0
 		out = append(out, &in)
 	}
 	return out, rows.Err()
@@ -95,6 +106,19 @@ func (tx *Tx) ReportIncident(ctx context.Context, streamID, agentID, variantID i
 			count = incidents.count + excluded.count,
 			clean_cycles = 0`,
 		streamID, agentID, variantID, kind, severity, message, detailsJSON, toMs(now), toMs(now), max(count, 1))
+	return err
+}
+
+// ReopenIncident opens again the latest incident of the same stream, agent,
+// variant and kind that ended at or after the moment given, if there is one
+// and none is open: the problem is back, and it is the same incident.
+func (tx *Tx) ReopenIncident(ctx context.Context, streamID, agentID, variantID int64, kind string, endedFrom, now time.Time) error {
+	_, err := tx.q.ExecContext(ctx, `
+		UPDATE incidents SET idle_ms = idle_ms + (? - ended_at), episodes = episodes + 1, ended_at = NULL
+		WHERE id = (SELECT id FROM incidents WHERE stream_id = ? AND agent_id = ? AND variant_id = ? AND kind = ? AND ended_at >= ?
+		            ORDER BY ended_at DESC LIMIT 1)
+		  AND NOT EXISTS (SELECT 1 FROM incidents WHERE stream_id = ? AND agent_id = ? AND variant_id = ? AND kind = ? AND ended_at IS NULL)`,
+		toMs(now), streamID, agentID, variantID, kind, toMs(endedFrom), streamID, agentID, variantID, kind)
 	return err
 }
 

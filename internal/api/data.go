@@ -34,6 +34,8 @@ type overviewResponse struct {
 	Streams   []*streamView     `json:"streams"`
 	Agents    []agentView       `json:"agents"`
 	Incidents []*store.Incident `json:"incidents"`
+	// ServerIncidents are the open incidents of servers.
+	ServerIncidents []*store.ServerIncident `json:"server_incidents"`
 }
 
 func (s *Server) agentViews(agents map[int64]*store.Agent, streams []*store.Stream, now time.Time) []agentView {
@@ -85,12 +87,17 @@ func (s *Server) overview(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
+	serverIncidents, err := s.st.ListServerIncidents(ctx, true, 200)
+	if s.storeError(c, err) {
+		return
+	}
 	out := overviewResponse{
-		Time:      sc.now.UTC(),
-		Counts:    map[string]int{statusOK: 0, statusWarn: 0, statusFail: 0, statusNoData: 0, statusDisabled: 0},
-		Streams:   make([]*streamView, 0, len(streams)),
-		Agents:    s.agentViews(sc.agents, streams, sc.now),
-		Incidents: incidents,
+		ServerIncidents: serverIncidents,
+		Time:            sc.now.UTC(),
+		Counts:          map[string]int{statusOK: 0, statusWarn: 0, statusFail: 0, statusNoData: 0, statusDisabled: 0},
+		Streams:         make([]*streamView, 0, len(streams)),
+		Agents:          s.agentViews(sc.agents, streams, sc.now),
+		Incidents:       incidents,
 	}
 	for _, st := range streams {
 		v := s.view(st, sc, isAdmin(c))

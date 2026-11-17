@@ -12,6 +12,7 @@ import { useSession } from '@/stores/session'
 import type { Aggregate, ServerSeries, ServersNetwork, ServerView, Status, Stream, Timeline } from '@/types'
 import FilterEmpty from '@/components/FilterEmpty.vue'
 import IncidentTable from '@/components/IncidentTable.vue'
+import ServerIncidentTable from '@/components/ServerIncidentTable.vue'
 import SortTh from '@/components/SortTh.vue'
 import StatusStrip from '@/components/StatusStrip.vue'
 import StreamFormDialog from '@/components/StreamFormDialog.vue'
@@ -422,6 +423,16 @@ const creating = ref(false)
             <button class="btn" type="button" @click="shown += 100">{{ t('dashboard.showMoreOf', { n: Math.min(100, streamSort.rows.length - visible.length), total: streamSort.rows.length - visible.length }) }}</button>
           </div>
         </template>
+      </div>
+    </section>
+
+    <section v-if="live.overview?.server_incidents?.length" class="section">
+      <div class="section-title">
+        <h2>{{ t('incidents.ofServers') }}</h2>
+        <span class="muted">{{ t('incidents.ofServersHint') }}</span>
+      </div>
+      <div class="panel">
+        <ServerIncidentTable :incidents="live.overview.server_incidents" :now="live.updatedAt" />
       </div>
     </section>
 

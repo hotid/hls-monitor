@@ -969,3 +969,97 @@ func TestPlayKeySurvivesRestart(t *testing.T) {
 		t.Error("another key must refuse it")
 	}
 }
+
+func TestServerIncidents(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Now().Truncate(time.Second)
+	e.srv.now = func() time.Time { return now }
+	ing := ingest.New(e.st, metrics.New("", nil), nil)
+	variants := []probe.Variant{{Key: probe.VariantMedia, Kind: probe.KindVideo}}
+	streams := map[string]*store.Stream{}
+	report := func(name, server string) {
+		t.Helper()
+		st := streams[name]
+		if st == nil {
+			var err error
+			if st, err = e.st.CreateStream(ctx, store.StreamInput{Name: name, URL: "http://x/" + name + ".m3u8", Enabled: true, Level: "playlist",
+				AgentIDs: []int64{store.LocalAgentID}}, now); err != nil {
+				t.Fatal(err)
+			}
+			streams[name] = st
+		}
+		r := &probe.Result{TargetID: st.ID, Time: now, Status: probe.StatusOK, Variants: variants,
+			Metrics: []probe.Metric{{Name: "hls_up", Variant: probe.VariantMedia, Value: 1}}}
+		if server != "" {
+			r.Status = probe.StatusFail
+			r.Problems = []probe.Problem{{Kind: probe.ProbPlaylistHTTP, Severity: probe.SevCrit, Variant: probe.VariantMedia, Message: "playlist returned HTTP 404", Count: 1,
+				Details: map[string]any{"playlist_server": server}}}
+		}
+		if err := ing.Apply(ctx, store.LocalAgentID, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := e.login("viewer")
+	list := func(q string) []store.ServerIncident {
+		t.Helper()
+		var out []store.ServerIncident
+		c.want(200, "GET", "/api/v1/server-incidents"+q, nil, &out)
+		return out
+	}
+
+	// Two streams of a server are two streams; a third makes it the server's.
+	report("a", "bad-server 10.0.0.6")
+	report("b", "bad-server 10.0.0.6")
+	report("z", "other-server 10.0.0.9")
+	e.srv.WatchServers(ctx)
+	if got := list(""); len(got) != 0 {
+		t.Fatalf("two streams made an incident of the server: %+v", got)
+	}
+	report("c", "bad-server 10.0.0.6")
+	e.srv.WatchServers(ctx)
+	got := list("?open=true")
+	if len(got) != 1 || got[0].Host != "bad-server" || got[0].IP != "10.0.0.6" || got[0].Kind != probe.ProbPlaylistHTTP ||
+		got[0].Severity != probe.SevCrit || got[0].Streams != 3 || got[0].EndedAt != nil {
+		t.Fatalf("server incidents = %+v", got)
+	}
+	var d serverIncidentDetails
+	if err := json.Unmarshal(got[0].Details, &d); err != nil || len(d.Streams) != 3 || d.Streams[0].Name != "a" {
+		t.Errorf("details = %s, %v", got[0].Details, err)
+	}
+	var ov overviewResponse
+	c.want(200, "GET", "/api/v1/overview", nil, &ov)
+	if len(ov.ServerIncidents) != 1 {
+		t.Errorf("the overview names %d incidents of servers, want 1", len(ov.ServerIncidents))
+	}
+
+	// The streams recover: the incident outlives them by a little, then ends.
+	step := func(d time.Duration) { now = now.Add(d) }
+	for range 3 {
+		step(10 * time.Second)
+		for _, name := range []string{"a", "b", "c"} {
+			report(name, "")
+		}
+		e.srv.WatchServers(ctx)
+	}
+	if got := list("?open=true"); len(got) != 1 {
+		t.Fatalf("the incident ended %v after the problem, sooner than it should: %+v", 30*time.Second, got)
+	}
+	step(2 * time.Minute)
+	e.srv.WatchServers(ctx)
+	if got := list("?open=true"); len(got) != 0 {
+		t.Fatalf("still open long after the problem was gone: %+v", got)
+	}
+	first := list("")[0]
+
+	// It comes back a few minutes later: the same incident goes on.
+	step(time.Minute)
+	for _, name := range []string{"a", "b", "c"} {
+		report(name, "bad-server 10.0.0.6")
+	}
+	e.srv.WatchServers(ctx)
+	got = list("")
+	if len(got) != 1 || got[0].ID != first.ID || got[0].EndedAt != nil || got[0].Episodes != 2 || got[0].IdleSeconds != 60 {
+		t.Fatalf("after the problem came back: %+v", got)
+	}
+}

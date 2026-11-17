@@ -151,6 +151,7 @@ func (s *Server) routes(ui http.Handler) {
 	user.GET("/snapshots/:id", s.getSnapshot)
 	user.GET("/incidents", s.listIncidents)
 	user.GET("/incidents/:id/scope", s.incidentScope)
+	user.GET("/server-incidents", s.listServerIncidents)
 	user.GET("/agents", s.listAgents)
 
 	admin := user.Group("", s.requireAdmin)

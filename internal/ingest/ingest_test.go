@@ -211,10 +211,29 @@ func TestIncidentLifecycle(t *testing.T) {
 		t.Fatalf("closed incidents = %+v", closed)
 	}
 
-	// The same problem later is a new incident.
+	// The same problem soon after is the same incident going on: it is
+	// opened again, and tells how many times it began and how long it
+	// was away.
 	e.apply(e.result(twoVariants, stale))
-	if open := e.incidents(true); len(open) != 1 || open[0].ID == closed[0].ID {
-		t.Fatalf("a recurrence must open a new incident: %+v", open)
+	open = e.incidents(true)
+	if len(open) != 1 || open[0].ID != closed[0].ID {
+		t.Fatalf("a problem that came back at once must open the same incident again: %+v", open)
+	}
+	if again := open[0]; again.Episodes != 2 || again.IdleSeconds != 10 || again.Count != 4 || !again.Active {
+		t.Errorf("opened again: episodes %d, idle %v s, count %d, active %v; want 2, 10, 4, true", again.Episodes, again.IdleSeconds, again.Count, again.Active)
+	}
+	for range 3 {
+		e.apply(e.result(twoVariants))
+	}
+	if len(e.incidents(true)) != 0 {
+		t.Fatal("the incident opened again must close like any other")
+	}
+
+	// Much later it is a new one.
+	e.clock = e.clock.Add(2 * ReopenWithin)
+	e.apply(e.result(twoVariants, stale))
+	if open := e.incidents(true); len(open) != 1 || open[0].ID == closed[0].ID || open[0].Episodes != 1 {
+		t.Fatalf("a recurrence long after must open a new incident: %+v", open)
 	}
 }
 

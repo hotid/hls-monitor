@@ -24,9 +24,11 @@ function variantLabel(i: Incident): string {
   return i.variant_key
 }
 
+// How long the problem was there: the whole span without the pauses
+// between the times it came back.
 function seconds(i: Incident, now: number): number {
   const end = i.ended_at ? new Date(i.ended_at).getTime() : now
-  return (end - new Date(i.started_at).getTime()) / 1000
+  return Math.max(0, (end - new Date(i.started_at).getTime()) / 1000 - (i.idle_seconds ?? 0))
 }
 
 function lasted(i: Incident, now: number): string {
@@ -66,6 +68,8 @@ const sort = useSort(() => props.incidents, {
               <span class="chevron" aria-hidden="true" />
               <span class="dot" :class="i.ended_at ? 'disabled' : i.severity" :title="i.ended_at ? t('incidents.ended') : i.severity === 'crit' ? t('common.failure') : i.severity === 'warn' ? t('common.warning') : t('incidents.event')" />
               <span :class="i.ended_at ? '' : 'strong'">{{ problemName(i.kind) }}</span>
+              <span v-if="i.episodes > 1" class="muted" :title="t('incidents.timesHint')">{{ i.episodes }} {{ t('incidents.times', i.episodes) }}</span>
+              <span v-if="!i.ended_at && !i.active && i.severity !== 'info'" class="muted">{{ t('incidents.goneForNow') }}</span>
             </div>
             <div class="incident-message muted">{{ i.message }}</div>
           </td>

@@ -473,6 +473,7 @@ func (s *Store) Purge(ctx context.Context, keep Retention, now time.Time) (delet
 		{s.db, "playlist_snapshots", "time < ?", now.Add(-keep.Snapshots)},
 		{s.db, "incidents", "ended_at IS NOT NULL AND severity = 'info' AND ended_at < ?", now.Add(-keep.Events)},
 		{s.db, "incidents", "ended_at IS NOT NULL AND ended_at < ?", now.Add(-keep.Incidents)},
+		{s.db, "server_incidents", "ended_at IS NOT NULL AND ended_at < ?", now.Add(-keep.Incidents)},
 	} {
 		n, err := deleteInBatches(ctx, st.db, st.table, st.cond, toMs(st.before))
 		deleted += n

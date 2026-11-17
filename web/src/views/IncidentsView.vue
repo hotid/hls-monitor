@@ -4,8 +4,9 @@ import { api, query } from '@/api'
 import { t } from '@/i18n'
 import { usePolling } from '@/poll'
 import { useLive } from '@/stores/live'
-import type { Incident } from '@/types'
+import type { Incident, ServerIncident } from '@/types'
 import IncidentTable from '@/components/IncidentTable.vue'
+import ServerIncidentTable from '@/components/ServerIncidentTable.vue'
 
 const live = useLive()
 const scope = ref<'open' | 'all'>('open')
@@ -43,6 +44,7 @@ function toggleLevel(id: LevelID) {
   }
 }
 const incidents = ref<Incident[] | null>(null)
+const ofServers = ref<ServerIncident[]>([])
 const now = ref(Date.now())
 
 const { error, refresh } = usePolling(async (signal) => {
@@ -50,6 +52,8 @@ const { error, refresh } = usePolling(async (signal) => {
     '/api/v1/incidents' + query({ open: scope.value === 'open' ? 'true' : undefined, stream: streamId.value, severity: shown.value.length < levels.length ? shown.value.join(',') : undefined, limit: 500 }),
     signal,
   )
+  // Of servers: not about one stream, so not shown when one is chosen.
+  ofServers.value = streamId.value ? [] : await api.get<ServerIncident[]>('/api/v1/server-incidents' + query({ open: scope.value === 'open' ? 'true' : undefined, limit: 100 }), signal)
   now.value = Date.now()
 }, 10_000)
 watch([scope, streamId, shown], () => void refresh())
@@ -75,6 +79,16 @@ const streams = computed(() => live.overview?.streams ?? [])
       </div>
     </div>
     <div v-if="error" class="notice error">{{ error }}</div>
+    <template v-if="ofServers.length">
+      <div class="section-title">
+        <h2>{{ t('incidents.ofServers') }}</h2>
+        <span class="muted">{{ t('incidents.ofServersHint') }}</span>
+      </div>
+      <div class="panel" style="margin-bottom: 20px">
+        <ServerIncidentTable :incidents="ofServers" :now="now" />
+      </div>
+      <div class="section-title"><h2>{{ t('incidents.ofStreams') }}</h2></div>
+    </template>
     <div class="panel">
       <div v-if="!incidents" class="empty">{{ t('common.loading') }}</div>
       <IncidentTable v-else-if="incidents.length" :incidents="incidents" show-stream :now="now" />

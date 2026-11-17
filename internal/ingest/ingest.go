@@ -17,6 +17,10 @@ import (
 	"github.com/hotid/hls-monitor/internal/store"
 )
 
+// ReopenWithin is how soon after it ended a problem that comes back is the
+// same incident going on, by default.
+const ReopenWithin = 10 * time.Minute
+
 // Ingester applies results. It is safe for concurrent use.
 type Ingester struct {
 	st  *store.Store
@@ -31,6 +35,9 @@ type Ingester struct {
 	// CloseEventAfter is how long an informational incident stays open
 	// after its last occurrence.
 	CloseEventAfter time.Duration
+	// ReopenWithin is how soon after it ended a problem that comes back
+	// is the same incident going on rather than a new one.
+	ReopenWithin time.Duration
 
 	stored, repeated, failed atomic.Int64
 }
@@ -69,7 +76,7 @@ func New(st *store.Store, mx *metrics.Client, log *slog.Logger) *Ingester {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Ingester{st: st, mx: mx, log: log, now: time.Now, CloseCycles: 3, CloseAfter: 30 * time.Second, CloseEventAfter: 30 * time.Minute}
+	return &Ingester{st: st, mx: mx, log: log, now: time.Now, CloseCycles: 3, CloseAfter: 30 * time.Second, CloseEventAfter: 30 * time.Minute, ReopenWithin: ReopenWithin}
 }
 
 // summaryAggregates are stream-wide figures kept with the latest state so that
@@ -253,6 +260,9 @@ func (in *Ingester) apply(ctx context.Context, agentID int64, r *probe.Result) e
 			present[key{vid, p.Kind}] = true
 			if !wasOpen[key{vid, p.Kind}] {
 				began[p.Variant] = append(began[p.Variant], p.Kind)
+				if err := tx.ReopenIncident(ctx, r.TargetID, agentID, vid, p.Kind, t.Add(-in.ReopenWithin), t); err != nil {
+					return err
+				}
 			}
 			if err := tx.ReportIncident(ctx, r.TargetID, agentID, vid, p.Kind, p.Severity, p.Message, p.Details, p.Count, t); err != nil {
 				return err
