@@ -28,7 +28,7 @@ jobs:
       - run: make test
 
   # A tag like v1.2.3 publishes ghcr.io/<owner>/hls-monitor-server and
-  # hls-monitor-agent as 1.2.3 and latest.
+  # hls-monitor-agent as 1.2.3 and latest, for x86-64 and 64-bit ARM.
   images:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
@@ -41,6 +41,10 @@ jobs:
         target: [server, agent]
     steps:
       - uses: actions/checkout@v5
+      # Only the last stage of the image runs on the target architecture.
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
       - uses: docker/setup-buildx-action@v4
       - uses: docker/login-action@v4
         with:
@@ -59,6 +63,7 @@ jobs:
           context: .
           file: deploy/Dockerfile
           target: ${{ matrix.target }}
+          platforms: linux/amd64,linux/arm64
           build-args: VERSION=${{ github.ref_name }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

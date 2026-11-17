@@ -2,14 +2,17 @@
 #   docker build -f deploy/Dockerfile --target server -t hls-monitor-server .
 #   docker build -f deploy/Dockerfile --target agent  -t hls-monitor-agent  .
 
-FROM node:22-alpine AS web
+# The interface and the binaries are built on the machine doing the build
+# and cross-compiled for the platform the image is for, so an image for
+# another architecture needs no emulation until the final stage.
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 
-FROM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -17,7 +20,9 @@ COPY . .
 # The server embeds the interface from this directory.
 COPY --from=web /src/web/dist/ internal/webui/dist/
 ARG VERSION=dev
-ENV CGO_ENABLED=0
+ARG TARGETOS
+ARG TARGETARCH
+ENV CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH
 RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/hls-monitor-server ./cmd/hls-monitor-server \
  && go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/hls-monitor-agent ./cmd/hls-monitor-agent
 

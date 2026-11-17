@@ -44,7 +44,7 @@ cp deploy/.env.example deploy/.env      # при желании задайте H
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-Запускаются опубликованные образы `ghcr.io/hotid/hls-monitor-server` и VictoriaMetrics, ничего не собирается. Из репозитория нужны только `deploy/docker-compose.yml` и `deploy/.env`. Версию выбирает `HLSMON_VERSION` в `deploy/.env` (по умолчанию `latest`).
+Запускаются опубликованные образы `ghcr.io/hotid/hls-monitor-server` и VictoriaMetrics, ничего не собирается. Образы есть под x86-64 и 64-битный ARM. Из репозитория нужны только `deploy/docker-compose.yml` и `deploy/.env`. Версию выбирает `HLSMON_VERSION` в `deploy/.env` (по умолчанию `latest`).
 
 Интерфейс откроется на <http://localhost:4000>. Порт публикуется только на локальном адресе: чтобы сервер был доступен с других машин, задайте `HLSMON_BIND=0.0.0.0` в `deploy/.env` или поставьте перед ним обратный прокси. Если пароль администратора не задан, он генерируется при первом запуске и один раз пишется в лог:
 

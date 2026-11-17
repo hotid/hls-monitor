@@ -44,7 +44,7 @@ cp deploy/.env.example deploy/.env      # optionally set HLSMON_ADMIN_PASSWORD
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-This runs the published images `ghcr.io/hotid/hls-monitor-server` and VictoriaMetrics; nothing is built. Of the repository only `deploy/docker-compose.yml` and `deploy/.env` are needed. `HLSMON_VERSION` in `deploy/.env` selects the release (`latest` by default).
+This runs the published images `ghcr.io/hotid/hls-monitor-server` and VictoriaMetrics; nothing is built. The images are for x86-64 and 64-bit ARM. Of the repository only `deploy/docker-compose.yml` and `deploy/.env` are needed. `HLSMON_VERSION` in `deploy/.env` selects the release (`latest` by default).
 
 The interface opens at <http://localhost:4000>. The port is published on the loopback only: to reach the server from other hosts, set `HLSMON_BIND=0.0.0.0` in `deploy/.env` or put a reverse proxy in front. If the administrator password is not set, it is generated on first start and written to the log once:
 
