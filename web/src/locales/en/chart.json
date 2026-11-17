@@ -1,4 +1,5 @@
 {
+  "legendHint": "a click leaves only this line, another brings all back; with Ctrl or Shift, add or remove one",
   "noChecks": "no checks",
   "noDataForThisPeriod": "No data for this period"
 }

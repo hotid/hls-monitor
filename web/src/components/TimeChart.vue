@@ -71,9 +71,29 @@ const legend = computed(() =>
         }
       }
     }
-    return { label: line.label, color: color(i), value: fmtUnit(v, props.unit) }
+    return { label: line.label, color: color(i), value: fmtUnit(v, props.unit), off: hidden.value.has(line.label) }
   }),
 )
+
+// Which lines are switched off, by label. A click on a label leaves that
+// line alone on the chart, and a click on the only one left brings all
+// back; with Ctrl, Cmd or Shift a click adds or removes one line. This is
+// what people know from Grafana.
+const hidden = ref(new Set<string>())
+function pick(label: string, e: MouseEvent | KeyboardEvent) {
+  const all = props.lines.map((l) => l.label)
+  const shown = all.filter((l) => !hidden.value.has(l))
+  let next: string[]
+  if (e.ctrlKey || e.metaKey || e.shiftKey) {
+    next = shown.includes(label) ? shown.filter((l) => l !== label) : [...shown, label]
+  } else {
+    next = shown.length === 1 && shown[0] === label ? all : [label]
+  }
+  // Nothing shown is an empty chart: everything comes back instead.
+  if (!next.length) next = all
+  hidden.value = new Set(all.filter((l) => !next.includes(l)))
+  props.lines.forEach((l, i) => plot.value?.setSeries(i + 1, { show: !hidden.value.has(l.label) }))
+}
 
 const hoverTime = computed(() => (hoverIdx.value === null ? null : fmtWhen((aligned.value.xs[hoverIdx.value] ?? 0) * 1000)))
 
@@ -129,6 +149,7 @@ function build() {
       {},
       ...props.lines.map((line, i) => ({
         label: line.label,
+        show: !hidden.value.has(line.label),
         stroke: color(i),
         width: 1.5,
         paths,
@@ -213,7 +234,11 @@ onBeforeUnmount(() => {
       <div v-if="!hasData" class="chart-empty muted">{{ loading ? t('common.loading') : (emptyHint ?? t('chart.noDataForThisPeriod')) }}</div>
     </div>
     <ul class="chart-legend">
-      <li v-for="l in legend" :key="l.label" :title="l.label">
+      <li
+        v-for="l in legend" :key="l.label" :class="{ off: l.off }" :title="l.label + ' — ' + t('chart.legendHint')"
+        role="button" tabindex="0" :aria-pressed="!l.off"
+        @click="pick(l.label, $event)" @keydown.enter.prevent="pick(l.label, $event)" @keydown.space.prevent="pick(l.label, $event)"
+      >
         <i :style="{ background: l.color }" />
         <span class="truncate">{{ l.label }}</span>
         <b class="mono">{{ l.value }}</b>
@@ -281,6 +306,20 @@ onBeforeUnmount(() => {
   min-width: 0;
   max-width: 100%;
   color: var(--text-muted);
+}
+
+.chart-legend li {
+  cursor: pointer;
+  user-select: none;
+}
+.chart-legend li:hover span {
+  color: var(--text);
+}
+.chart-legend li.off {
+  opacity: 0.4;
+}
+.chart-legend li.off span {
+  text-decoration: line-through;
 }
 
 .chart-legend i {
