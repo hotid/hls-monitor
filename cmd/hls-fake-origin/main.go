@@ -39,10 +39,11 @@ func main() {
 	listen := flag.String("listen", ":8089", "address to listen on")
 	fmp4 := flag.Bool("fmp4", false, "serve fragmented MP4 instead of MPEG-TS")
 	window := flag.Int("window", 6, "segments in the playlist")
+	padKB := flag.Int("pad-kb", 0, "make every MPEG-TS segment at least this many KiB by adding null packets")
 	flag.String("backend", "", "base URL that /lb/ redirects to; empty means this server")
 	flag.Parse()
 
-	o := hlstest.New(hlstest.Options{FMP4: *fmp4, Window: *window, Start: time.Now().Add(-time.Duration(*window) * 2 * time.Second)})
+	o := hlstest.New(hlstest.Options{PadTo: *padKB << 10, FMP4: *fmp4, Window: *window, Start: time.Now().Add(-time.Duration(*window) * 2 * time.Second)})
 	o.Publish(*window)
 	backend := flag.Lookup("backend").Value.String()
 	o.SetBackend(backend)

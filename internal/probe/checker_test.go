@@ -3,6 +3,7 @@ package probe
 import (
 	"context"
 	"fmt"
+	"github.com/Eyevinn/hls-m3u8/m3u8"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -686,5 +687,46 @@ func TestBodyBudget(t *testing.T) {
 	cancel()
 	if got := b.acquire(cancelled, 10); got != 0 {
 		t.Fatalf("a cancelled wait reserved %d, want 0", got)
+	}
+}
+
+// Numbers that cannot be a continuation of the previous ones are a change
+// of numbering, not thousands of lost segments.
+func TestSequenceRenumbered(t *testing.T) {
+	segs := []plSegment{{seq: 805737, seg: &m3u8.MediaSegment{Duration: 6}}, {seq: 805738, seg: &m3u8.MediaSegment{Duration: 6}}}
+	for name, c := range map[string]struct {
+		lastSeq, first, last uint64
+		elapsed              float64
+		otherServer, want    bool
+	}{
+		"far ahead of what 6 s could publish":   {20002, 805737, 805740, 6, false, true},
+		"back, from another server":             {805737, 20000, 20002, 47, true, true},
+		"far back on the same server":           {805737, 20000, 20002, 6, false, true},
+		"a little back on the same server":      {805737, 805730, 805734, 6, false, false},
+		"two segments lost":                     {805734, 805737, 805740, 6, false, false},
+		"a long outage explains a long gap":     {805000, 805737, 805740, 4200, false, false},
+		"the next segment, from another server": {805736, 805737, 805740, 6, true, false},
+	} {
+		if got := renumbered(c.lastSeq, c.first, c.last, segs, c.elapsed, c.otherServer); got != c.want {
+			t.Errorf("%s: %v, want %v", name, got, c.want)
+		}
+	}
+
+	f := newFixture(t, hlstest.Options{Window: 3}, "/v0/index.m3u8", LevelSegments)
+	f.step(3)
+	f.origin.Publish(100000)
+	f.clock = f.clock.Add(2 * time.Second)
+	r := f.run()
+	p := wantProblem(t, r, ProbSeqRenumbered, SevWarn)
+	if !strings.Contains(p.Message, "numbering changed") {
+		t.Errorf("message = %q", p.Message)
+	}
+	if _, ok := metric(r, "hls_segments_missed", VariantMedia); ok {
+		t.Error("a change of numbering must not count lost segments")
+	}
+	for _, q := range r.Problems {
+		if q.Kind == ProbSeqJump {
+			t.Errorf("a change of numbering reported as a loss too: %s", q.Message)
+		}
 	}
 }

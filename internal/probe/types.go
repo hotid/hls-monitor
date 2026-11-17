@@ -104,6 +104,7 @@ const (
 	ProbPlaylistEmpty       = "playlist_empty"
 	ProbSeqRegression       = "sequence_regression"
 	ProbSeqJump             = "sequence_jump"
+	ProbSeqRenumbered       = "sequence_renumbered"
 	ProbSegmentChanged      = "segment_changed"
 	ProbTargetDuration      = "target_duration_exceeded"
 	ProbTargetDurChanged    = "target_duration_changed"

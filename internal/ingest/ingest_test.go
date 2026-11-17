@@ -383,3 +383,34 @@ func TestRecurringEventIsOneIncident(t *testing.T) {
 		t.Errorf("journal rows = %d, want 6", len(segs))
 	}
 }
+
+// A result delivered twice, or one older than what is stored, changes
+// nothing: no second count on the incident, no step back in the state.
+func TestRepeatedAndLateResults(t *testing.T) {
+	e := newEnv(t)
+	stale := probe.Problem{Kind: probe.ProbPlaylistStale, Severity: probe.SevCrit, Variant: "hi.m3u8", Message: "stale for 20s", Count: 1}
+	first := e.result(twoVariants, stale)
+	e.apply(first)
+	second := e.result(twoVariants)
+	e.apply(second)
+	_ = e.mx.Flush(ctx)
+	sent := len(e.sent)
+
+	for name, r := range map[string]*probe.Result{"the same result again": second, "an older result": first} {
+		if err := e.in.Apply(ctx, store.LocalAgentID, r); !errors.Is(err, ErrStale) {
+			t.Fatalf("%s: err = %v, want ErrStale", name, err)
+		}
+	}
+	_ = e.mx.Flush(ctx)
+	if len(e.sent) != sent {
+		t.Errorf("repeated results sent metrics again")
+	}
+	inc := append(e.incidents(true), e.incidents(false)...)
+	if len(inc) != 1 || inc[0].Count != 1 {
+		t.Fatalf("incidents after repeats: %d, count %d; want one counted once", len(inc), inc[0].Count)
+	}
+	states, _ := e.st.StreamStates(ctx, e.stream.ID)
+	if len(states) != 1 || !states[0].CheckedAt.Equal(second.Time) || states[0].Status != probe.StatusOK {
+		t.Errorf("the state must stay as the newest result left it, got %+v", states[0])
+	}
+}

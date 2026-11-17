@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"golang.org/x/net/publicsuffix"
 	"io"
 	"net"
 	"net/http"
@@ -69,6 +70,13 @@ func New(o Options) *Client {
 			if len(via) >= maxRedirects {
 				return fmt.Errorf("stopped after %d redirects", maxRedirects)
 			}
+			// Go carries headers over to the redirect target; the configured
+			// ones do not leave their site.
+			if sc, ok := req.Context().Value(headerScopeKey{}).(headerScope); ok && !SameSite(req.URL.Hostname(), sc.host) {
+				for _, name := range sc.names {
+					req.Header.Del(name)
+				}
+			}
 			if t, ok := req.Context().Value(redirectKey{}).(*redirectTrace); ok && req.Response != nil {
 				h := Hop{Status: req.Response.StatusCode, Server: req.Response.Header.Get("Server")}
 				if prev := via[len(via)-1]; prev.URL != nil {
@@ -92,6 +100,10 @@ func (c *Client) CloseIdle() { c.hc.CloseIdleConnections() }
 type Request struct {
 	URL     string
 	Headers map[string]string
+	// HeadersFor is the URL the headers were configured for. When set,
+	// they are sent only to its site: they may carry a token, and a
+	// playlist or a redirect can name any host.
+	HeadersFor string
 	// MaxBody limits how many body bytes are kept and read. Zero means 64 MiB.
 	MaxBody int64
 	// RangeOffset/RangeLength request a byte range when RangeLength > 0.
@@ -258,8 +270,19 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", c.ua)
-	for k, v := range rq.Headers {
-		req.Header.Set(k, v)
+	if len(rq.Headers) > 0 {
+		home := req.URL.Hostname()
+		if u, err := url.Parse(rq.HeadersFor); err == nil && rq.HeadersFor != "" {
+			home = u.Hostname()
+		}
+		if SameSite(req.URL.Hostname(), home) {
+			sc := headerScope{host: home}
+			for k, v := range rq.Headers {
+				req.Header.Set(k, v)
+				sc.names = append(sc.names, k)
+			}
+			req = req.WithContext(context.WithValue(req.Context(), headerScopeKey{}, sc))
+		}
 	}
 	if rq.RangeLength > 0 {
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", rq.RangeOffset, rq.RangeOffset+rq.RangeLength-1))
@@ -333,4 +356,28 @@ func cleanErr(err error) error {
 		return ue.Err
 	}
 	return err
+}
+
+type headerScopeKey struct{}
+
+// headerScope says which request headers were configured and for which host.
+type headerScope struct {
+	host  string
+	names []string
+}
+
+// SameSite reports whether two hosts belong to one site: the same host, or
+// names under one registrable domain (cdn.example.com and
+// edge-3.example.com). IP addresses are a site each.
+func SameSite(a, b string) bool {
+	a, b = strings.ToLower(strings.TrimSuffix(a, ".")), strings.ToLower(strings.TrimSuffix(b, "."))
+	if a == b {
+		return true
+	}
+	if net.ParseIP(a) != nil || net.ParseIP(b) != nil {
+		return false
+	}
+	da, errA := publicsuffix.EffectiveTLDPlusOne(a)
+	db, errB := publicsuffix.EffectiveTLDPlusOne(b)
+	return errA == nil && errB == nil && da == db
 }

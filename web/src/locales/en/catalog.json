@@ -91,6 +91,7 @@
   "segmentsMissedBetweenChecks": "Segments missed between checks",
   "segmentsServedByADifferentServer": "Segments served by a different server",
   "segmentsThatCouldNotBeFetched": "Segments that could not be fetched",
+  "sequenceRenumbered": "Segment numbering changed",
   "setOfVariantsChanged": "Set of variants changed",
   "shareOfSuccessfulPlaylistRequests": "Share of successful playlist requests",
   "startup": "Startup",

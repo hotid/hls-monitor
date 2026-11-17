@@ -29,6 +29,10 @@ export const problemAbout = perLocale((): Record<string, { what: string; how: st
     what: t('incident.betweenTwoChecksSegmentsTheMonitor'),
     how: t('incident.howSequenceJump'),
   },
+  sequence_renumbered: {
+    what: t('incident.renumberedWhat'),
+    how: t('incident.renumberedHow'),
+  },
   sequence_regression: {
     what: t('incident.theMediaSequenceWentBackwardsThe'),
     how: t('incident.howSequenceRegression'),
@@ -136,6 +140,7 @@ const circumstances = perLocale((): Field[] => [
   { key: 'playlist_error', label: t('incident.playlistRequestError'), unit: 'text' },
   { key: 'playlist_seconds', label: t('incident.playlistRequestTime'), unit: 's' },
   { key: 'playlist_bytes', label: t('incident.playlistSize'), unit: 'bytes' },
+  { key: 'playlist_server_before', label: t('incident.playlistServerBefore'), unit: 'text' },
   { key: 'variants_edge_spread', label: t('incident.variantsEdgeSpread'), unit: 's' },
   { key: 'variants_edge_spread_limit', label: t('incident.variantsEdgeSpreadLimit'), unit: 's' },
   { key: 'since_previous_check', label: t('incident.sinceThePreviousCheck'), unit: 's' },

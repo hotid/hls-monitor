@@ -91,6 +91,7 @@
   "segmentsMissedBetweenChecks": "Сегменты пропали между проверками",
   "segmentsServedByADifferentServer": "Сегменты отдаёт другой сервер",
   "segmentsThatCouldNotBeFetched": "Сегменты, которые не удалось получить",
+  "sequenceRenumbered": "Нумерация сегментов сменилась",
   "setOfVariantsChanged": "Изменился набор вариантов",
   "shareOfSuccessfulPlaylistRequests": "Доля успешных запросов плейлиста",
   "startup": "Старт",

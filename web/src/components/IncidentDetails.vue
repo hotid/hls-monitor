@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { api } from '@/api'
 import { fmtFull } from '@/format'
 import { t } from '@/i18n'
 import { calculationRows, circumstanceRows, conclusion, problemAbout, type Details } from '@/incident'
-import type { Incident } from '@/types'
+import type { Incident, IncidentScope } from '@/types'
 
 const props = defineProps<{ incident: Incident }>()
 const details = computed<Details>(() => props.incident.details ?? {})
@@ -11,6 +12,35 @@ const about = computed(() => problemAbout()[props.incident.kind])
 const verdict = computed(() => conclusion(props.incident.kind, details.value))
 const figures = computed(() => calculationRows(details.value))
 const context = computed(() => circumstanceRows(details.value))
+
+// Who else sees the problem. A finding of a live diagnosis has no id and
+// nothing to compare with.
+const scope = ref<IncidentScope | null>(null)
+onMounted(async () => {
+  if (!props.incident.id) return
+  try {
+    scope.value = await api.get<IncidentScope>(`/incidents/${props.incident.id}/scope`)
+  } catch {
+    scope.value = null
+  }
+})
+const scopeLines = computed(() => {
+  const s = scope.value
+  if (!s) return []
+  const lines: string[] = []
+  const names = (list: IncidentScope['agents']) => list.map((a) => a.name).join(', ')
+  const seen = s.agents.filter((a) => a.saw)
+  const clear = s.agents.filter((a) => a.checked && !a.saw)
+  if (s.server_wide) lines.push(t('incidents.scopeServerWide', { server: s.server, n: s.same_server.length }))
+  else if (s.server && !s.same_server.length) lines.push(t('incidents.scopeServerAlone', { server: s.server }))
+  else if (s.server) lines.push(t('incidents.scopeServerOne', { server: s.server }))
+  if (s.elsewhere) lines.push(t('incidents.scopeElsewhere', { n: s.elsewhere }))
+  if (s.vantage === 'all') lines.push(t('incidents.scopeAll', { names: names(seen) }))
+  else if (s.vantage === 'only_this') lines.push(t('incidents.scopeOnlyThis', { agent: names(seen), names: names(clear) }))
+  else if (s.vantage === 'some') lines.push(t('incidents.scopeSome', { seen: names(seen), clear: names(clear) }))
+  else lines.push(t('incidents.scopeSingle'))
+  return lines
+})
 </script>
 
 <template>
@@ -36,6 +66,15 @@ const context = computed(() => circumstanceRows(details.value))
       <template v-if="verdict.length">
         <h3>{{ t('incidents.conclusion') }}</h3>
         <p v-for="(line, i) in verdict" :key="i">{{ line }}</p>
+      </template>
+      <template v-if="scopeLines.length">
+        <h3>{{ t('incidents.scopeTitle') }}<span class="muted">{{ t('incidents.scopeIsAGuess') }}</span></h3>
+        <p v-for="(line, i) in scopeLines" :key="i">{{ line }}</p>
+        <p v-if="scope?.same_server.length">
+          <template v-for="(s, i) in scope.same_server" :key="s.id">
+            <RouterLink :to="`/streams/${s.id}`">{{ s.name }}</RouterLink><span v-if="i + 1 < scope.same_server.length">, </span>
+          </template>
+        </p>
       </template>
       <template v-if="figures.length">
         <h3>{{ t('incidents.calculation') }}<span class="muted">{{ t('incidents.fromTheLastOccurrence') }}</span></h3>

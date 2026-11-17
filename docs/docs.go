@@ -776,6 +776,49 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/incidents/{id}/scope": {
+            "get": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "description": "Which vantage points saw the same problem, and which other streams from the same server had it at the same time.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "incidents"
+                ],
+                "summary": "Evidence of where an incident's cause is",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Incident ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.incidentScope"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/overview": {
             "get": {
                 "produces": [
@@ -1835,6 +1878,9 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "accepted": {
+                    "type": "integer"
+                },
+                "duplicates": {
                     "type": "integer"
                 },
                 "failed": {
@@ -3030,6 +3076,40 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.incidentScope": {
+            "type": "object",
+            "properties": {
+                "agents": {
+                    "description": "Agents are the vantage points the stream is checked from.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.scopeAgent"
+                    }
+                },
+                "elsewhere": {
+                    "type": "integer"
+                },
+                "same_server": {
+                    "description": "SameServer are other streams that had a problem of the same kind at\nthe same time and were answered by the same server; Elsewhere counts\nthose answered by other servers.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.streamRef"
+                    }
+                },
+                "server": {
+                    "description": "Server is the one that answered when the problem was found.",
+                    "type": "string"
+                },
+                "server_wide": {
+                    "description": "ServerWide is set when enough streams of the server share the problem.",
+                    "type": "boolean"
+                },
+                "vantage": {
+                    "description": "Vantage sums them up: \"all\" saw it, \"some\", \"only_this\" one, or\n\"single\" when there is nothing to compare with.",
+                    "type": "string"
+                }
+            }
+        },
         "internal_api.loginRequest": {
             "type": "object",
             "properties": {
@@ -3095,6 +3175,24 @@ const docTemplate = `{
                 },
                 "new": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.scopeAgent": {
+            "type": "object",
+            "properties": {
+                "checked": {
+                    "description": "Checked is false when the agent was not reporting on the stream at\nthe time: it says nothing either way.",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "saw": {
+                    "type": "boolean"
                 }
             }
         },

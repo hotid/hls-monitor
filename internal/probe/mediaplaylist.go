@@ -19,7 +19,11 @@ type variantState struct {
 
 	haveSeq bool
 	lastSeq uint64 // sequence number of the newest segment seen
-	recent  map[uint64]string
+	// lastCheck0 is the time of the check before the current one.
+	lastCheck0 time.Time
+	// lastServer is the server the previous playlist came from.
+	lastServer string
+	recent     map[uint64]string
 
 	signature      string
 	lastChange     time.Time
@@ -147,6 +151,7 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 			cy.about(v.Key, "failed_checks_between", failedBetween, "last_failure", st.lastFailure)
 		}
 	}
+	st.lastCheck0 = st.lastCheck
 	st.lastCheck, st.lastText = now, resp.Body
 	st.failedChecks, st.lastFailure = 0, ""
 	// The pause before this check was chosen by what the playlist promised then.
@@ -154,9 +159,28 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 
 	c.inspectPlaylist(cy, v, plURL, p, segs, resp, st, now)
 
+	server := endpoint(plURL, resp).Node()
+	serverBefore := st.lastServer
+	st.lastServer = server
+
 	// Sequence continuity against the previous cycle.
 	if st.haveSeq {
+		elapsed := now.Sub(st.lastCheck0).Seconds()
 		switch {
+		case renumbered(st.lastSeq, first, last, segs, elapsed, server != serverBefore):
+			// Not a loss and not a rollback: the numbers are not from the
+			// same count. Behind a balancer servers may each keep their own,
+			// and a packager starts over when it is restarted. A player
+			// that follows the numbers loses its place either way.
+			why := "the packager started its numbering over"
+			if server != serverBefore && serverBefore != "" {
+				why = fmt.Sprintf("the playlist came from %s, the previous one from %s, and they number segments differently", server, serverBefore)
+			}
+			cy.problem(ProbSeqRenumbered, SevWarn, v.Key, "media sequence numbering changed from %d to %d: %s", st.lastSeq, last, why)
+			cy.detail(ProbSeqRenumbered, v.Key, "previous_last_sequence", st.lastSeq, "playlist_server_before", serverBefore)
+			cy.snapshot(v.Key, plURL, resp.Body)
+			st.haveSeq = false
+			st.prev = prevSegment{}
 		case last < st.lastSeq:
 			cy.problem(ProbSeqRegression, SevCrit, v.Key, "media sequence went back from %d to %d", st.lastSeq, last)
 			cy.detail(ProbSeqRegression, v.Key, "previous_last_sequence", st.lastSeq)
@@ -445,4 +469,24 @@ func b2f(b bool) float64 {
 		return 1
 	}
 	return 0
+}
+
+// renumbered tells that the media sequence numbers of a playlist are not a
+// continuation of the previous ones: they went back while another server
+// answered, or jumped further ahead than segments could have been
+// published in the time that passed.
+func renumbered(lastSeq, first, last uint64, segs []plSegment, elapsed float64, otherServer bool) bool {
+	if last < lastSeq {
+		// The same server going back a little is a rollback, reported as such.
+		return otherServer || lastSeq-last > 1000
+	}
+	if first <= lastSeq+1 || elapsed <= 0 {
+		return false
+	}
+	shortest := segs[0].seg.Duration
+	for _, s := range segs {
+		shortest = min(shortest, s.seg.Duration)
+	}
+	missed := float64(first - lastSeq - 1)
+	return missed*max(shortest, 0.5) > 3*elapsed+60
 }

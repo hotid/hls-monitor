@@ -49,9 +49,11 @@ type ResultsRequest struct {
 // order. Rejected results belong to streams the agent is not, or no longer,
 // assigned to; they must not be sent again. Failed counts the results at
 // the end of the batch that the server could not store this time: only
-// those are to be sent again.
+// those are to be sent again. Duplicates were stored by an earlier delivery
+// whose answer the agent did not get; sending a result twice is harmless.
 type ResultsResponse struct {
-	Accepted int `json:"accepted"`
-	Rejected int `json:"rejected"`
-	Failed   int `json:"failed"`
+	Accepted   int `json:"accepted"`
+	Duplicates int `json:"duplicates"`
+	Rejected   int `json:"rejected"`
+	Failed     int `json:"failed"`
 }

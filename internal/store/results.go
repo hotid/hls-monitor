@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -159,6 +160,17 @@ func floatsJSON(m map[string]float64) string {
 	}
 	b, _ := json.Marshal(m)
 	return string(b)
+}
+
+// StreamCheckedAt returns the time, in Unix milliseconds, of the newest
+// result stored for the stream from the agent; zero when there is none.
+func (tx *Tx) StreamCheckedAt(ctx context.Context, streamID, agentID int64) (int64, error) {
+	var ms int64
+	err := tx.q.QueryRowContext(ctx, "SELECT checked_at FROM stream_state WHERE stream_id = ? AND agent_id = ?", streamID, agentID).Scan(&ms)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return ms, err
 }
 
 func (tx *Tx) SaveStreamState(ctx context.Context, streamID, agentID int64, status string, now time.Time, summary map[string]float64) error {

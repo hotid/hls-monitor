@@ -36,6 +36,7 @@ export const problemTitle = perLocale((): Record<string, string> => ({
   playlist_stale: t('catalog.playlistIsNotUpdating'),
   playlist_empty: t('catalog.playlistIsEmpty'),
   sequence_regression: t('catalog.mediaSequenceWentBackwards'),
+  sequence_renumbered: t('catalog.sequenceRenumbered'),
   sequence_jump: t('catalog.segmentsMissedBetweenChecks'),
   segment_changed: t('catalog.segmentReplaced'),
   target_duration_exceeded: t('catalog.segmentLongerThanEXTXTARGETDURATION'),

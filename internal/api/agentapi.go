@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/hotid/hls-monitor/internal/ingest"
 	"io"
 	"net/http"
 	"strconv"
@@ -197,6 +198,10 @@ func (s *Server) agentResults(c *gin.Context) {
 		err := s.ing.Apply(ctx, a.ID, r)
 		if errors.Is(err, store.ErrNotFound) {
 			resp.Rejected++
+			continue
+		}
+		if errors.Is(err, ingest.ErrStale) {
+			resp.Duplicates++
 			continue
 		}
 		if err != nil {

@@ -5,6 +5,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math"
 	"strings"
@@ -61,8 +62,19 @@ var summaryAggregates = []struct {
 	{"fps", "hls_media_fps", "max"},
 }
 
+// ErrStale is returned for a result that is not newer than the newest one
+// already stored for the same stream from the same agent.
+var ErrStale = errors.New("the result is not newer than what is already stored")
+
 // Apply stores one result reported by one agent. It returns store.ErrNotFound
 // when the stream no longer exists.
+//
+// An agent delivers the results of a stream in the order it made them, so a
+// result that is not newer than the stored one has been delivered before:
+// the answer to its first delivery was lost and the agent sent it again.
+// It is refused with ErrStale and changes nothing; that is what makes
+// delivery safe to repeat, and keeps an old result from replacing the
+// state a newer one has set.
 func (in *Ingester) Apply(ctx context.Context, agentID int64, r *probe.Result) error {
 	now := in.now()
 	// Agents may deliver results late, but a time from the future is a clock problem.
@@ -74,8 +86,14 @@ func (in *Ingester) Apply(ctx context.Context, agentID int64, r *probe.Result) e
 	var journal []store.JournalEntry
 
 	err := in.st.Tx(ctx, func(tx *store.Tx) error {
+		last, err := tx.StreamCheckedAt(ctx, r.TargetID, agentID)
+		if err != nil {
+			return err
+		}
+		if last != 0 && t.UnixMilli() <= last {
+			return ErrStale
+		}
 		var ids map[string]int64
-		var err error
 		if r.Variants != nil {
 			ids, err = tx.SyncVariants(ctx, r.TargetID, r.Variants, t)
 		} else {

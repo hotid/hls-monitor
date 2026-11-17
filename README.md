@@ -84,6 +84,10 @@ Segments are downloaded once each: every cycle fetches only those that appeared 
 
 A problem that persists for several cycles becomes an incident. An incident is closed after three clean cycles in a row and no sooner than 30 seconds after the problem was last seen. The playlist text at the moment the problem started is saved.
 
+The details of an incident also say where to look for its cause: whether the other vantage points saw the same problem, and whether other streams served by the same server had it at the same time. It is a guess from that evidence, and is worded as one.
+
+A playlist whose segment numbers do not continue the previous ones (another server behind a balancer with its own numbering answered, or the packager started over) is reported as a change of numbering, not as thousands of lost segments.
+
 ### Live diagnosis
 
 A separate check, run once per second at the chosen depth (for one to ten minutes), is started from the stream page. Every check is visible in the browser immediately: the response and server of each playlist, the player model buffer, the video arrival rate as a percentage of real time, every new segment, and everything that was found, with the calculation. The check is performed by the monitor server itself, not by agents. Live diagnosis saves nothing and does not affect regular checks, incidents or charts; no more than three run at the same time.
@@ -111,7 +115,7 @@ An agent checks streams from its own network and sends the results to the server
 
 3. In the stream settings, select where it should be checked from.
 
-After the first start the agent keeps its key in a volume and no longer needs the token. While the server is unavailable, the agent continues checking and keeps the results on disk, next to its key (up to 1 GB, `HLSMON_QUEUE_MAX_MB`; beyond that the oldest are dropped), then sends them with their original timestamp. The queue survives a restart of the agent; only a power failure may lose its last secondss. If an agent is silent for more than 90 seconds, its streams are shown as "no data", not as a failure.
+After the first start the agent keeps its key in a volume and no longer needs the token. While the server is unavailable, the agent continues checking and keeps the results on disk, next to its key (up to 1 GB, `HLSMON_QUEUE_MAX_MB`; beyond that the oldest are dropped), then sends them with their original timestamp. The queue survives a restart of the agent; only a power failure may lose its last seconds. Sending a result twice is harmless: the server refuses one that is not newer than what it has stored for the same stream from the same agents. If an agent is silent for more than 90 seconds, its streams are shown as "no data", not as a failure.
 
 To revoke an agent's key, issue it a new token on the "Agents" page.
 
@@ -163,7 +167,7 @@ location /hls-monitor/ {
 
 ## Users
 
-There are two roles: an administrator changes streams, agents and access; a viewer sees dashboards and history. The values of request headers set for a stream are shown only to administrators.
+There are two roles: an administrator changes streams, agents and access; a viewer sees dashboards and history. The values of request headers set for a stream are shown only to administrators. The headers are sent only to the site of the stream URL (the same host, or names under the same registrable domain): a playlist or a redirect that points elsewhere does not get them.
 
 ## API
 

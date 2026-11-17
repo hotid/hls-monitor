@@ -137,3 +137,55 @@ func TestGet(t *testing.T) {
 		}
 	})
 }
+
+// Configured headers may carry a token: they go to the site they were
+// configured for and nowhere else, whoever names the other host.
+func TestHeadersStayOnTheirSite(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"cdn.example.com", "edge-3.example.com", true},
+		{"example.com", "EXAMPLE.com.", true},
+		{"a.example.co.uk", "b.other.co.uk", false},
+		{"example.com", "example.org", false},
+		{"10.0.0.1", "10.0.0.1", true},
+		{"10.0.0.1", "10.0.0.2", false},
+		{"localhost", "localhost", true},
+	} {
+		if got := SameSite(c.a, c.b); got != c.want {
+			t.Errorf("SameSite(%s, %s) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+
+	var got []string
+	record := func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Host+r.URL.Path+" token="+r.Header.Get("X-Token"))
+	}
+	foreign := httptest.NewServer(http.HandlerFunc(record))
+	defer foreign.Close()
+	home := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		record(w, r)
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, strings.Replace(foreign.URL, "127.0.0.1", "localhost", 1)+"/landed", http.StatusFound)
+		}
+	}))
+	defer home.Close()
+	c := New(Options{})
+	headers := map[string]string{"X-Token": "secret"}
+	foreignURL := strings.Replace(foreign.URL, "127.0.0.1", "localhost", 1)
+	for _, u := range []string{home.URL + "/playlist", home.URL + "/redirect", foreignURL + "/segment"} {
+		if _, err := c.Get(context.Background(), Request{URL: u, Headers: headers, HeadersFor: home.URL + "/playlist"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, line := range got {
+		at127 := strings.HasPrefix(line, "127.0.0.1")
+		if has := strings.HasSuffix(line, "token=secret"); has != at127 {
+			t.Errorf("%s: the token must reach the stream's own host only", line)
+		}
+	}
+	if len(got) != 4 {
+		t.Errorf("requests seen: %v", got)
+	}
+}

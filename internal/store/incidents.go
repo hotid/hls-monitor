@@ -129,6 +129,8 @@ func (s *Store) CloseAgentIncidents(ctx context.Context, agentID int64, now time
 
 // IncidentFilter selects incidents.
 type IncidentFilter struct {
+	ID       int64  // only this incident
+	Kind     string // only this kind of problem
 	StreamID int64
 	AgentID  int64
 	Open     *bool
@@ -145,6 +147,14 @@ type IncidentFilter struct {
 func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]*Incident, error) {
 	var where []string
 	var args []any
+	if f.ID != 0 {
+		where = append(where, "i.id = ?")
+		args = append(args, f.ID)
+	}
+	if f.Kind != "" {
+		where = append(where, "i.kind = ?")
+		args = append(args, f.Kind)
+	}
 	if f.StreamID != 0 {
 		where = append(where, "i.stream_id = ?")
 		args = append(args, f.StreamID)

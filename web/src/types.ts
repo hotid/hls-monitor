@@ -133,6 +133,16 @@ export interface Incident {
   details?: Record<string, unknown>
 }
 
+/** Evidence of where an incident's cause is. */
+export interface IncidentScope {
+  agents: { id: number; name: string; checked: boolean; saw: boolean }[]
+  vantage: 'all' | 'some' | 'only_this' | 'single'
+  server?: string
+  same_server: { id: number; name: string }[]
+  elsewhere: number
+  server_wide: boolean
+}
+
 export interface Overview {
   time: string
   counts: Record<string, number>

@@ -98,7 +98,7 @@ func (c *Checker) timeout() time.Duration {
 func (c *Checker) get(ctx context.Context, rq httpx.Request, timeout time.Duration) (*httpx.Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	rq.Headers = c.t.Headers
+	rq.Headers, rq.HeadersFor = c.t.Headers, c.t.URL
 	return c.hc.Get(ctx, rq)
 }
 

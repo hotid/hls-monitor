@@ -592,3 +592,64 @@ func TestWebInterfaceFallback(t *testing.T) {
 		}
 	}
 }
+
+// The scope of an incident: who else sees it and which other streams of
+// the same server have it.
+func TestIncidentScope(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Now().Truncate(time.Second)
+	edge, err := e.st.CreateAgent(ctx, "edge", []byte("x"), now.Add(time.Hour), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ing := ingest.New(e.st, metrics.New("", nil), nil)
+	variants := []probe.Variant{{Key: probe.VariantMedia, Kind: probe.KindVideo}}
+	streams := map[string]*store.Stream{}
+	report := func(name string, agentID int64, server string) {
+		t.Helper()
+		st := streams[name]
+		if st == nil {
+			var err error
+			st, err = e.st.CreateStream(ctx, store.StreamInput{Name: name, URL: "http://x/" + name + ".m3u8", Enabled: true, Level: "playlist",
+				AgentIDs: []int64{store.LocalAgentID, edge.ID}}, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			streams[name] = st
+		}
+		r := &probe.Result{TargetID: st.ID, Time: now, Status: probe.StatusOK, Variants: variants}
+		if server != "" {
+			r.Status = probe.StatusFail
+			r.Problems = []probe.Problem{{Kind: probe.ProbPlaylistStale, Severity: probe.SevCrit, Variant: probe.VariantMedia, Message: "stale", Count: 1,
+				Details: map[string]any{"playlist_server": server}}}
+		}
+		if err := ing.Apply(ctx, agentID, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report("a", store.LocalAgentID, "bad-server 10.0.0.6")
+	report("a", edge.ID, "") // the other vantage point sees nothing wrong
+	report("b", store.LocalAgentID, "bad-server 10.0.0.6")
+	report("c", store.LocalAgentID, "bad-server 10.0.0.6")
+	report("d", store.LocalAgentID, "good-server 10.0.0.1")
+
+	c := e.login("viewer")
+	var list []store.Incident
+	c.want(200, "GET", "/api/v1/incidents?limit=50", nil, &list)
+	var id int64
+	for _, i := range list {
+		if i.StreamName == "a" {
+			id = i.ID
+		}
+	}
+	var sc incidentScope
+	c.want(200, "GET", fmt.Sprintf("/api/v1/incidents/%d/scope", id), nil, &sc)
+	if sc.Vantage != "only_this" || len(sc.Agents) != 2 {
+		t.Errorf("vantage = %q with agents %+v; want only_this of two", sc.Vantage, sc.Agents)
+	}
+	if !sc.ServerWide || len(sc.SameServer) != 2 || sc.SameServer[0].Name != "b" || sc.Elsewhere != 1 || sc.Server != "bad-server 10.0.0.6" {
+		t.Errorf("server scope = %+v; want streams b and c on the same server, one elsewhere", sc)
+	}
+	c.want(404, "GET", "/api/v1/incidents/999999/scope", nil, nil)
+}

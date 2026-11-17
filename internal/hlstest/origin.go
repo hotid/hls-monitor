@@ -5,6 +5,7 @@
 package hlstest
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"fmt"
@@ -46,11 +47,15 @@ type Options struct {
 	// NoProgramDateTime omits EXT-X-PROGRAM-DATE-TIME.
 	NoProgramDateTime bool
 	Start             time.Time
+	// PadTo makes every MPEG-TS segment at least this many bytes by adding
+	// null packets, to give load tests segments of a realistic size.
+	PadTo int
 }
 
 // Origin is the fake stream. All methods are safe for concurrent use.
 type Origin struct {
-	opt Options
+	pads map[string][]byte
+	opt  Options
 
 	mu       sync.Mutex
 	next     uint64 // sequence number of the next segment to publish
@@ -282,6 +287,9 @@ func (o *Origin) serveAsset(w http.ResponseWriter, name string, f Fault) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if o.opt.PadTo > len(data) && strings.HasSuffix(name, ".ts") {
+		data = o.padded(name, data)
+	}
 	if f.Corrupt != nil {
 		data = f.Corrupt(append([]byte(nil), data...))
 	}
@@ -291,6 +299,25 @@ func (o *Origin) serveAsset(w http.ResponseWriter, name string, f Fault) {
 		data = data[:f.Truncate]
 	}
 	_, _ = w.Write(data)
+}
+
+// padded returns the segment followed by null packets up to PadTo bytes.
+func (o *Origin) padded(name string, data []byte) []byte {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if p, ok := o.pads[name]; ok {
+		return p
+	}
+	null := append([]byte{0x47, 0x1f, 0xff, 0x10}, bytes.Repeat([]byte{0xff}, 184)...)
+	p := append([]byte(nil), data...)
+	for len(p) < o.opt.PadTo {
+		p = append(p, null...)
+	}
+	if o.pads == nil {
+		o.pads = map[string][]byte{}
+	}
+	o.pads[name] = p
+	return p
 }
 
 func (o *Origin) master() string {

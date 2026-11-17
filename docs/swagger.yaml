@@ -48,6 +48,8 @@ definitions:
     properties:
       accepted:
         type: integer
+      duplicates:
+        type: integer
       failed:
         type: integer
       rejected:
@@ -873,6 +875,36 @@ definitions:
           $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.VariantState'
         type: array
     type: object
+  internal_api.incidentScope:
+    properties:
+      agents:
+        description: Agents are the vantage points the stream is checked from.
+        items:
+          $ref: '#/definitions/internal_api.scopeAgent'
+        type: array
+      elsewhere:
+        type: integer
+      same_server:
+        description: |-
+          SameServer are other streams that had a problem of the same kind at
+          the same time and were answered by the same server; Elsewhere counts
+          those answered by other servers.
+        items:
+          $ref: '#/definitions/internal_api.streamRef'
+        type: array
+      server:
+        description: Server is the one that answered when the problem was found.
+        type: string
+      server_wide:
+        description: ServerWide is set when enough streams of the server share the
+          problem.
+        type: boolean
+      vantage:
+        description: |-
+          Vantage sums them up: "all" saw it, "some", "only_this" one, or
+          "single" when there is nothing to compare with.
+        type: string
+    type: object
   internal_api.loginRequest:
     properties:
       password:
@@ -916,6 +948,20 @@ definitions:
         type: string
       new:
         type: string
+    type: object
+  internal_api.scopeAgent:
+    properties:
+      checked:
+        description: |-
+          Checked is false when the agent was not reporting on the stream at
+          the time: it says nothing either way.
+        type: boolean
+      id:
+        type: integer
+      name:
+        type: string
+      saw:
+        type: boolean
     type: object
   internal_api.seriesResponse:
     properties:
@@ -1714,6 +1760,33 @@ paths:
               $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Incident'
             type: array
       summary: Incidents, open ones first
+      tags:
+      - incidents
+  /api/v1/incidents/{id}/scope:
+    get:
+      description: Which vantage points saw the same problem, and which other streams
+        from the same server had it at the same time.
+      parameters:
+      - description: Incident ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.incidentScope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: Evidence of where an incident's cause is
       tags:
       - incidents
   /api/v1/overview:
