@@ -256,6 +256,7 @@ func (c *Checker) playlistResponse(cy *cycle, variant, reqURL string, resp *http
 			cy.about(variant, "playlist_http_status", resp.Status)
 		}
 		cy.metric("hls_playlist_total_seconds", variant, resp.Total.Seconds())
+		cy.network(variant, resp)
 		cy.about(variant, "playlist_seconds", resp.Total.Seconds())
 	}
 	if err != nil {

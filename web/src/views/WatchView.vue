@@ -151,6 +151,11 @@ const chartDefs = computed<ChartDef[]>(() => [
     lines: [
       { key: 'declared', label: t('watch.lineDeclared') },
       { key: 'actual', label: t('watch.lineActual') },
+    ],
+  },
+  {
+    id: 'speed', title: t('watch.chartSpeed'), hint: t('watch.chartSpeedHint'), unit: 'bps',
+    lines: [
       { key: 'speedOrigin', label: t('watch.lineSpeedOrigin') },
       { key: 'speedRelay', label: t('watch.lineSpeedRelay'), agent: true },
       { key: 'speedBrowser', label: t('watch.lineSpeedBrowser') },

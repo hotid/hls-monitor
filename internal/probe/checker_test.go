@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -938,5 +939,24 @@ func TestCheckTrafficIsReported(t *testing.T) {
 	}
 	if header < playlist || header > whole {
 		t.Errorf("header level downloaded %v bytes: between %v and %v expected", header, playlist, whole)
+	}
+}
+
+// Regular checks record what the kernel knows of the connections they use.
+func TestConnectionFiguresAreRecorded(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("read on Linux only")
+	}
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	f.step(4)
+	r := f.step(1)
+	rtt, ok := metric(r, "hls_tcp_rtt_seconds", VariantMedia)
+	if !ok || rtt <= 0 || rtt > 1 {
+		t.Errorf("hls_tcp_rtt_seconds = %v, %v", rtt, ok)
+	}
+	for _, name := range []string{"hls_tcp_out_of_order", "hls_tcp_retransmits"} {
+		if v, ok := metric(r, name, VariantMedia); !ok || v < 0 {
+			t.Errorf("%s = %v, %v", name, v, ok)
+		}
 	}
 }

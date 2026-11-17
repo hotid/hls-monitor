@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -285,5 +286,28 @@ func TestConnectionFigures(t *testing.T) {
 		if i == 1 && !resp.ConnReused {
 			t.Error("the second request must reuse the connection, and still have its figures")
 		}
+	}
+}
+
+func TestConnectionCountersGrowth(t *testing.T) {
+	a, b := net.Pipe()
+	defer a.Close()
+	defer b.Close()
+	var c connCounters
+	first := TCPInfo{Retransmits: 5, OutOfOrder: 7}
+	c.grown(a, &first)
+	if first.NewRetransmits != 5 || first.NewOutOfOrder != 7 {
+		t.Errorf("a connection seen for the first time counts whole: %+v", first)
+	}
+	next := TCPInfo{Retransmits: 6, OutOfOrder: 7}
+	c.grown(a, &next)
+	if next.NewRetransmits != 1 || next.NewOutOfOrder != 0 {
+		t.Errorf("growth since the previous look: %+v", next)
+	}
+	// A smaller figure under the same addresses is another connection.
+	again := TCPInfo{Retransmits: 2, OutOfOrder: 1}
+	c.grown(a, &again)
+	if again.NewRetransmits != 2 || again.NewOutOfOrder != 1 {
+		t.Errorf("a new connection under the same addresses: %+v", again)
 	}
 }

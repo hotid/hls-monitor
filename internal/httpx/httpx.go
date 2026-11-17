@@ -38,7 +38,8 @@ type Client struct {
 	ua string
 	// proxied is set when requests go through a proxy: the connection is
 	// then made to the proxy, and Reach cannot be applied.
-	proxied bool
+	proxied  bool
+	counters connCounters
 }
 
 // redirectTrace collects what happened on the way to the final response.
@@ -379,6 +380,7 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 	res.Total = time.Since(start)
 	if lastConn != nil {
 		if info, ok := ConnInfo(lastConn); ok {
+			c.counters.grown(lastConn, &info)
 			res.TCP = &info
 		}
 	}

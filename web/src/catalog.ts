@@ -205,6 +205,17 @@ export const chartGroups = perLocale((): ChartGroup[] => [
         ],
       },
       {
+        id: 'tcp-rtt', title: t('catalog.roundTripTime'), hint: t('catalog.roundTripTimeHint'), unit: 's', agg: 'avg',
+        series: [{ metric: 'hls_tcp_rtt_seconds', label: 'RTT' }],
+      },
+      {
+        id: 'tcp-loss', title: t('catalog.signsOfLoss'), hint: t('catalog.signsOfLossHint'), unit: 'count', agg: 'sum', steps: true,
+        series: [
+          { metric: 'hls_tcp_out_of_order', label: t('catalog.outOfOrder') },
+          { metric: 'hls_tcp_retransmits', label: t('catalog.retransmits') },
+        ],
+      },
+      {
         id: 'source', title: t('common.answeringServerChanges'), hint: t('catalog.howManyTimesTheResponseCame'), unit: 'count', agg: 'sum', steps: true,
         series: [
           { metric: 'hls_playlist_source_changed', label: t('common.playlist') },

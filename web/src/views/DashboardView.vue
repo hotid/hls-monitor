@@ -80,6 +80,17 @@ const summaryCharts: SummaryChart[] = [
     ],
   },
   {
+    id: 'rtt', title: t('dashboard.roundTripTime'), hint: t('dashboard.roundTripTimeHint'), unit: 's',
+    series: [
+      { id: 'rtt_avg', label: t('dashboard.average') },
+      { id: 'rtt_p95', label: '95 %' },
+    ],
+  },
+  {
+    id: 'out-of-order', title: t('dashboard.signsOfLoss'), hint: t('dashboard.signsOfLossHint'), unit: 'count', steps: true, zeroFill: true,
+    series: [{ id: 'out_of_order', label: t('dashboard.outOfOrderPerStep') }],
+  },
+  {
     id: 'segment-ttfb', title: t('dashboard.segmentFirstByte'), hint: t('dashboard.timeToTheFirstByteOf'), unit: 's',
     series: [
       { id: 'segment_ttfb_avg', label: t('dashboard.average') },

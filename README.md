@@ -71,7 +71,7 @@ The depth is set per stream:
 
 What is collected:
 
-- **Network, per request:** DNS, connect, TLS, time to first byte, total time, speed; response code, redirects, host address, TLS certificate expiry, CDN cache headers, mismatch with `Content-Length`.
+- **Network, per request:** DNS, connect, TLS, time to first byte, total time, speed; response code, redirects, host address, TLS certificate expiry, CDN cache headers, mismatch with `Content-Length`. On Linux also what the kernel knows of the connection: the round trip time to the server and the segments that arrived out of order — a sign of loss on the way to the monitor (only the sender can count the loss itself).
 - **Multivariant playlist:** the set of variants and its changes, declared bitrate, resolution, codecs; audio and subtitle renditions are checked as separate playlists.
 - **Media playlist:** progress of `MEDIA-SEQUENCE` (gaps, rollbacks, replaced segments), update interval and stalling, window depth, durations against `TARGETDURATION`, discontinuities, lag behind real time and jumps by `PROGRAM-DATE-TIME`, availability of encryption keys and the initialization section, ad markers, video variants drifting apart in time (by `PROGRAM-DATE-TIME`; media sequence numbers are not compared, variants may count them independently).
 - **Segment:** availability, size, download time relative to duration, actual bitrate against declared.

@@ -8,6 +8,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/hotid/hls-monitor/internal/httpx"
 )
 
 const snapshotMaxBytes = 64 << 10
@@ -28,6 +30,9 @@ type cycle struct {
 	// doubts counts, per problem, the occurrences that rest on timing alone:
 	// a slow download, a request that timed out. See overloaded.
 	doubts map[string]int
+	// tcp holds, per variant, what the kernel told of the connections the
+	// cycle used.
+	tcp map[string]*tcpSeen
 
 	minTargetDuration float64
 	// minSlack is the shortest time, across live playlists, in which a
@@ -64,6 +69,36 @@ func (cy *cycle) problem(kind, severity, variant, format string, args ...any) {
 		return
 	}
 	cy.probs[key] = &Problem{Kind: kind, Severity: severity, Variant: variant, Message: fmt.Sprintf(format, args...), Count: 1}
+}
+
+// tcpSeen sums up the connections used for one variant in a cycle.
+type tcpSeen struct {
+	rtt                     float64
+	outOfOrder, retransmits float64
+}
+
+// network records the kernel's figures of the connection a response came
+// over: the round trip time to the server, and how many segments arrived
+// out of order or had to be sent again since the connection was last
+// looked at. A receiver cannot count what was lost on the way to it;
+// segments out of order are the sign of it that it has.
+func (cy *cycle) network(variant string, resp *httpx.Response) {
+	if resp == nil || resp.TCP == nil {
+		return
+	}
+	cy.mu.Lock()
+	defer cy.mu.Unlock()
+	if cy.tcp == nil {
+		cy.tcp = map[string]*tcpSeen{}
+	}
+	t := cy.tcp[variant]
+	if t == nil {
+		t = &tcpSeen{}
+		cy.tcp[variant] = t
+	}
+	t.rtt = resp.TCP.RTT.Seconds()
+	t.outOfOrder += float64(resp.TCP.NewOutOfOrder)
+	t.retransmits += float64(resp.TCP.NewRetransmits)
 }
 
 // doubt marks the latest occurrence of a problem as resting on timing
@@ -313,6 +348,12 @@ func (cy *cycle) finish(elapsed time.Duration) *Result {
 
 	for key, r := range perVariant {
 		cy.res.Metrics = append(cy.res.Metrics, Metric{Name: "hls_status", Variant: key, Value: r})
+	}
+	for key, t := range cy.tcp {
+		cy.res.Metrics = append(cy.res.Metrics,
+			Metric{Name: "hls_tcp_rtt_seconds", Variant: key, Value: t.rtt},
+			Metric{Name: "hls_tcp_out_of_order", Variant: key, Value: t.outOfOrder},
+			Metric{Name: "hls_tcp_retransmits", Variant: key, Value: t.retransmits})
 	}
 	cy.res.Metrics = append(cy.res.Metrics,
 		Metric{Name: "hls_stream_status", Value: overall},

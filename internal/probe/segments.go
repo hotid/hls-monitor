@@ -165,6 +165,7 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 				st.segSource = ep
 			}
 		}
+		cy.network(v.Key, resp)
 		broken := true
 		switch {
 		case err != nil && (resp == nil || resp.Status == 0):
