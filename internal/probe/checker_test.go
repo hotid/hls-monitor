@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"github.com/Eyevinn/hls-m3u8/m3u8"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -828,5 +831,64 @@ func TestPlaylistThatCrashesTheParser(t *testing.T) {
 	p := wantProblem(t, r, ProbPlaylistParse, SevCrit)
 	if !strings.Contains(p.Message, "parser failed") {
 		t.Errorf("message = %q", p.Message)
+	}
+}
+
+// Seen in production after every restart of the monitor: a balancer sends
+// consecutive requests to two servers that number the same segments one
+// apart. That is a change of server, not segments that changed.
+func TestServersThatNumberSegmentsDifferently(t *testing.T) {
+	playlist := func(firstSeq, firstSeg int) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-MEDIA-SEQUENCE:%d\n", firstSeq)
+		for i := range 4 {
+			fmt.Fprintf(&b, "#EXTINF:6.0,\nseg-%d.ts\n", firstSeg+i)
+		}
+		return b.String()
+	}
+	var calls atomic.Int64
+	var port string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/live.m3u8":
+			// The balancer: the first server twice, then the second.
+			host := "127.0.0.1"
+			if calls.Add(1) > 2 {
+				host = "localhost"
+			}
+			http.Redirect(w, r, "http://"+host+":"+port+"/node.m3u8?n="+strconv.FormatInt(calls.Load(), 10), http.StatusFound)
+		case "/node.m3u8":
+			n, _ := strconv.Atoi(r.URL.Query().Get("n"))
+			// Both serve the same segments, one more each time; the
+			// second server's numbers are one behind.
+			seq := 100 + n
+			if strings.HasPrefix(r.Host, "localhost") {
+				seq--
+			}
+			_, _ = w.Write([]byte(playlist(seq, 500+n)))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	_, port, _ = net.SplitHostPort(srv.Listener.Addr().String())
+
+	c := New(Target{ID: 1, URL: srv.URL + "/live.m3u8", Level: LevelPlaylist}, nil)
+	clock := time.Now()
+	c.now = func() time.Time { return clock }
+	var last *Result
+	for range 4 {
+		clock = clock.Add(6 * time.Second)
+		last = c.Run(context.Background())
+		if p := hasProblem(last, ProbSegmentChanged); p != nil {
+			t.Fatalf("segments of another server were compared with the previous one's: %s", p.Message)
+		}
+	}
+	if calls.Load() != 4 {
+		t.Fatalf("balancer was asked %d times", calls.Load())
+	}
+	// The same server keeps being compared with itself.
+	if hasProblem(last, ProbPlaylistSource) != nil {
+		t.Error("the fourth check came from the same server as the third")
 	}
 }

@@ -162,6 +162,18 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 	server := endpoint(plURL, resp).Node()
 	serverBefore := st.lastServer
 	st.lastServer = server
+	if server != serverBefore && serverBefore != "" {
+		// Another server answered. Behind a balancer each may count
+		// segments on its own, often one or two apart: the same number is
+		// then another segment, and what was learned from the previous
+		// server says nothing about this one. Comparing across would
+		// report segments that changed, timestamps that jump back and a
+		// player that ran dry, none of which happened. The change itself
+		// is reported as such.
+		st.recent = nil
+		st.prev = prevSegment{}
+		st.bufInit = false
+	}
 
 	// Sequence continuity against the previous cycle.
 	if st.haveSeq {
