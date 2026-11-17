@@ -141,6 +141,7 @@ Every setting is given as a flag or an environment variable.
 | `HLSMON_SEGMENT_RETENTION` | `-segment-retention` | `48h` | Maximum age of a segment journal entry |
 | `HLSMON_JOURNAL_MAX_MB` | `-journal-max-mb` | `512` | Size in MiB that the journal file cannot exceed |
 | `HLSMON_BODY_MEMORY_MB` | `-body-memory-mb` | `1024` | MiB of segment bodies all local checks together may hold in memory; a download waits when there is no room. The agent has the same setting |
+| `HLSMON_PRIVATE_NETWORKS` | `-private-networks` | `same` | Whether checks may connect to addresses that are not public (loopback, private, link-local, carrier and container ranges). `same`: only for a stream whose own address is such — a stream on a public address cannot lead the monitor inside by a redirect or by what its playlists name; `allow`: no restriction; `deny`: never. Applied to the address actually connected to, after name resolution; not applied when requests go through a proxy. The agent has the same setting |
 | `HLSMON_SNAPSHOT_RETENTION` | `-snapshot-retention` | `168h` | Retention of playlist snapshots |
 | `HLSMON_INCIDENT_RETENTION` | `-incident-retention` | `2160h` | Retention of closed incidents |
 | `HLSMON_EVENT_RETENTION` | `-event-retention` | `168h` | Retention of closed events (informational incidents) |
@@ -148,7 +149,7 @@ Every setting is given as a flag or an environment variable.
 
 Retention of time series is set in VictoriaMetrics (`HLSMON_METRICS_RETENTION` in compose, 7 days by default, the same as the longest chart range).
 
-Agent settings: `HLSMON_SERVER_URL`, `HLSMON_ENROLL_TOKEN`, `HLSMON_KEY_FILE` (`data/agent.key` by default; in the container it is in a volume), `HLSMON_QUEUE_DIR` (undelivered results; `queue` next to the key by default), `HLSMON_QUEUE_MAX_MB` (`1024`), `HLSMON_BODY_MEMORY_MB`, `HLSMON_LOG_LEVEL`.
+Agent settings: `HLSMON_SERVER_URL`, `HLSMON_ENROLL_TOKEN`, `HLSMON_KEY_FILE` (`data/agent.key` by default; in the container it is in a volume), `HLSMON_QUEUE_DIR` (undelivered results; `queue` next to the key by default), `HLSMON_QUEUE_MAX_MB` (`1024`), `HLSMON_BODY_MEMORY_MB`, `HLSMON_PRIVATE_NETWORKS`, `HLSMON_LOG_LEVEL`.
 
 The server does not terminate TLS itself: put a reverse proxy in front of it and specify the proxy's address in `HLSMON_TRUSTED_PROXIES`.
 
@@ -191,7 +192,15 @@ curl -H "Authorization: Bearer <token>" http://localhost:4000/api/ext/v1/status
 | `GET /api/ext/v1/status` | Current state of all streams |
 | `GET /api/ext/v1/streams/{id}/status` | State of one stream with per-playlist metrics; convenient as a master item with dependent items |
 
-`status_code`: 0 — OK, 1 — warning, 2 — failure, 3 — no data, −1 — disabled. There is no ready-made Zabbix template in the repository.
+`status_code`: 0 — OK, 1 — warning, 2 — failure, 3 — no data, −1 — disabled.
+
+A ready-made template for Zabbix 7.2 and newer is [`deploy/zabbix/template_hls_monitor.yaml`](deploy/zabbix/template_hls_monitor.yaml), "HLS monitor by HTTP". It needs no Zabbix agent: import it, link it to a host and set the macros `{$HLSMON.URL}` (address of the server with its prefix, no trailing slash) and `{$HLSMON.TOKEN}` (a token from the Access page). The template makes three requests a minute — `/readyz`, `/metrics` and `/api/ext/v1/status` — and gets from them:
+
+- for every stream (discovered): its state and the number of open incidents; triggers "failure" (3 min), "no data" (5 min), "warning" (15 min). When more than `{$HLSMON.MASS.FAIL}` streams fail at once, one common trigger fires and those of the streams depend on it;
+- for the monitor itself: does not answer, cannot do its job (database), is overloaded, checks are late, results are not being stored, the time series storage is down, the disk is almost full;
+- for every agent (discovered): out of contact, overloaded, results are not being delivered, the queue overflowed, cannot write to its queue.
+
+Periods and thresholds are macros of the template.
 
 Time series names in VictoriaMetrics start with `hls_`; the labels are `stream`, `agent`, `variant` (identifiers).
 

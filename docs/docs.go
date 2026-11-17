@@ -2535,7 +2535,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "behind": {
-                    "description": "Behind counts the streams whose latest cycle started later than it\nshould have by more than its own interval: the runner, or what it\nchecks, is too slow for them.",
+                    "description": "Behind counts the streams whose latest cycle started later than it\nshould have by more than its own interval, not counting the time the\ncheck before it took: a stream that answers slowly makes its own\nchecks late, and that is reported as its problem. What is left is\nthe runner's: results that wait to be stored, a processor that is\nbusy.",
                     "type": "integer"
                 },
                 "cycles": {
@@ -2546,7 +2546,7 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "lag_p95_seconds": {
-                    "description": "LagP95 and LagMax tell how late cycles start, in seconds.",
+                    "description": "LagP95 and LagMax tell how late cycles start for such reasons, in\nseconds.",
                     "type": "number"
                 },
                 "running": {
@@ -2572,7 +2572,14 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "cpu_throttled": {
-                    "description": "CPUThrottled is the share of the time the process was stopped for\nhaving used up its quota.",
+                    "description": "CPUThrottled is how many seconds per second the kernel kept the\ncontainer's processors from it for having used up its quota.",
+                    "type": "number"
+                },
+                "delay_max_seconds": {
+                    "type": "number"
+                },
+                "delay_seconds": {
+                    "description": "Delay is how late the process wakes up when it asked to be woken:\nthe slowest one in ten wake-ups of the last seconds. DelayMax is the\nslowest of all. Seconds.",
                     "type": "number"
                 },
                 "goroutines": {

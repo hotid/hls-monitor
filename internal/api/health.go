@@ -216,6 +216,11 @@ func (s *Server) selfMetrics(c *gin.Context) {
 	}
 	rows := make([]row, 0, len(agents))
 	for _, a := range agents {
+		// An agent that is switched off, or was never connected, is not
+		// expected to be in contact: nothing to watch yet.
+		if !a.Enabled || (a.Kind != store.AgentLocal && !a.Enrolled) {
+			continue
+		}
 		r := row{name: a.Name, online: s.agentOnline(a, now)}
 		if r.online {
 			r.st = s.agentStatus(a)

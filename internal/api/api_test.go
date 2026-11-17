@@ -692,6 +692,9 @@ func TestSelfDiagnostics(t *testing.T) {
 		t.Errorf("status of the remote agent = %+v", st)
 	}
 
+	// An agent that was never connected is not watched yet.
+	admin.want(http.StatusCreated, "POST", "/api/v1/agents", map[string]string{"name": "not-yet"}, nil)
+
 	scrape := e.client()
 	scrape.headers["Authorization"] = "Bearer " + tok.Token
 	code, body := scrape.do("GET", "/metrics", nil)
@@ -713,6 +716,9 @@ func TestSelfDiagnostics(t *testing.T) {
 		if !strings.Contains(string(body), want+"\n") {
 			t.Errorf("metrics lack %q", want)
 		}
+	}
+	if strings.Contains(string(body), "not-yet") {
+		t.Error("an agent that was never connected must not be in the metrics")
 	}
 	// Every sample line is a name, optional labels and a number.
 	sample := regexp.MustCompile(`^[a-z_]+(\{[a-z_]+="[^"]*"(,[a-z_]+="[^"]*")*\})? -?[0-9.e+]+$`)

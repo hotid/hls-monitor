@@ -487,8 +487,11 @@ definitions:
       behind:
         description: |-
           Behind counts the streams whose latest cycle started later than it
-          should have by more than its own interval: the runner, or what it
-          checks, is too slow for them.
+          should have by more than its own interval, not counting the time the
+          check before it took: a stream that answers slowly makes its own
+          checks late, and that is reported as its problem. What is left is
+          the runner's: results that wait to be stored, a processor that is
+          busy.
         type: integer
       cycles:
         description: |-
@@ -498,7 +501,9 @@ definitions:
       lag_max_seconds:
         type: number
       lag_p95_seconds:
-        description: LagP95 and LagMax tell how late cycles start, in seconds.
+        description: |-
+          LagP95 and LagMax tell how late cycles start for such reasons, in
+          seconds.
         type: number
       running:
         description: Running is how many cycles are being made right now.
@@ -519,8 +524,16 @@ definitions:
         type: number
       cpu_throttled:
         description: |-
-          CPUThrottled is the share of the time the process was stopped for
-          having used up its quota.
+          CPUThrottled is how many seconds per second the kernel kept the
+          container's processors from it for having used up its quota.
+        type: number
+      delay_max_seconds:
+        type: number
+      delay_seconds:
+        description: |-
+          Delay is how late the process wakes up when it asked to be woken:
+          the slowest one in ten wake-ups of the last seconds. DelayMax is the
+          slowest of all. Seconds.
         type: number
       goroutines:
         type: integer

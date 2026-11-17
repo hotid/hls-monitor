@@ -1,0 +1,818 @@
+zabbix_export:
+  version: '7.2'
+  template_groups:
+  - uuid: a571c0d144b14fd4a87a9d9b2aa9fcd6
+    name: Templates/Applications
+  templates:
+  - uuid: d367b68dd31441a6824610068fb0e210
+    template: HLS monitor by HTTP
+    name: HLS monitor by HTTP
+    description: 'Watches hls-monitor (https://github.com/hotid/hls-monitor) over HTTP, without an agent: the state of every stream, the monitor''s own health and load, and its agents with their queues of undelivered results.
+
+
+      Set {$HLSMON.URL} to the address of the server, with the prefix it is published under and no trailing slash, and {$HLSMON.TOKEN} to an API token created on the Access page of the monitor.
+
+
+      Needs hls-monitor with /readyz and /metrics.'
+    groups:
+    - name: Templates/Applications
+    items:
+    - uuid: fb9c615932db41d0a974d811b7cc2ac6
+      name: 'HLS monitor: readiness'
+      type: HTTP_AGENT
+      key: hlsmon.ready
+      delay: 1m
+      history: 7d
+      value_type: CHAR
+      trends: '0'
+      description: 'ok, degraded (the server works but something needs attention: it is overloaded, checks are late, the time series storage is down) or unavailable (the database does not answer).'
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.status
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 10m
+      url: '{$HLSMON.URL}/readyz'
+      status_codes: 200,503
+      timeout: 10s
+      tags:
+      - tag: component
+        value: health
+      triggers:
+      - uuid: 82ba8d71d470442094c2aabeac10189d
+        expression: nodata(/HLS monitor by HTTP/hlsmon.ready,{$HLSMON.NODATA.TIME})=1
+        name: 'HLS monitor: the server does not answer'
+        priority: HIGH
+        description: 'Nothing was received from {$HLSMON.URL}/readyz for {$HLSMON.NODATA.TIME}: the server is down or cannot be reached from Zabbix. Streams are not being watched, or their state is not known.'
+        tags:
+        - tag: scope
+          value: availability
+      - uuid: 1fb61efa557d45fda70e63172097cbe5
+        expression: last(/HLS monitor by HTTP/hlsmon.ready)="unavailable"
+        name: 'HLS monitor: the server cannot do its job'
+        priority: HIGH
+        description: '/readyz answers "unavailable": the database does not respond. Results of checks are not being stored.'
+        tags:
+        - tag: scope
+          value: availability
+    - uuid: 6b70c0c7e96544538632c388d707c6f0
+      name: 'HLS monitor: get own metrics'
+      type: HTTP_AGENT
+      key: hlsmon.metrics.get
+      delay: 1m
+      history: '0'
+      value_type: TEXT
+      trends: '0'
+      description: The server's own figures and those of its agents in the Prometheus format. Master item.
+      url: '{$HLSMON.URL}/metrics'
+      headers: &id001
+      - name: Authorization
+        value: Bearer {$HLSMON.TOKEN}
+      timeout: 10s
+      tags:
+      - tag: component
+        value: raw
+    - uuid: 979eaee72a384e9595300a362dc730a7
+      name: 'HLS monitor: get state of streams'
+      type: HTTP_AGENT
+      key: hlsmon.streams.get
+      delay: 1m
+      history: '0'
+      value_type: TEXT
+      trends: '0'
+      description: Current state of every stream in one document. Master item.
+      url: '{$HLSMON.URL}/api/ext/v1/status'
+      headers: *id001
+      timeout: 20s
+      tags:
+      - tag: component
+        value: raw
+    - uuid: 76813da54241459ca4c5b33661cdd5da
+      name: 'HLS monitor: streams failing'
+      type: DEPENDENT
+      key: hlsmon.streams.failing
+      delay: '0'
+      description: Streams in the state "failure".
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $[?(@.status_code == 2)].length()
+      master_item:
+        key: hlsmon.streams.get
+      tags:
+      - tag: component
+        value: streams
+      triggers:
+      - uuid: 54787f77fae24be8b5a061a6b6746585
+        expression: min(/HLS monitor by HTTP/hlsmon.streams.failing,{$HLSMON.FAIL.TIME})>{$HLSMON.MASS.FAIL}
+        name: 'HLS monitor: many streams are failing at once'
+        priority: DISASTER
+        description: 'More than {$HLSMON.MASS.FAIL} streams have been failing for {$HLSMON.FAIL.TIME}: a common cause is likely — an origin server, the network between it and the monitor. The triggers of the single streams depend on this one.'
+        tags:
+        - tag: scope
+          value: availability
+    - uuid: cf4eda5393764eaab9993fdfb80d3a45
+      name: 'HLS monitor: streams without data'
+      type: DEPENDENT
+      key: hlsmon.streams.nodata
+      delay: '0'
+      description: Enabled streams nobody has checked lately.
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $[?(@.status_code == 3)].length()
+      master_item:
+        key: hlsmon.streams.get
+      tags:
+      - tag: component
+        value: streams
+    - uuid: a72f6e7f733b44a89a6360f422ae7398
+      name: 'HLS monitor: streams'
+      type: DEPENDENT
+      key: hlsmon.streams.total
+      delay: '0'
+      preprocessing:
+      - type: JSONPATH
+        parameters:
+        - $.length()
+      master_item:
+        key: hlsmon.streams.get
+      tags:
+      - tag: component
+        value: streams
+    - uuid: 0bf41bcbf34445678fc2df8cf8ef48e1
+      name: 'HLS monitor: version'
+      type: DEPENDENT
+      key: hlsmon.version
+      delay: '0'
+      value_type: CHAR
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_build_info
+        - label
+        - version
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1d
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: health
+    - uuid: fa9f563ce845460787a9f4938bbedb2a
+      name: 'HLS monitor: server is overloaded'
+      type: DEPENDENT
+      key: hlsmon.overloaded
+      delay: '0'
+      description: 1 while the server process does not get the processor time it needs. Checks made meanwhile leave out what rests on timing alone.
+      valuemap:
+        name: HLS monitor yes/no
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_overloaded
+        - value
+        - ''
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: load
+      triggers:
+      - uuid: 0eb89d2f37814ab79ba2b6ebc8b3a690
+        expression: min(/HLS monitor by HTTP/hlsmon.overloaded,{$HLSMON.OVERLOAD.TIME})=1
+        name: 'HLS monitor: the server is short of processor time'
+        priority: WARNING
+        description: The server's own checks have not been getting the processor time they need for {$HLSMON.OVERLOAD.TIME}. Until that passes, slow downloads and timeouts are not reported as problems of the streams. Give the server more processors, check fewer streams from it or lower their level.
+        tags:
+        - tag: scope
+          value: performance
+    - uuid: da9c161ded8c4a71ad36cbab1e7a1f39
+      name: 'HLS monitor: processors in use'
+      type: DEPENDENT
+      key: hlsmon.cpu.cores
+      delay: '0'
+      value_type: FLOAT
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_cpu_cores
+        - value
+        - ''
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: load
+    - uuid: 1ded88ce4b2244ee94ecd37c97aea53d
+      name: 'HLS monitor: processors available'
+      type: DEPENDENT
+      key: hlsmon.cpu.limit
+      delay: '0'
+      value_type: FLOAT
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_cpu_limit_cores
+        - value
+        - ''
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: load
+    - uuid: e7d7de0bac6041d2a67817e0ed5b02fd
+      name: 'HLS monitor: wake-up delay'
+      type: DEPENDENT
+      key: hlsmon.wakeup.delay
+      delay: '0'
+      value_type: FLOAT
+      units: s
+      description: 'How late the process wakes up when it asked to be woken: the slowest one in ten of the last seconds. The same delay is added to everything the server times.'
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_wakeup_delay_seconds{quantile="0.9"}
+        - value
+        - ''
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: load
+    - uuid: b9dad3911a04484582e0c802bc325bd6
+      name: 'HLS monitor: memory'
+      type: DEPENDENT
+      key: hlsmon.memory
+      delay: '0'
+      units: B
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_memory_bytes
+        - value
+        - ''
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: load
+    - uuid: 2c640601c5664fee9c1164c7c2052f9c
+      name: 'HLS monitor: streams checked by the server'
+      type: DEPENDENT
+      key: hlsmon.local.streams
+      delay: '0'
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_local_streams
+        - value
+        - ''
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: checks
+    - uuid: 71a894af5cf24736acaa169ed14f190e
+      name: 'HLS monitor: streams checked late'
+      type: DEPENDENT
+      key: hlsmon.local.behind
+      delay: '0'
+      description: Streams whose checks start later than they should by more than their interval, for reasons of the server's own.
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_local_streams_behind
+        - value
+        - ''
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: checks
+      triggers:
+      - uuid: 88a963889d914d17ae0e2f993f9bb04f
+        expression: min(/HLS monitor by HTTP/hlsmon.local.behind,{$HLSMON.BEHIND.TIME})>0
+        name: 'HLS monitor: checks are late'
+        priority: WARNING
+        description: 'For {$HLSMON.BEHIND.TIME} the server has been starting the checks of some streams later than it should: results wait to be stored, or the processor is busy. Problems of those streams are noticed late.'
+        tags:
+        - tag: scope
+          value: performance
+    - uuid: 2cf8507841af49dc819fcd55433089e8
+      name: 'HLS monitor: results not stored'
+      type: DEPENDENT
+      key: hlsmon.results.failed
+      delay: '0'
+      description: Check results the server could not store, since its start.
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_results_total{outcome="failed"}
+        - value
+        - ''
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: storage
+      triggers:
+      - uuid: f278b2b6cfcd4392aa239754bbc5bb69
+        expression: change(/HLS monitor by HTTP/hlsmon.results.failed)>0
+        name: 'HLS monitor: check results are not being stored'
+        priority: AVERAGE
+        description: The server could not store results of checks. A result from an agent is sent again; one of the server's own checks is lost after three attempts. See the server log for the reason.
+        manual_close: 'YES'
+        tags:
+        - tag: scope
+          value: performance
+    - uuid: 575faa1c5c24405f8181e5ab5db6a46a
+      name: 'HLS monitor: database size'
+      type: DEPENDENT
+      key: hlsmon.db.bytes
+      delay: '0'
+      units: B
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_database_bytes
+        - value
+        - ''
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: storage
+    - uuid: 994e230b3d90488c89f084f7662b5404
+      name: 'HLS monitor: segment journal size'
+      type: DEPENDENT
+      key: hlsmon.journal.bytes
+      delay: '0'
+      units: B
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_journal_bytes
+        - value
+        - ''
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: storage
+    - uuid: e22203f5bea7453481ee4f9b75cfd0e4
+      name: 'HLS monitor: free disk space'
+      type: DEPENDENT
+      key: hlsmon.disk.free
+      delay: '0'
+      units: B
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_disk_free_bytes
+        - value
+        - ''
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: storage
+    - uuid: 29d35a31bc33458eb48a7314f19c4f87
+      name: 'HLS monitor: disk size'
+      type: DEPENDENT
+      key: hlsmon.disk.total
+      delay: '0'
+      units: B
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_disk_total_bytes
+        - value
+        - ''
+      - type: DISCARD_UNCHANGED_HEARTBEAT
+        parameters:
+        - 1h
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: storage
+    - uuid: 86c4485fddac47f3843f60788d7f558a
+      name: 'HLS monitor: time series storage answers'
+      type: DEPENDENT
+      key: hlsmon.tsdb.up
+      delay: '0'
+      description: Absent when no time series storage is configured.
+      valuemap:
+        name: HLS monitor yes/no
+      preprocessing:
+      - type: PROMETHEUS_PATTERN
+        parameters:
+        - hlsmon_time_series_up
+        - value
+        - ''
+        error_handler: DISCARD_VALUE
+      master_item:
+        key: hlsmon.metrics.get
+      tags:
+      - tag: component
+        value: storage
+      triggers:
+      - uuid: a42900f8459649e3827bbdf8417188fa
+        expression: max(/HLS monitor by HTTP/hlsmon.tsdb.up,5m)=0
+        name: 'HLS monitor: the time series storage does not answer'
+        priority: WARNING
+        description: VictoriaMetrics has not answered for 5 minutes. Samples wait in the server's memory; charts have a gap that fills when it returns, unless it takes too long.
+        tags:
+        - tag: scope
+          value: performance
+    discovery_rules:
+    - uuid: e44d8808dfe7431e84da83dc15adecf0
+      name: Agents discovery
+      type: DEPENDENT
+      key: hlsmon.agents.discovery
+      delay: '0'
+      description: The server's own checks (agent "local") and every remote agent.
+      item_prototypes:
+      - uuid: 6f4a79ccd7654a64ae8f499e268fc228
+        name: 'HLS agent {#AGENT}: in contact'
+        type: DEPENDENT
+        key: hlsmon.agent.online[{#AGENT}]
+        delay: '0'
+        valuemap:
+          name: HLS monitor yes/no
+        preprocessing:
+        - type: PROMETHEUS_PATTERN
+          parameters:
+          - hlsmon_agent_online{agent="{#AGENT}"}
+          - value
+          - ''
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: hlsmon.metrics.get
+        tags:
+        - tag: component
+          value: agent
+        trigger_prototypes:
+        - uuid: 1fbbd9fa05f64b659aa4d41a654c906f
+          expression: max(/HLS monitor by HTTP/hlsmon.agent.online[{#AGENT}],{$HLSMON.AGENT.OFFLINE.TIME})=0
+          name: 'HLS agent {#AGENT}: out of contact'
+          priority: HIGH
+          description: 'The agent has not been in contact with the server for {$HLSMON.AGENT.OFFLINE.TIME}. It keeps checking and queues the results on its disk, but the server does not see them: streams checked only by this agent show "no data".'
+          tags:
+          - tag: scope
+            value: availability
+          dependencies:
+          - name: 'HLS monitor: the server does not answer'
+            expression: nodata(/HLS monitor by HTTP/hlsmon.ready,{$HLSMON.NODATA.TIME})=1
+      - uuid: 9228c012c6e446a398fa59855e97b176
+        name: 'HLS agent {#AGENT}: is overloaded'
+        type: DEPENDENT
+        key: hlsmon.agent.overloaded[{#AGENT}]
+        delay: '0'
+        valuemap:
+          name: HLS monitor yes/no
+        preprocessing:
+        - type: PROMETHEUS_PATTERN
+          parameters:
+          - hlsmon_agent_overloaded{agent="{#AGENT}"}
+          - value
+          - ''
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: hlsmon.metrics.get
+        tags:
+        - tag: component
+          value: agent
+        trigger_prototypes:
+        - uuid: 0344ff72c80b422fb7244afdc1ae7c89
+          expression: min(/HLS monitor by HTTP/hlsmon.agent.overloaded[{#AGENT}],{$HLSMON.OVERLOAD.TIME})=1
+          name: 'HLS agent {#AGENT}: short of processor time'
+          priority: WARNING
+          description: The agent's checks have not been getting the processor time they need for {$HLSMON.OVERLOAD.TIME}. Until that passes, slow downloads and timeouts it sees are not reported as problems of the streams.
+          tags:
+          - tag: scope
+            value: performance
+      - uuid: e2f8a3a16fff457ca4008e44dd8c08e4
+        name: 'HLS agent {#AGENT}: streams'
+        type: DEPENDENT
+        key: hlsmon.agent.streams[{#AGENT}]
+        delay: '0'
+        preprocessing:
+        - type: PROMETHEUS_PATTERN
+          parameters:
+          - hlsmon_agent_streams{agent="{#AGENT}"}
+          - value
+          - ''
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: hlsmon.metrics.get
+        tags:
+        - tag: component
+          value: agent
+      - uuid: cd3ed5eff2674c759b1faae983d41639
+        name: 'HLS agent {#AGENT}: streams checked late'
+        type: DEPENDENT
+        key: hlsmon.agent.behind[{#AGENT}]
+        delay: '0'
+        preprocessing:
+        - type: PROMETHEUS_PATTERN
+          parameters:
+          - hlsmon_agent_streams_behind{agent="{#AGENT}"}
+          - value
+          - ''
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: hlsmon.metrics.get
+        tags:
+        - tag: component
+          value: agent
+      - uuid: 3b8520709d92409898341186e718c05b
+        name: 'HLS agent {#AGENT}: results in the queue'
+        type: DEPENDENT
+        key: hlsmon.agent.queue.results[{#AGENT}]
+        delay: '0'
+        preprocessing:
+        - type: PROMETHEUS_PATTERN
+          parameters:
+          - hlsmon_agent_queue_results{agent="{#AGENT}"}
+          - value
+          - ''
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: hlsmon.metrics.get
+        tags:
+        - tag: component
+          value: agent
+      - uuid: b1da5bb77ecf420fa34ce5c5ab919f29
+        name: 'HLS agent {#AGENT}: age of the oldest result in the queue'
+        type: DEPENDENT
+        key: hlsmon.agent.queue.oldest[{#AGENT}]
+        delay: '0'
+        value_type: FLOAT
+        units: s
+        preprocessing:
+        - type: PROMETHEUS_PATTERN
+          parameters:
+          - hlsmon_agent_queue_oldest_seconds{agent="{#AGENT}"}
+          - value
+          - ''
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: hlsmon.metrics.get
+        tags:
+        - tag: component
+          value: agent
+        trigger_prototypes:
+        - uuid: 2f7c7c8d83224bcc811a1c6d98f3aed6
+          expression: min(/HLS monitor by HTTP/hlsmon.agent.queue.oldest[{#AGENT}],5m)>{$HLSMON.AGENT.QUEUE.AGE}
+          name: 'HLS agent {#AGENT}: results are not being delivered'
+          priority: WARNING
+          description: 'Results have been waiting in the agent''s queue for more than {$HLSMON.AGENT.QUEUE.AGE} seconds: the agent reaches the server, but its results are not accepted or do not get through in time.'
+          tags:
+          - tag: scope
+            value: performance
+      - uuid: 01fa2d68fad14e229f092e8b2beab96e
+        name: 'HLS agent {#AGENT}: results dropped from the queue'
+        type: DEPENDENT
+        key: hlsmon.agent.queue.dropped[{#AGENT}]
+        delay: '0'
+        preprocessing:
+        - type: PROMETHEUS_PATTERN
+          parameters:
+          - hlsmon_agent_queue_dropped_total{agent="{#AGENT}"}
+          - value
+          - ''
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: hlsmon.metrics.get
+        tags:
+        - tag: component
+          value: agent
+        trigger_prototypes:
+        - uuid: 9056ca7268cf49d29922560e9996230c
+          expression: change(/HLS monitor by HTTP/hlsmon.agent.queue.dropped[{#AGENT}])>0
+          name: 'HLS agent {#AGENT}: results were lost, the queue was full'
+          priority: AVERAGE
+          description: 'The agent''s queue of undelivered results reached its size limit (HLSMON_QUEUE_MAX_MB) and the oldest results were dropped: there is a gap in what the server knows.'
+          manual_close: 'YES'
+          tags:
+          - tag: scope
+            value: performance
+      - uuid: a87de3f28a6d4dd59701d892b12134ac
+        name: 'HLS agent {#AGENT}: cannot write to the queue'
+        type: DEPENDENT
+        key: hlsmon.agent.queue.failing[{#AGENT}]
+        delay: '0'
+        valuemap:
+          name: HLS monitor yes/no
+        preprocessing:
+        - type: PROMETHEUS_PATTERN
+          parameters:
+          - hlsmon_agent_queue_failing{agent="{#AGENT}"}
+          - value
+          - ''
+          error_handler: DISCARD_VALUE
+        master_item:
+          key: hlsmon.metrics.get
+        tags:
+        - tag: component
+          value: agent
+        trigger_prototypes:
+        - uuid: 07423b8cc18948f5a7cf06172e95fc8f
+          expression: min(/HLS monitor by HTTP/hlsmon.agent.queue.failing[{#AGENT}],3m)=1
+          name: 'HLS agent {#AGENT}: cannot write to its queue'
+          priority: HIGH
+          description: 'The agent cannot write results to its queue (the disk is full or read-only): results are being lost.'
+          tags:
+          - tag: scope
+            value: availability
+      master_item:
+        key: hlsmon.metrics.get
+      lld_macro_paths:
+      - lld_macro: '{#AGENT}'
+        path: $.labels.agent
+      preprocessing:
+      - type: PROMETHEUS_TO_JSON
+        parameters:
+        - hlsmon_agent_online
+    - uuid: d8f27ebb06314492ab98be0f8a883800
+      name: Streams discovery
+      type: DEPENDENT
+      key: hlsmon.streams.discovery
+      delay: '0'
+      description: Every stream of the monitor.
+      item_prototypes:
+      - uuid: c1523045d08d43249a8fe503f3736896
+        name: 'HLS stream {#STREAM.NAME}: status'
+        type: DEPENDENT
+        key: hlsmon.stream.status[{#STREAM.ID}]
+        delay: '0'
+        value_type: FLOAT
+        description: 0 ok, 1 warning, 2 failure, 3 no data, -1 disabled.
+        valuemap:
+          name: HLS monitor stream status
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $[?(@.id == {#STREAM.ID})].status_code.first()
+        - type: DISCARD_UNCHANGED_HEARTBEAT
+          parameters:
+          - 10m
+        master_item:
+          key: hlsmon.streams.get
+        tags:
+        - tag: component
+          value: stream
+        - tag: stream
+          value: '{#STREAM.NAME}'
+        trigger_prototypes:
+        - uuid: 16eeaf63a6194557ad64582bb061a39e
+          expression: min(/HLS monitor by HTTP/hlsmon.stream.status[{#STREAM.ID}],{$HLSMON.FAIL.TIME})=2
+          name: 'HLS stream {#STREAM.NAME}: failure'
+          priority: HIGH
+          description: 'The stream has been in the state "failure" for {$HLSMON.FAIL.TIME}: a playlist or segments cannot be had, or what they carry is broken. Open incidents of the stream are at {$HLSMON.URL}/streams/{#STREAM.ID}.'
+          tags:
+          - tag: scope
+            value: availability
+          dependencies:
+          - name: 'HLS monitor: many streams are failing at once'
+            expression: min(/HLS monitor by HTTP/hlsmon.streams.failing,{$HLSMON.FAIL.TIME})>{$HLSMON.MASS.FAIL}
+        - uuid: 89eff8466de74ec7a52465059ed50be6
+          expression: min(/HLS monitor by HTTP/hlsmon.stream.status[{#STREAM.ID}],{$HLSMON.NODATA.TIME})=3
+          name: 'HLS stream {#STREAM.NAME}: no data'
+          priority: AVERAGE
+          description: 'Nobody has checked the stream for {$HLSMON.NODATA.TIME}: its agents are out of contact or the server does not get to it.'
+          tags:
+          - tag: scope
+            value: performance
+          dependencies:
+          - name: 'HLS monitor: the server does not answer'
+            expression: nodata(/HLS monitor by HTTP/hlsmon.ready,{$HLSMON.NODATA.TIME})=1
+        - uuid: 0bbe801e1e4741bfa96d361c38652541
+          expression: min(/HLS monitor by HTTP/hlsmon.stream.status[{#STREAM.ID}],{$HLSMON.WARN.TIME})=1
+          name: 'HLS stream {#STREAM.NAME}: warning'
+          priority: WARNING
+          description: The stream has had open warnings for {$HLSMON.WARN.TIME}. See {$HLSMON.URL}/streams/{#STREAM.ID}.
+          tags:
+          - tag: scope
+            value: performance
+      - uuid: d5a267f0339748f0bd6dcb69cc635c72
+        name: 'HLS stream {#STREAM.NAME}: open critical incidents'
+        type: DEPENDENT
+        key: hlsmon.stream.incidents.crit[{#STREAM.ID}]
+        delay: '0'
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $[?(@.id == {#STREAM.ID})].incidents.crit.first()
+        - type: DISCARD_UNCHANGED_HEARTBEAT
+          parameters:
+          - 10m
+        master_item:
+          key: hlsmon.streams.get
+        tags:
+        - tag: component
+          value: stream
+        - tag: stream
+          value: '{#STREAM.NAME}'
+      - uuid: 9ccbd03ccb024ec28f11f2228a43ba08
+        name: 'HLS stream {#STREAM.NAME}: open warnings'
+        type: DEPENDENT
+        key: hlsmon.stream.incidents.warn[{#STREAM.ID}]
+        delay: '0'
+        preprocessing:
+        - type: JSONPATH
+          parameters:
+          - $[?(@.id == {#STREAM.ID})].incidents.warn.first()
+        - type: DISCARD_UNCHANGED_HEARTBEAT
+          parameters:
+          - 10m
+        master_item:
+          key: hlsmon.streams.get
+        tags:
+        - tag: component
+          value: stream
+        - tag: stream
+          value: '{#STREAM.NAME}'
+      master_item:
+        key: hlsmon.streams.get
+      lld_macro_paths:
+      - lld_macro: '{#STREAM.ID}'
+        path: $.id
+      - lld_macro: '{#STREAM.NAME}'
+        path: $.name
+    tags:
+    - tag: class
+      value: application
+    - tag: target
+      value: hls-monitor
+    macros:
+    - macro: '{$HLSMON.AGENT.OFFLINE.TIME}'
+      value: 5m
+      description: How long an agent may be out of contact
+    - macro: '{$HLSMON.AGENT.QUEUE.AGE}'
+      value: '300'
+      description: Seconds a result may wait in an agent's queue
+    - macro: '{$HLSMON.BEHIND.TIME}'
+      value: 10m
+      description: How long checks may be late
+    - macro: '{$HLSMON.DISK.FREE.MIN}'
+      value: '10'
+      description: Free room on the database volume, percent
+    - macro: '{$HLSMON.FAIL.TIME}'
+      value: 3m
+      description: How long a stream is failing before it is a problem
+    - macro: '{$HLSMON.MASS.FAIL}'
+      value: '10'
+      description: This many failing streams are one common problem
+    - macro: '{$HLSMON.NODATA.TIME}'
+      value: 5m
+      description: How long without data is a problem
+    - macro: '{$HLSMON.OVERLOAD.TIME}'
+      value: 5m
+      description: How long the monitor may be short of processor time
+    - macro: '{$HLSMON.TOKEN}'
+      type: SECRET_TEXT
+      description: API token of the monitor (page Access)
+    - macro: '{$HLSMON.URL}'
+      value: http://localhost:4000
+      description: Address of the server, without a trailing slash
+    - macro: '{$HLSMON.WARN.TIME}'
+      value: 15m
+      description: How long a stream has warnings before it is a problem
+    valuemaps:
+    - uuid: 16b4954c869e462db9a52e057f25e24e
+      name: HLS monitor stream status
+      mappings:
+      - value: '-1'
+        newvalue: Disabled
+      - value: '0'
+        newvalue: OK
+      - value: '1'
+        newvalue: Warning
+      - value: '2'
+        newvalue: Failure
+      - value: '3'
+        newvalue: No data
+    - uuid: 0a0250775e3f42f29750f235ac84a515
+      name: HLS monitor yes/no
+      mappings:
+      - value: '0'
+        newvalue: 'No'
+      - value: '1'
+        newvalue: 'Yes'
+  triggers:
+  - uuid: 0f1636a2428a4c13924831815bab6719
+    expression: last(/HLS monitor by HTTP/hlsmon.disk.free)<last(/HLS monitor by HTTP/hlsmon.disk.total)*{$HLSMON.DISK.FREE.MIN}/100 and last(/HLS monitor by HTTP/hlsmon.disk.total)>0
+    name: 'HLS monitor: the disk of the database is almost full'
+    priority: WARNING
+    description: Less than {$HLSMON.DISK.FREE.MIN}% of the volume the database is on is free.
+    tags:
+    - tag: scope
+      value: performance
