@@ -446,11 +446,13 @@ func (c *Checker) pruneStates(keys []string) {
 	c.mu.Unlock()
 }
 
+// edge is where a media playlist ends: the end of its last segment by
+// EXT-X-PROGRAM-DATE-TIME, zero when the playlist has no date-times.
 type edge struct {
-	ok      bool
-	kind    string
-	lastSeq uint64
-	pdt     time.Time
+	ok             bool
+	kind           string
+	pdt            time.Time
+	targetDuration float64
 }
 
 func (c *Checker) checkMaster(ctx context.Context, cy *cycle, mp *m3u8.MasterPlaylist, base string, entry *httpx.Response) {
@@ -498,41 +500,47 @@ func (c *Checker) checkMaster(ctx context.Context, cy *cycle, mp *m3u8.MasterPla
 	}
 	wg.Wait()
 
-	// Variants of one stream are expected to advance together.
-	var minSeq, maxSeq uint64
-	var minPDT, maxPDT time.Time
-	n, withPDT := 0, 0
+	if apart, limit, ok := edgesApart(edges, c.th.VariantEdgeSpread); ok {
+		cy.metric("hls_variants_edge_spread_seconds", VariantMaster, apart)
+		if apart > limit {
+			cy.problem(ProbVariantsOutOfSync, SevWarn, VariantMaster, "live edges of the video variants are %.1fs apart by EXT-X-PROGRAM-DATE-TIME", apart)
+			cy.detail(ProbVariantsOutOfSync, VariantMaster, "variants_edge_spread", apart, "variants_edge_spread_limit", limit)
+		}
+	}
+}
+
+// edgesApart tells how far apart in time the live edges of the video
+// variants are and how far they may be: factor target durations, since the
+// playlists are read one after another and one of them may already list
+// the next segment.
+//
+// Only EXT-X-PROGRAM-DATE-TIME says where a playlist is in the
+// presentation. Media sequence numbers do not: variants may number their
+// segments independently (RFC 8216, section 6.3.2). Without date-times in
+// every variant there is nothing to compare, and ok is false.
+func edgesApart(edges []edge, factor float64) (apart, limit float64, ok bool) {
+	var first, last time.Time
+	n := 0
 	for _, e := range edges {
 		if !e.ok || e.kind != KindVideo {
 			continue
 		}
-		if n == 0 || e.lastSeq < minSeq {
-			minSeq = e.lastSeq
+		if e.pdt.IsZero() {
+			return 0, 0, false
 		}
-		if n == 0 || e.lastSeq > maxSeq {
-			maxSeq = e.lastSeq
+		if n == 0 || e.pdt.Before(first) {
+			first = e.pdt
 		}
+		if n == 0 || e.pdt.After(last) {
+			last = e.pdt
+		}
+		limit = max(limit, factor*e.targetDuration)
 		n++
-		if !e.pdt.IsZero() {
-			if withPDT == 0 || e.pdt.Before(minPDT) {
-				minPDT = e.pdt
-			}
-			if withPDT == 0 || e.pdt.After(maxPDT) {
-				maxPDT = e.pdt
-			}
-			withPDT++
-		}
 	}
-	if n > 1 {
-		spread := float64(maxSeq - minSeq)
-		cy.metric("hls_variants_sequence_spread", VariantMaster, spread)
-		if spread >= c.th.VariantSeqSpread {
-			cy.problem(ProbVariantsOutOfSync, SevWarn, VariantMaster, "variants are %d segments apart", int(spread))
-		}
-		if withPDT == n {
-			cy.metric("hls_variants_edge_spread_seconds", VariantMaster, maxPDT.Sub(minPDT).Seconds())
-		}
+	if n < 2 {
+		return 0, 0, false
 	}
+	return last.Sub(first).Seconds(), limit, true
 }
 
 func (c *Checker) checkVariant(ctx context.Context, cy *cycle, v Variant, base string, entry *httpx.Response) edge {

@@ -96,6 +96,10 @@
   "tolerance": "Tolerance",
   "uriNow": "URI now",
   "uriWas": "URI was",
+  "variantsApartHow": "The end of the last segment of every video variant is compared by EXT-X-PROGRAM-DATE-TIME. Two target durations of difference are allowed: the playlists are read one after another, and one of them may already list the next segment. Media sequence numbers are not compared — variants may number their segments independently (RFC 8216, section 6.3.2). Without EXT-X-PROGRAM-DATE-TIME tags the check is not made.",
+  "variantsApartWhat": "The video variants of one stream have drifted apart in time: one of them lags behind the others. A player switching to the lagging variant will not find the continuation there.",
+  "variantsEdgeSpread": "Difference between the playlist ends",
+  "variantsEdgeSpreadLimit": "Allowed difference",
   "videoArrivalRate": "Video arrival rate",
   "videoReceivedInStep": "Video received in that time",
   "videoReceivedInThatTime": "Video received in that time"

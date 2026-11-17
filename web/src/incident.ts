@@ -21,6 +21,10 @@ export const problemAbout = perLocale((): Record<string, { what: string; how: st
     what: t('incident.thePlaylistOfALiveStream'),
     how: t('incident.howPlaylistStale'),
   },
+  variants_out_of_sync: {
+    what: t('incident.variantsApartWhat'),
+    how: t('incident.variantsApartHow'),
+  },
   sequence_jump: {
     what: t('incident.betweenTwoChecksSegmentsTheMonitor'),
     how: t('incident.howSequenceJump'),
@@ -132,6 +136,8 @@ const circumstances = perLocale((): Field[] => [
   { key: 'playlist_error', label: t('incident.playlistRequestError'), unit: 'text' },
   { key: 'playlist_seconds', label: t('incident.playlistRequestTime'), unit: 's' },
   { key: 'playlist_bytes', label: t('incident.playlistSize'), unit: 'bytes' },
+  { key: 'variants_edge_spread', label: t('incident.variantsEdgeSpread'), unit: 's' },
+  { key: 'variants_edge_spread_limit', label: t('incident.variantsEdgeSpreadLimit'), unit: 's' },
   { key: 'since_previous_check', label: t('incident.sinceThePreviousCheck'), unit: 's' },
   { key: 'previous_playlist_keeps', label: t('incident.previousPlaylistKeeps'), unit: 's' },
   { key: 'failed_checks_between', label: t('incident.failedChecksBetween'), unit: 'count' },

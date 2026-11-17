@@ -257,7 +257,7 @@ type Thresholds struct {
 	BitrateFactor       float64       // actual / declared BANDWIDTH
 	CertWarn            time.Duration
 	CertCrit            time.Duration
-	VariantSeqSpread    float64 // media sequence difference between variants
+	VariantEdgeSpread   float64 // target durations between the live edges of variants
 }
 
 // DefaultThresholds are used when a Checker is created without overrides.
@@ -274,6 +274,6 @@ func DefaultThresholds() Thresholds {
 		BitrateFactor:       1.5,
 		CertWarn:            14 * 24 * time.Hour,
 		CertCrit:            3 * 24 * time.Hour,
-		VariantSeqSpread:    3,
+		VariantEdgeSpread:   2,
 	}
 }

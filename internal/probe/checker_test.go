@@ -616,3 +616,28 @@ func TestTargetDurationChangeIsInformational(t *testing.T) {
 		t.Errorf("status = %s, want ok", r.Status)
 	}
 }
+
+// Variants are compared by where their playlists end in time, never by
+// media sequence numbers, which they may count independently.
+func TestVariantEdgesApart(t *testing.T) {
+	at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	video := func(pdt time.Time) edge { return edge{ok: true, kind: KindVideo, pdt: pdt, targetDuration: 6} }
+
+	apart, limit, ok := edgesApart([]edge{video(at), video(at.Add(4 * time.Second)), {ok: true, kind: KindAudio, pdt: at.Add(time.Hour), targetDuration: 6}}, 2)
+	if !ok || apart != 4 || limit != 12 {
+		t.Errorf("two video variants 4 s apart: got %v s, limit %v, ok %v; want 4, 12, true (audio is not compared)", apart, limit, ok)
+	}
+	if apart, limit, _ := edgesApart([]edge{video(at), video(at.Add(30 * time.Second))}, 2); apart <= limit {
+		t.Errorf("30 s apart with 6 s segments must exceed the limit, got %v <= %v", apart, limit)
+	}
+	// Nothing to judge by: a variant without date-times, a failed one, a single one.
+	for name, edges := range map[string][]edge{
+		"no date-time": {video(at), video(time.Time{})},
+		"one failed":   {video(at), {kind: KindVideo}},
+		"single":       {video(at)},
+	} {
+		if _, _, ok := edgesApart(edges, 2); ok {
+			t.Errorf("%s: must not be compared", name)
+		}
+	}
+}

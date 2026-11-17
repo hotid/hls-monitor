@@ -227,7 +227,7 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 		st.recent[s.seq] = s.seg.URI
 	}
 
-	e := edge{ok: true, kind: v.Kind, lastSeq: last}
+	e := edge{ok: true, kind: v.Kind, targetDuration: td}
 	if t := segs[n-1].seg.ProgramDateTime; !t.IsZero() {
 		e.pdt = t.Add(time.Duration(segs[n-1].seg.Duration * float64(time.Second)))
 	}
