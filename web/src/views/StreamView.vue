@@ -394,6 +394,7 @@ function trackParams(tr: MediaTrack): string {
         </div>
         <StatusBadge :status="stream.status" />
         <span class="spacer" />
+        <RouterLink class="btn" :to="{ name: 'watch', params: { id: stream.id } }">{{ t('watch.title') }}</RouterLink>
         <RouterLink class="btn" :to="{ name: 'diagnose', params: { id: stream.id } }">{{ t('common.liveDiagnosis') }}</RouterLink>
         <template v-if="session.isAdmin">
           <button class="btn" type="button" :disabled="!stream.enabled" @click="checkNow">{{ t('stream.checkNow') }}</button>

@@ -10,6 +10,7 @@ export const router = createRouter({
     { path: '/streams', name: 'streams', component: () => import('./views/StreamsView.vue') },
     { path: '/streams/:id(\\d+)', name: 'stream', component: () => import('./views/StreamView.vue'), props: (r) => ({ id: Number(r.params.id) }) },
     { path: '/streams/:id(\\d+)/diagnose', name: 'diagnose', component: () => import('./views/DiagnoseView.vue'), props: (r) => ({ id: Number(r.params.id) }) },
+    { path: '/streams/:id(\\d+)/watch', name: 'watch', component: () => import('./views/WatchView.vue'), props: (r) => ({ id: Number(r.params.id) }) },
     { path: '/servers/:host/:ip?', name: 'server', component: () => import('./views/HostView.vue'), props: true },
     { path: '/incidents', name: 'incidents', component: () => import('./views/IncidentsView.vue') },
     { path: '/agents', name: 'agents', component: () => import('./views/AgentsView.vue') },

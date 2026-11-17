@@ -838,6 +838,44 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/play/{token}": {
+            "get": {
+                "description": "Serves what the token names, requested by the server itself. In a playlist every address is replaced by such a path. The X-Upstream header names the server that answered.",
+                "tags": [
+                    "streams"
+                ],
+                "summary": "A playlist or a segment of a watched stream",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Token from the list of sources or from a playlist served here",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "206": {
+                        "description": "Partial Content"
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/servers": {
             "get": {
                 "description": "Built from the last five minutes of checks. A stream served by several servers is counted for each.",
@@ -1468,6 +1506,44 @@ const docTemplate = `{
                             "items": {
                                 "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.SourceSeen"
                             }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/watch": {
+            "get": {
+                "description": "The stream's own address, and every server known to answer for it or for other streams of the same site, asked directly. Each comes with a path that works for twelve hours and serves the playlist with all its addresses replaced by such paths: the browser requests everything from the monitor, the monitor from the origin.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Ways to watch a stream through the server",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/internal_api.watchSource"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
                         }
                     }
                 }
@@ -3864,6 +3940,38 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "uri": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.watchSource": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "description": "Address is what is requested, for the eye; URL is the path to give\nto the player.",
+                    "type": "string"
+                },
+                "host": {
+                    "type": "string"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "Kind is \"configured\" for the stream's own address, with whatever\nbalancing and redirects lie behind it, and \"server\" for one\nparticular server asked directly.",
+                    "type": "string"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "seen": {
+                    "description": "Seen tells that this server answered for this stream lately;\notherwise it is known from other streams of the same site and may\nnot have this one.",
+                    "type": "boolean"
+                },
+                "software": {
+                    "type": "string"
+                },
+                "url": {
                     "type": "string"
                 }
             }

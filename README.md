@@ -88,6 +88,12 @@ The details of an incident also say where to look for its cause: whether the oth
 
 A playlist whose segment numbers do not continue the previous ones (another server behind a balancer with its own numbering answered, or the packager started over) is reported as a change of numbering, not as thousands of lost segments.
 
+### Watching
+
+A stream can be watched from its page — through the monitor itself: the server requests playlists and segments from where it makes its checks and passes them to the browser, so what is seen is what the monitor sees. The source is a choice: the stream's own address, with whatever balancing lies behind it, or one particular server asked directly — those that answered for this stream, and the other servers of the same site. Quality and audio track are chosen in the player. Next to the video: which server the segments come from, how much is buffered ahead, the distance from live, stalls and loading errors.
+
+The browser is given only addresses signed by the server, valid for twelve hours: an arbitrary address cannot be requested through the monitor. All the traffic of watching goes through the server; the number of viewers is not limited. What plays is what the browser can decode: H.264 with AAC everywhere, MPEG-2, AC-3 and HEVC depending on the browser. Watching from the vantage point of a remote agent is not possible: agents accept no incoming connections.
+
 ### Live diagnosis
 
 A separate check, run once per second at the chosen depth (for one to ten minutes), is started from the stream page. Every check is visible in the browser immediately: the response and server of each playlist, the player model buffer, the video arrival rate as a percentage of real time, every new segment, and everything that was found, with the calculation. The check is performed by the monitor server itself, not by agents. Live diagnosis saves nothing and does not affect regular checks, incidents or charts; no more than three run at the same time.

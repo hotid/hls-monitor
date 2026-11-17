@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -804,5 +805,118 @@ func TestSeriesOfDeletedStreamAreRemoved(t *testing.T) {
 	srv.PurgeSeries(ctx)
 	if len(got()) != 2 || pending() != 0 {
 		t.Errorf("deleted %v, pending %d", got(), pending())
+	}
+}
+
+// A stream is watched through the server: the browser is given signed
+// paths only, playlists come with their addresses replaced by such paths,
+// and what they lead to is what the origin serves.
+func TestWatchThroughTheServer(t *testing.T) {
+	e := newEnv(t)
+	admin := e.login("admin")
+	admin.want(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "header", "interval_sec": 1}, nil)
+	e.client().want(http.StatusUnauthorized, "GET", "/api/v1/streams/1/watch", nil, nil)
+
+	var sources []watchSource
+	admin.want(http.StatusOK, "GET", "/api/v1/streams/1/watch", nil, &sources)
+	if len(sources) != 1 || sources[0].Kind != "configured" || !strings.HasPrefix(sources[0].URL, "/api/v1/play/") {
+		t.Fatalf("sources = %+v", sources)
+	}
+	viewer := e.login("viewer")
+	get := func(path string) (int, string, http.Header) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", e.http.URL+path, nil)
+		resp, err := viewer.hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b), resp.Header
+	}
+	uris := func(playlist string) (out []string) {
+		for _, line := range strings.Split(playlist, "\n") {
+			if line != "" && !strings.HasPrefix(line, "#") {
+				out = append(out, line)
+			}
+		}
+		return out
+	}
+
+	code, master, hdr := get(sources[0].URL)
+	if code != http.StatusOK || !strings.HasPrefix(master, "#EXTM3U") || !strings.Contains(hdr.Get("Content-Type"), "mpegurl") {
+		t.Fatalf("master: %d %q", code, master)
+	}
+	if strings.Contains(master, "127.0.0.1") || strings.Contains(master, ".m3u8") {
+		t.Errorf("the playlist still names the origin:\n%s", master)
+	}
+	variants := uris(master)
+	if len(variants) == 0 {
+		t.Fatalf("no variants in\n%s", master)
+	}
+	// A path in a playlist is relative to the playlist's own.
+	code, media, _ := get("/api/v1/play/" + variants[0])
+	if code != http.StatusOK || !strings.Contains(media, "#EXTINF") {
+		t.Fatalf("media playlist: %d %q", code, media)
+	}
+	segments := uris(media)
+	if len(segments) == 0 {
+		t.Fatalf("no segments in\n%s", media)
+	}
+	// A player reads a live playlist again and again and expects a segment
+	// to keep its address.
+	time.Sleep(1100 * time.Millisecond)
+	if _, again, _ := get("/api/v1/play/" + variants[0]); again != media {
+		t.Errorf("the same playlist read twice names its segments differently:\n%s\n---\n%s", media, again)
+	}
+	code, seg, hdr := get("/api/v1/play/" + segments[0])
+	if code != http.StatusOK || len(seg) < 188 || seg[0] != 0x47 {
+		t.Fatalf("segment: %d, %d bytes", code, len(seg))
+	}
+	if up := hdr.Get("X-Upstream"); !strings.HasPrefix(up, "127.0.0.1:") {
+		t.Errorf("X-Upstream = %q", up)
+	}
+
+	// Nothing but what the server signed is served.
+	token := strings.TrimPrefix(sources[0].URL, "/api/v1/play/")
+	body, sig, _ := strings.Cut(token, ".")
+	forged := base64.RawURLEncoding.EncodeToString([]byte(`{"u":"http://127.0.0.1:1/secret","s":1,"e":99999999999}`))
+	for name, bad := range map[string]string{"another address under the same signature": forged + "." + sig, "a changed signature": body + ".AAAAAAAAAAAAAAAAAAAAAA", "no signature": body} {
+		if code, _, _ := get("/api/v1/play/" + bad); code != http.StatusForbidden {
+			t.Errorf("%s: status %d, want 403", name, code)
+		}
+	}
+	// What the origin does not have is the origin's answer, not an error of ours.
+	e.srv.now = func() time.Time { return time.Now() }
+	missing := e.srv.signPlay(playToken{URL: e.origin.URL + "/nothing.ts", Stream: 1, Expires: time.Now().Add(time.Minute).Unix(), Inside: true})
+	if code, _, _ := get("/api/v1/play/" + missing); code != http.StatusNotFound {
+		t.Errorf("a missing segment: status %d, want 404", code)
+	}
+	expired := e.srv.signPlay(playToken{URL: e.origin.URL + "/master.m3u8", Stream: 1, Expires: time.Now().Add(-time.Minute).Unix(), Entry: true})
+	if code, _, _ := get("/api/v1/play/" + expired); code != http.StatusForbidden {
+		t.Errorf("an expired path: status %d, want 403", code)
+	}
+
+	// Once the stream has been checked, the server it was served from is known.
+	waitFor(t, "the stream to be checked", func() bool {
+		admin.want(http.StatusOK, "GET", "/api/v1/streams/1/watch", nil, &sources)
+		return e.srv.entryFinalURL(context.Background(), 1) != nil
+	})
+}
+
+func TestRewritePlaylist(t *testing.T) {
+	in := "#EXTM3U\r\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\",IV=0x1\n#EXT-X-MAP:URI=\"/init.mp4\"\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://abc\"\n#EXTINF:2.0,\nseg-1.ts?t=1\n#EXTINF:2.0,\nhttps://other.example/a/seg-2.ts\n"
+	got := string(rewritePlaylist([]byte(in), "http://origin.example/live/v0/index.m3u8", func(u string) string { return "<" + u + ">" }))
+	want := "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"<http://origin.example/live/v0/key.bin>\",IV=0x1\n#EXT-X-MAP:URI=\"<http://origin.example/init.mp4>\"\n#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://abc\"\n#EXTINF:2.0,\n<http://origin.example/live/v0/seg-1.ts?t=1>\n#EXTINF:2.0,\n<https://other.example/a/seg-2.ts>\n\n"
+	if got != want {
+		t.Errorf("rewritten playlist:\n%s\nwant:\n%s", got, want)
+	}
+	if from, n, ok := parseRange("bytes=100-299"); !ok || from != 100 || n != 200 {
+		t.Errorf("range: %d %d %v", from, n, ok)
+	}
+	for _, bad := range []string{"", "bytes=5-", "bytes=-5", "bytes=0-1,5-9", "items=0-1"} {
+		if _, _, ok := parseRange(bad); ok {
+			t.Errorf("range %q must not be passed on", bad)
+		}
 	}
 }

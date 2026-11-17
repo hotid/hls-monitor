@@ -114,21 +114,7 @@ func (c *Checker) get(ctx context.Context, rq httpx.Request, timeout time.Durati
 	defer cancel()
 	rq.Headers, rq.HeadersFor = c.t.Headers, c.t.URL
 	// The request for the stream's own address comes marked ReachFirstAny.
-	entry := rq.Reach == httpx.ReachFirstAny
-	switch PrivateNetworks(privateNetworks.Load()) {
-	case PrivateAllow:
-		rq.Reach = httpx.ReachAny
-	case PrivateDeny:
-		rq.Reach = httpx.ReachPublic
-	default:
-		switch {
-		case entry:
-		case c.inside:
-			rq.Reach = httpx.ReachAny
-		default:
-			rq.Reach = httpx.ReachPublic
-		}
-	}
+	rq.Reach = Reach(rq.Reach == httpx.ReachFirstAny, c.inside)
 	return c.hc.Get(ctx, rq)
 }
 

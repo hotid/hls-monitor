@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/ingest"
 	"github.com/hotid/hls-monitor/internal/metrics"
 	"github.com/hotid/hls-monitor/internal/runner"
@@ -61,6 +63,12 @@ type Server struct {
 	diagnoses chan struct{}
 	router    *gin.Engine
 
+	// For watching streams through the server: the key that signs the
+	// addresses it hands out, and the clients that fetch what they name.
+	playKey      []byte
+	playSecure   *httpx.Client
+	playInsecure *httpx.Client
+
 	// reports holds what each remote agent last told about itself.
 	reportsMu sync.Mutex
 	reports   map[int64]agentReport
@@ -82,6 +90,11 @@ func New(cfg Config, st *store.Store, mx *metrics.Client, ing *ingest.Ingester, 
 		cfg.EnrollTTL = 24 * time.Hour
 	}
 	s := &Server{cfg: cfg, st: st, mx: mx, ing: ing, local: local, log: log, now: time.Now, logins: newLoginLimiter(), diagnoses: make(chan struct{}, maxDiagnoses), reports: map[int64]agentReport{}}
+
+	s.playKey = make([]byte, 32)
+	_, _ = rand.Read(s.playKey)
+	s.playSecure = httpx.New(httpx.Options{UserAgent: "hls-monitor/" + cfg.Version})
+	s.playInsecure = httpx.New(httpx.Options{UserAgent: "hls-monitor/" + cfg.Version, InsecureSkipVerify: true})
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -118,6 +131,8 @@ func (s *Server) routes(ui http.Handler) {
 	user.GET("/streams", s.listStreams)
 	user.GET("/streams/:id", s.getStream)
 	user.GET("/streams/:id/diagnose", s.diagnose)
+	user.GET("/streams/:id/watch", s.watchSources)
+	user.GET("/play/:token", s.play)
 	user.GET("/streams/:id/series", s.series)
 	user.GET("/streams/:id/segments", s.listSegments)
 	user.GET("/streams/:id/snapshots", s.listSnapshots)

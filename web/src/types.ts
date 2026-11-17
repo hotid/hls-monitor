@@ -10,6 +10,19 @@ export interface User {
   created_at: string
 }
 
+/** One way to watch a stream through the server. */
+export interface WatchSource {
+  kind: 'configured' | 'server'
+  host?: string
+  ip?: string
+  software?: string
+  /** The server answered for this stream lately. */
+  seen: boolean
+  last_seen?: string
+  address: string
+  url: string
+}
+
 export interface AgentStatus {
   agent_id: number
   agent_name: string

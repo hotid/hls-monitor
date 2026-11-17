@@ -1426,6 +1426,36 @@ definitions:
       uri:
         type: string
     type: object
+  internal_api.watchSource:
+    properties:
+      address:
+        description: |-
+          Address is what is requested, for the eye; URL is the path to give
+          to the player.
+        type: string
+      host:
+        type: string
+      ip:
+        type: string
+      kind:
+        description: |-
+          Kind is "configured" for the stream's own address, with whatever
+          balancing and redirects lie behind it, and "server" for one
+          particular server asked directly.
+        type: string
+      last_seen:
+        type: string
+      seen:
+        description: |-
+          Seen tells that this server answered for this stream lately;
+          otherwise it is known from other streams of the same site and may
+          not have this one.
+        type: boolean
+      software:
+        type: string
+      url:
+        type: string
+    type: object
 info:
   contact: {}
   description: HLS stream monitoring. /api/v1 is the web API (session cookie; every
@@ -1978,6 +2008,33 @@ paths:
       summary: 'Dashboard data: counters, streams, agents, open incidents'
       tags:
       - overview
+  /api/v1/play/{token}:
+    get:
+      description: Serves what the token names, requested by the server itself. In
+        a playlist every address is replaced by such a path. The X-Upstream header
+        names the server that answered.
+      parameters:
+      - description: Token from the list of sources or from a playlist served here
+        in: path
+        name: token
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "206":
+          description: Partial Content
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: A playlist or a segment of a watched stream
+      tags:
+      - streams
   /api/v1/servers:
     get:
       description: Built from the last five minutes of checks. A stream served by
@@ -2404,6 +2461,35 @@ paths:
               $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.SourceSeen'
             type: array
       summary: Servers that answered for a stream's playlists and segments
+      tags:
+      - streams
+  /api/v1/streams/{id}/watch:
+    get:
+      description: 'The stream''s own address, and every server known to answer for
+        it or for other streams of the same site, asked directly. Each comes with
+        a path that works for twelve hours and serves the playlist with all its addresses
+        replaced by such paths: the browser requests everything from the monitor,
+        the monitor from the origin.'
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/internal_api.watchSource'
+            type: array
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Ways to watch a stream through the server
       tags:
       - streams
   /api/v1/system:
