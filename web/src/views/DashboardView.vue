@@ -92,7 +92,10 @@ const summaryCharts: SummaryChart[] = [
   },
   {
     id: 'bitrate', title: t('dashboard.totalBitrateOfStreams'), hint: t('dashboard.sumOfTheBitratesOfStreams'), unit: 'bps',
-    series: [{ id: 'bitrate_total', label: t('common.total') }],
+    series: [
+      { id: 'bitrate_total', label: t('dashboard.bitrateOfStreams') },
+      { id: 'check_traffic', label: t('dashboard.trafficOfChecks') },
+    ],
   },
 ]
 

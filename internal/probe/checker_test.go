@@ -914,3 +914,29 @@ func TestRedirectLinesAreReadable(t *testing.T) {
 		t.Errorf("a single redirect: %v", one)
 	}
 }
+
+// What a check downloads is reported, so that the load the monitor puts
+// on the network can be seen: little at the playlist level, the whole
+// segments at the segment level.
+func TestCheckTrafficIsReported(t *testing.T) {
+	bytesOf := func(level Level) float64 {
+		f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level)
+		f.step(4)
+		r := f.step(1)
+		v, ok := metric(r, "hls_check_bytes", "")
+		if !ok {
+			t.Fatalf("%s: no hls_check_bytes", level)
+		}
+		return v
+	}
+	playlist, header, whole := bytesOf(LevelPlaylist), bytesOf(LevelHeader), bytesOf(LevelSegments)
+	if playlist <= 0 || playlist > 2000 {
+		t.Errorf("playlist level downloaded %v bytes: a playlist is a few hundred", playlist)
+	}
+	if whole < 10000 || whole <= playlist {
+		t.Errorf("segment level downloaded %v bytes, playlist level %v", whole, playlist)
+	}
+	if header < playlist || header > whole {
+		t.Errorf("header level downloaded %v bytes: between %v and %v expected", header, playlist, whole)
+	}
+}

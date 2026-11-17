@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Eyevinn/hls-m3u8/m3u8"
@@ -54,6 +55,9 @@ type Checker struct {
 	variantKeys []string
 	vars        map[string]*variantState
 	interval    time.Duration
+	// received counts the bytes of response bodies downloaded in the
+	// current cycle, by every request it makes.
+	received atomic.Int64
 	// inside tells that the stream's own address is not a public one: it
 	// was pointed inside on purpose, and so may its playlists.
 	inside bool
@@ -115,7 +119,11 @@ func (c *Checker) get(ctx context.Context, rq httpx.Request, timeout time.Durati
 	rq.Headers, rq.HeadersFor = c.t.Headers, c.t.URL
 	// The request for the stream's own address comes marked ReachFirstAny.
 	rq.Reach = Reach(rq.Reach == httpx.ReachFirstAny, c.inside)
-	return c.hc.Get(ctx, rq)
+	resp, err := c.hc.Get(ctx, rq)
+	if resp != nil {
+		c.received.Add(resp.Size)
+	}
+	return resp, err
 }
 
 // Run performs one check cycle.
@@ -189,6 +197,9 @@ func (c *Checker) Run(ctx context.Context) *Result {
 }
 
 func (c *Checker) finish(cy *cycle, start time.Time) *Result {
+	// What the check itself cost the network: playlists, and as much of
+	// the segments as its level downloads.
+	cy.metric("hls_check_bytes", "", float64(c.received.Swap(0)))
 	if c.Overloaded != nil {
 		if reason := c.Overloaded(start); reason != "" {
 			cy.overloaded(reason)

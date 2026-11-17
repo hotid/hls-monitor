@@ -1942,8 +1942,8 @@ paths:
   /api/v1/aggregate:
     get:
       description: Counts of streams by state, playlist and segment response times
-        (average and 95th percentile), errors, stalls, server changes and total bitrate,
-        as time series.
+        (average and 95th percentile), errors, stalls, server changes, the total bitrate
+        of the streams and the traffic of the checks themselves, as time series.
       parameters:
       - description: Length of the history in seconds (default 3600, max 604800)
         in: query

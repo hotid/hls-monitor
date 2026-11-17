@@ -172,6 +172,9 @@ var aggregates = []struct{ id, expr string }{
 	{"stalls", `sum(sum_over_time(hls_stalls[%[1]ds]))`},
 	{"source_changes", `sum(sum_over_time(hls_playlist_source_changed[%[1]ds]))`},
 	{"bitrate_total", `sum(max by (stream) (avg_over_time(hls_segment_bitrate_bps[%[1]ds])))`},
+	// What the checks download, from every vantage point together: bytes
+	// received within a step, as a rate.
+	{"check_traffic", `sum(sum_over_time(hls_check_bytes[%[1]ds])) * 8 / %[1]d`},
 	{"bitrate_avg", `avg(max by (stream) (avg_over_time(hls_segment_bitrate_bps[%[1]ds])))`},
 	{"stale_max", `max(max_over_time(hls_playlist_stale_seconds[%[1]ds]))`},
 	{"check_lag_max", `max(max_over_time(hls_check_lag_seconds[%[1]ds]))`},
@@ -191,7 +194,7 @@ type aggregateResponse struct {
 // aggregate godoc
 //
 //	@Summary	Figures over all streams for the overview charts
-//	@Description	Counts of streams by state, playlist and segment response times (average and 95th percentile), errors, stalls, server changes and total bitrate, as time series.
+//	@Description	Counts of streams by state, playlist and segment response times (average and 95th percentile), errors, stalls, server changes, the total bitrate of the streams and the traffic of the checks themselves, as time series.
 //	@Tags		overview
 //	@Produce	json
 //	@Param		range	query		int	false	"Length of the history in seconds (default 3600, max 604800)"
