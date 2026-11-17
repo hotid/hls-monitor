@@ -240,3 +240,28 @@ func TestRefusedBatchIsDropped(t *testing.T) {
 		t.Errorf("a busy storage must be retried: %v %+v", err, c.Stats())
 	}
 }
+
+func TestServerLabels(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got += string(b)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	c := New(srv.URL, nil)
+	ts := time.UnixMilli(1700000000123)
+	c.Write([]Sample{
+		{Name: "hls_server_requests", Stream: 3, Agent: 1, Server: "edge-1.example.com:8080", IP: "2001:db8::1", Value: 4, Time: ts},
+		// A name from a playlist is text of somebody else's: what cannot
+		// be a host is not written at all.
+		{Name: "hls_server_requests", Stream: 3, Agent: 1, Server: `a"} 1 1` + "\nevil", IP: "10.0.0.1", Value: 5, Time: ts},
+	})
+	if err := c.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := `hls_server_requests{stream="3",agent="1",server="edge-1.example.com:8080",ip="2001:db8::1"} 4 1700000000123` + "\n"
+	if got != want {
+		t.Errorf("written:\n%s\nwant:\n%s", got, want)
+	}
+}

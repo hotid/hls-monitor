@@ -960,3 +960,44 @@ func TestConnectionFiguresAreRecorded(t *testing.T) {
 		}
 	}
 }
+
+func TestWayToTheServerIsRecorded(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("read on Linux only")
+	}
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	first := f.step(1)
+	// The first check makes its own connection and tells how long it took.
+	if v, ok := metric(first, "hls_connect_seconds", VariantMedia); !ok || v <= 0 || v > 1 {
+		t.Errorf("hls_connect_seconds = %v, %v", v, ok)
+	}
+	if _, ok := metric(first, "hls_entry_seconds", VariantMedia); ok {
+		t.Error("the time of the way in was recorded on a connection made for the check")
+	}
+	// The next ones do not, and tell how long the way in takes instead.
+	r := f.step(1)
+	if _, ok := metric(r, "hls_connect_seconds", VariantMedia); ok {
+		t.Error("a connection was made for a check that came too soon for it")
+	}
+	if v, ok := metric(r, "hls_entry_seconds", VariantMedia); !ok || v <= 0 {
+		t.Errorf("hls_entry_seconds = %v, %v", v, ok)
+	}
+	byName := map[string]Metric{}
+	for _, m := range r.Metrics {
+		if m.Server != "" {
+			byName[m.Name] = m
+		}
+	}
+	rq := byName["hls_server_requests"]
+	if rq.Value < 2 || rq.IP != "127.0.0.1" || !strings.HasPrefix(rq.Server, "127.0.0.1:") {
+		t.Errorf("hls_server_requests = %+v; want the playlist and its segments from the test server", rq)
+	}
+	if rtt := byName["hls_server_rtt_seconds"]; rtt.Value <= 0 || rtt.Value > 1 {
+		t.Errorf("hls_server_rtt_seconds = %+v", rtt)
+	}
+	for _, name := range []string{"hls_server_retransmits", "hls_server_out_of_order"} {
+		if m, ok := byName[name]; !ok || m.Value < 0 {
+			t.Errorf("%s = %+v, %v", name, m, ok)
+		}
+	}
+}

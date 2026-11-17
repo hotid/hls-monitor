@@ -30,8 +30,10 @@ type Sample struct {
 	Stream  int64
 	Agent   int64
 	Variant int64
-	Value   float64
-	Time    time.Time
+	// Server and IP, when set, name the server the value is about.
+	Server, IP string
+	Value      float64
+	Time       time.Time
 }
 
 // Series is one time series returned by a range query.
@@ -57,6 +59,10 @@ const (
 )
 
 var nameRe = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
+// labelRe is what a host or an address may look like to become a label:
+// it comes from a playlist, and goes into a line of text as it is.
+var labelRe = regexp.MustCompile(`^[A-Za-z0-9._:\[\]-]{1,255}$`)
 
 // ValidName reports whether s is acceptable as a metric name.
 func ValidName(s string) bool { return nameRe.MatchString(s) }
@@ -170,6 +176,9 @@ func (c *Client) Write(samples []Sample) {
 		if !ValidName(s.Name) || math.IsNaN(s.Value) || math.IsInf(s.Value, 0) {
 			continue
 		}
+		if s.Server != "" && !labelRe.MatchString(s.Server) {
+			continue // about a server that cannot be named
+		}
 		b.WriteString(s.Name)
 		b.WriteString(`{stream="`)
 		b.WriteString(strconv.FormatInt(s.Stream, 10))
@@ -178,6 +187,14 @@ func (c *Client) Write(samples []Sample) {
 		if s.Variant != 0 {
 			b.WriteString(`",variant="`)
 			b.WriteString(strconv.FormatInt(s.Variant, 10))
+		}
+		if s.Server != "" {
+			b.WriteString(`",server="`)
+			b.WriteString(s.Server)
+			if labelRe.MatchString(s.IP) {
+				b.WriteString(`",ip="`)
+				b.WriteString(s.IP)
+			}
 		}
 		b.WriteString(`"} `)
 		b.WriteString(strconv.FormatFloat(s.Value, 'g', -1, 64))

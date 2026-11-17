@@ -158,7 +158,9 @@ func (in *Ingester) apply(ctx context.Context, agentID int64, r *probe.Result) e
 				continue
 			}
 			var vid int64
-			if m.Variant == "" {
+			if m.Server != "" {
+				// About a server, not a playlist: a series only.
+			} else if m.Variant == "" {
 				streamLevel[m.Name] = m.Value
 			} else {
 				if vid, err = variantID(m.Variant); err != nil {
@@ -172,7 +174,7 @@ func (in *Ingester) apply(ctx context.Context, agentID int64, r *probe.Result) e
 					up[m.Variant] = m.Value == 1
 				}
 			}
-			samples = append(samples, metrics.Sample{Name: m.Name, Stream: r.TargetID, Agent: agentID, Variant: vid, Value: m.Value, Time: t})
+			samples = append(samples, metrics.Sample{Name: m.Name, Stream: r.TargetID, Agent: agentID, Variant: vid, Server: m.Server, IP: m.IP, Value: m.Value, Time: t})
 		}
 
 		// Segment figures exist only in cycles that found a new segment, which

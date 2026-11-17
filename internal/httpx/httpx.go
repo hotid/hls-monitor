@@ -35,7 +35,9 @@ type Options struct {
 // Client performs timed GET requests. It is safe for concurrent use.
 type Client struct {
 	hc *http.Client
-	ua string
+	// fresh keeps no connections: see Request.Fresh.
+	fresh *http.Client
+	ua    string
 	// proxied is set when requests go through a proxy: the connection is
 	// then made to the proxy, and Reach cannot be applied.
 	proxied  bool
@@ -63,9 +65,9 @@ func New(o Options) *Client {
 		proxied = proxied || os.Getenv(name) != ""
 	}
 	tr := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           dialer.DialContext,
-		ForceAttemptHTTP2:     true,
+		Proxy:             http.ProxyFromEnvironment,
+		DialContext:       dialer.DialContext,
+		ForceAttemptHTTP2: true,
 		// One client serves every stream, and checks come in bursts: dozens
 		// of requests to one server at once. A connection that finds no
 		// room among the idle ones is closed and opened again a moment
@@ -77,43 +79,45 @@ func New(o Options) *Client {
 		ExpectContinueTimeout: time.Second,
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: o.InsecureSkipVerify}, //nolint:gosec // opt-in per stream
 	}
-	hc := &http.Client{
-		Transport: tr,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= maxRedirects {
-				// Most often it is not a long way but a circle.
-				for i := len(via) - 1; i >= 0; i-- {
-					if via[i].URL.String() != req.URL.String() {
-						continue
-					}
-					if i == len(via)-1 {
-						return fmt.Errorf("redirect loop: %s redirects to itself (stopped after %d redirects)", req.URL.Host, maxRedirects)
-					}
-					return fmt.Errorf("redirect loop: the request came back to %s (stopped after %d redirects)", req.URL.Host, maxRedirects)
+	// A second pool that keeps nothing: a request marked Fresh makes its own
+	// connections, which is the only way to see how long that takes.
+	once := tr.Clone()
+	once.DisableKeepAlives = true
+	hc := &http.Client{Transport: tr}
+	hc.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if len(via) >= maxRedirects {
+			// Most often it is not a long way but a circle.
+			for i := len(via) - 1; i >= 0; i-- {
+				if via[i].URL.String() != req.URL.String() {
+					continue
 				}
-				return fmt.Errorf("stopped after %d redirects", maxRedirects)
+				if i == len(via)-1 {
+					return fmt.Errorf("redirect loop: %s redirects to itself (stopped after %d redirects)", req.URL.Host, maxRedirects)
+				}
+				return fmt.Errorf("redirect loop: the request came back to %s (stopped after %d redirects)", req.URL.Host, maxRedirects)
 			}
-			// Go carries headers over to the redirect target; the configured
-			// ones do not leave their site.
-			if sc, ok := req.Context().Value(headerScopeKey{}).(headerScope); ok && !SameSite(req.URL.Hostname(), sc.host) {
-				for _, name := range sc.names {
-					req.Header.Del(name)
-				}
+			return fmt.Errorf("stopped after %d redirects", maxRedirects)
+		}
+		// Go carries headers over to the redirect target; the configured
+		// ones do not leave their site.
+		if sc, ok := req.Context().Value(headerScopeKey{}).(headerScope); ok && !SameSite(req.URL.Hostname(), sc.host) {
+			for _, name := range sc.names {
+				req.Header.Del(name)
 			}
-			if t, ok := req.Context().Value(redirectKey{}).(*redirectTrace); ok && req.Response != nil {
-				h := Hop{Status: req.Response.StatusCode, Server: req.Response.Header.Get("Server")}
-				if prev := via[len(via)-1]; prev.URL != nil {
-					h.URL = prev.URL.String()
-				}
-				if n := len(via) - 1; n < len(t.addrs) {
-					h.RemoteAddr = t.addrs[n]
-				}
-				t.hops = append(t.hops, h)
+		}
+		if t, ok := req.Context().Value(redirectKey{}).(*redirectTrace); ok && req.Response != nil {
+			h := Hop{Status: req.Response.StatusCode, Server: req.Response.Header.Get("Server")}
+			if prev := via[len(via)-1]; prev.URL != nil {
+				h.URL = prev.URL.String()
 			}
-			return nil
-		},
+			if n := len(via) - 1; n < len(t.addrs) {
+				h.RemoteAddr = t.addrs[n]
+			}
+			t.hops = append(t.hops, h)
+		}
+		return nil
 	}
-	return &Client{hc: hc, ua: o.UserAgent, proxied: proxied}
+	return &Client{hc: hc, fresh: &http.Client{Transport: once, CheckRedirect: hc.CheckRedirect}, ua: o.UserAgent, proxied: proxied}
 }
 
 // CloseIdle closes idle connections of the client's pool.
@@ -135,6 +139,11 @@ type Request struct {
 	// RangeOffset/RangeLength request a byte range when RangeLength > 0.
 	RangeOffset int64
 	RangeLength int64
+	// Fresh makes the request, and every redirect it follows, on a new
+	// connection that is closed afterwards: the way to measure the name
+	// lookup, the connection and the TLS handshake, which a kept
+	// connection never repeats.
+	Fresh bool
 }
 
 // Hop is one redirect on the way to the final response.
@@ -171,9 +180,13 @@ type Response struct {
 
 	DNS     time.Duration
 	Connect time.Duration
-	TLS     time.Duration
-	TTFB    time.Duration // from request start to first response byte
-	Total   time.Duration // from request start to end of body
+	// Lookups and Connects count the name lookups and the connections
+	// made, redirects included: DNS and Connect are their sums.
+	Lookups  int
+	Connects int
+	TLS      time.Duration
+	TTFB     time.Duration // from request start to first response byte
+	Total    time.Duration // from request start to end of body
 
 	Size          int64 // body bytes actually read
 	ContentLength int64 // declared length, -1 when unknown
@@ -288,12 +301,14 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 		DNSDone: func(httptrace.DNSDoneInfo) {
 			if !dnsStart.IsZero() {
 				res.DNS += time.Since(dnsStart)
+				res.Lookups++
 			}
 		},
 		ConnectStart: func(string, string) { connStart = time.Now() },
 		ConnectDone: func(_, _ string, err error) {
 			if err == nil && !connStart.IsZero() {
 				res.Connect += time.Since(connStart)
+				res.Connects++
 			}
 		},
 		TLSHandshakeStart: func() { tlsStart = time.Now() },
@@ -340,7 +355,11 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 	}
 
 	start = time.Now()
-	resp, err := c.hc.Do(req)
+	hc := c.hc
+	if rq.Fresh {
+		hc = c.fresh
+	}
+	resp, err := hc.Do(req)
 	if err != nil {
 		res.Total = time.Since(start)
 		// The way to the failure is worth knowing, a redirect loop above all.

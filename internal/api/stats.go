@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"sort"
@@ -56,10 +57,71 @@ type serverView struct {
 	Playlists bool      `json:"playlists"`
 	Segments  bool      `json:"segments"`
 	LastSeen  time.Time `json:"last_seen"`
+	// Network is the way to the server over the last five minutes, by the
+	// kernel's count on the connections of the checks; absent where it
+	// cannot be read (the checks do not run on Linux).
+	Network *serverNetwork `json:"network,omitempty"`
 	// FailingStreams are up to ten of the streams in the failed state.
 	FailingStreams []streamRef `json:"failing_streams"`
 	// StreamIDs are all the streams counted in Streams.
 	StreamIDs []int64 `json:"stream_ids"`
+}
+
+// serverNetwork is what the checks saw of the way to one server.
+type serverNetwork struct {
+	// RTT is the round trip time in seconds, averaged over the requests.
+	RTT float64 `json:"rtt_seconds"`
+	// Requests is how many requests the figures rest on; Retransmits how
+	// many TCP segments had to be sent again on the way there, OutOfOrder
+	// how many arrived out of order on the way back.
+	Requests    float64 `json:"requests"`
+	Retransmits float64 `json:"retransmits"`
+	OutOfOrder  float64 `json:"out_of_order"`
+	// Lossy tells that the share of requests that needed a retransmission
+	// is above what a network loses in the ordinary way.
+	Lossy bool `json:"lossy"`
+}
+
+// A server is called lossy when, of at least lossyRequests requests, more
+// than lossyShare needed a segment sent again. A fraction of a percent is
+// what the internet loses anyway.
+const (
+	lossyShare    = 0.05
+	lossyRequests = 200
+)
+
+// serverNetworks reads the figures of the last five minutes for every
+// server; nil when the time series storage does not answer.
+func (s *Server) serverNetworks(ctx context.Context, at time.Time) map[[2]string]*serverNetwork {
+	out := map[[2]string]*serverNetwork{}
+	for _, q := range []struct {
+		expr string
+		set  func(*serverNetwork, float64)
+	}{
+		{`sum by (server, ip) (sum_over_time(hls_server_requests[5m]))`, func(n *serverNetwork, v float64) { n.Requests = v }},
+		{`sum by (server, ip) (sum_over_time(hls_server_retransmits[5m]))`, func(n *serverNetwork, v float64) { n.Retransmits = v }},
+		{`sum by (server, ip) (sum_over_time(hls_server_out_of_order[5m]))`, func(n *serverNetwork, v float64) { n.OutOfOrder = v }},
+		{`avg by (server, ip) (avg_over_time(hls_server_rtt_seconds[5m]))`, func(n *serverNetwork, v float64) { n.RTT = v }},
+	} {
+		res, err := s.mx.Query(ctx, q.expr, at)
+		if err != nil {
+			return nil
+		}
+		for _, r := range res {
+			if len(r.Points) == 0 {
+				continue
+			}
+			k := [2]string{r.Labels["server"], r.Labels["ip"]}
+			if out[k] == nil {
+				out[k] = &serverNetwork{}
+			}
+			q.set(out[k], r.Points[len(r.Points)-1][1])
+		}
+	}
+	for _, n := range out {
+		n.Lossy = n.Requests >= lossyRequests && n.Retransmits/n.Requests > lossyShare
+	}
+	return out
 }
 
 // streamRef is enough to name a stream and link to it.
@@ -139,8 +201,10 @@ func (s *Server) servers(c *gin.Context) {
 			}
 		}
 	}
+	network := s.serverNetworks(ctx, sc.now)
 	out := make([]serverView, 0, len(byServer))
-	for _, a := range byServer {
+	for k, a := range byServer {
+		a.view.Network = network[[2]string{k.host, k.ip}]
 		sort.Slice(a.view.FailingStreams, func(i, j int) bool { return a.view.FailingStreams[i].Name < a.view.FailingStreams[j].Name })
 		sort.Slice(a.view.StreamIDs, func(i, j int) bool { return a.view.StreamIDs[i] < a.view.StreamIDs[j] })
 		out = append(out, a.view)
@@ -152,6 +216,89 @@ func (s *Server) servers(c *gin.Context) {
 		return out[i].IP < out[j].IP
 	})
 	c.JSON(http.StatusOK, out)
+}
+
+// serverSeries is the history of the way to one server.
+type serverSeries struct {
+	Host string `json:"host"`
+	IP   string `json:"ip"`
+	// Series maps a figure to [unix seconds, value] points: "rtt" in
+	// seconds, "loss" as the retransmissions per request, "requests" per
+	// second.
+	Series map[string][][2]float64 `json:"series"`
+}
+
+type serversNetworkResponse struct {
+	From    float64        `json:"from"`
+	To      float64        `json:"to"`
+	Step    float64        `json:"step"`
+	Servers []serverSeries `json:"servers"`
+}
+
+// serversNetwork godoc
+//
+//	@Summary	Round trip time, loss and the share of requests, by server
+//	@Description	By the kernel's count on the connections of the checks, from every vantage point together. Loss is the TCP retransmissions per request on the way to the server.
+//	@Tags		overview
+//	@Produce	json
+//	@Param		range	query		int	false	"Length of the history in seconds (default 3600, max 604800)"
+//	@Param		buckets	query		int	false	"Number of steps (default 120, max 300)"
+//	@Success	200		{object}	serversNetworkResponse
+//	@Failure	502		{object}	apiError
+//	@Router		/api/v1/servers/network [get]
+func (s *Server) serversNetwork(c *gin.Context) {
+	from, to, step := s.chartWindow(c)
+	sec := int(step.Seconds())
+	out := serversNetworkResponse{From: float64(from.Unix()), To: float64(to.Unix()), Step: step.Seconds(), Servers: []serverSeries{}}
+	byServer := map[[2]string]*serverSeries{}
+	for _, q := range []struct{ id, expr string }{
+		{"rtt", `avg by (server, ip) (avg_over_time(hls_server_rtt_seconds[%[1]ds]))`},
+		{"loss", `sum by (server, ip) (sum_over_time(hls_server_retransmits[%[1]ds])) / sum by (server, ip) (sum_over_time(hls_server_requests[%[1]ds]))`},
+		{"requests", `sum by (server, ip) (sum_over_time(hls_server_requests[%[1]ds])) / %[1]d`},
+	} {
+		res, err := s.mx.QueryRange(c.Request.Context(), fmt.Sprintf(q.expr, sec), from, to, step)
+		if err != nil {
+			s.log.Warn("servers network query failed", "error", err)
+			fail(c, http.StatusBadGateway, "metrics_unavailable", "the time series storage is not available")
+			return
+		}
+		for _, r := range res {
+			k := [2]string{r.Labels["server"], r.Labels["ip"]}
+			if byServer[k] == nil {
+				byServer[k] = &serverSeries{Host: k[0], IP: k[1], Series: map[string][][2]float64{}}
+			}
+			byServer[k].Series[q.id] = r.Points
+		}
+	}
+	for _, v := range byServer {
+		out.Servers = append(out.Servers, *v)
+	}
+	sort.Slice(out.Servers, func(i, j int) bool {
+		a, b := out.Servers[i], out.Servers[j]
+		if a.Host != b.Host {
+			return a.Host < b.Host
+		}
+		return a.IP < b.IP
+	})
+	c.JSON(http.StatusOK, out)
+}
+
+// chartWindow reads the range and the number of steps of a chart request.
+func (s *Server) chartWindow(c *gin.Context) (from, to time.Time, step time.Duration) {
+	rng := time.Duration(queryInt(c, "range")) * time.Second
+	if rng <= 0 {
+		rng = time.Hour
+	}
+	rng = min(rng, 7*24*time.Hour)
+	buckets := queryInt(c, "buckets")
+	if buckets <= 0 {
+		buckets = 120
+	}
+	buckets = min(buckets, 300)
+	// Not finer than 30 s: streams polled every 10-15 s need a few samples per step.
+	step = max((rng / time.Duration(buckets)).Truncate(time.Second), 30*time.Second)
+	to = s.now().Truncate(step)
+	return to.Add(-rng), to, step
 }
 
 // aggregates are figures over all streams at once. %[1]d is the step in
@@ -169,6 +316,15 @@ var aggregates = []struct{ id, expr string }{
 	{"rtt_avg", `avg(avg_over_time(hls_tcp_rtt_seconds[%[1]ds]))`},
 	{"rtt_p95", `quantile(0.95, avg_over_time(hls_tcp_rtt_seconds[%[1]ds]))`},
 	{"out_of_order", `sum(sum_over_time(hls_tcp_out_of_order[%[1]ds]))`},
+	// Measured on a connection made for it, every few minutes per stream.
+	{"connect_avg", `avg(avg_over_time(hls_connect_seconds[%[1]ds]))`},
+	{"connect_p95", `quantile(0.95, max_over_time(hls_connect_seconds[%[1]ds]))`},
+	{"dns_avg", `avg(avg_over_time(hls_dns_seconds[%[1]ds]))`},
+	{"tls_avg", `avg(avg_over_time(hls_tls_seconds[%[1]ds]))`},
+	// The way in: how many redirects the stream's own address takes.
+	{"entry_redirects_avg", `avg(avg_over_time(hls_entry_redirects[%[1]ds]))`},
+	{"entry_time_avg", `avg(avg_over_time(hls_entry_seconds[%[1]ds]))`},
+	{"entry_time_p95", `quantile(0.95, avg_over_time(hls_entry_seconds[%[1]ds]))`},
 	{"retransmits", `sum(sum_over_time(hls_tcp_retransmits[%[1]ds]))`},
 	{"segment_errors", `sum(sum_over_time(hls_segment_errors[%[1]ds]))`},
 	{"segments_checked", `sum(sum_over_time(hls_segments_checked[%[1]ds]))`},
@@ -207,20 +363,7 @@ type aggregateResponse struct {
 //	@Failure	502		{object}	apiError
 //	@Router		/api/v1/aggregate [get]
 func (s *Server) aggregate(c *gin.Context) {
-	rng := time.Duration(queryInt(c, "range")) * time.Second
-	if rng <= 0 {
-		rng = time.Hour
-	}
-	rng = min(rng, 7*24*time.Hour)
-	buckets := queryInt(c, "buckets")
-	if buckets <= 0 {
-		buckets = 120
-	}
-	buckets = min(buckets, 300)
-	// Not finer than 30 s: streams polled every 10-15 s need a few samples per step.
-	step := max((rng / time.Duration(buckets)).Truncate(time.Second), 30*time.Second)
-	to := s.now().Truncate(step)
-	from := to.Add(-rng)
+	from, to, step := s.chartWindow(c)
 
 	out := aggregateResponse{From: float64(from.Unix()), To: float64(to.Unix()), Step: step.Seconds(), Series: map[string][][2]float64{}}
 	var wg sync.WaitGroup

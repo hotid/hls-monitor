@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"sort"
 	"sync"
 	"time"
@@ -33,6 +34,8 @@ type cycle struct {
 	// tcp holds, per variant, what the kernel told of the connections the
 	// cycle used.
 	tcp map[string]*tcpSeen
+	// servers holds the same by the server that answered.
+	servers map[serverKey]*serverSeen
 
 	minTargetDuration float64
 	// minSlack is the shortest time, across live playlists, in which a
@@ -99,6 +102,49 @@ func (cy *cycle) network(variant string, resp *httpx.Response) {
 	t.rtt = resp.TCP.RTT.Seconds()
 	t.outOfOrder += float64(resp.TCP.NewOutOfOrder)
 	t.retransmits += float64(resp.TCP.NewRetransmits)
+
+	// The same by server: loss and delay belong to the way to a server far
+	// more than to one stream among those it serves.
+	at := serverOf(resp)
+	if at.host == "" {
+		return
+	}
+	if cy.servers == nil {
+		cy.servers = map[serverKey]*serverSeen{}
+	}
+	s := cy.servers[at]
+	if s == nil {
+		s = &serverSeen{}
+		cy.servers[at] = s
+	}
+	s.requests++
+	s.rtt += resp.TCP.RTT.Seconds()
+	s.outOfOrder += float64(resp.TCP.NewOutOfOrder)
+	s.retransmits += float64(resp.TCP.NewRetransmits)
+}
+
+// serverKey names a server: the host that answered and the address the
+// connection went to.
+type serverKey struct{ host, ip string }
+
+// serverSeen sums up the requests one server answered in a cycle.
+type serverSeen struct {
+	requests, rtt, outOfOrder, retransmits float64
+}
+
+func serverOf(resp *httpx.Response) serverKey {
+	var k serverKey
+	at := resp.FinalURL
+	if at == "" {
+		at = resp.URL
+	}
+	if u, err := url.Parse(at); err == nil {
+		k.host = u.Host
+	}
+	if ip, _, err := net.SplitHostPort(resp.RemoteAddr); err == nil {
+		k.ip = ip
+	}
+	return k
 }
 
 // doubt marks the latest occurrence of a problem as resting on timing
@@ -354,6 +400,13 @@ func (cy *cycle) finish(elapsed time.Duration) *Result {
 			Metric{Name: "hls_tcp_rtt_seconds", Variant: key, Value: t.rtt},
 			Metric{Name: "hls_tcp_out_of_order", Variant: key, Value: t.outOfOrder},
 			Metric{Name: "hls_tcp_retransmits", Variant: key, Value: t.retransmits})
+	}
+	for at, s := range cy.servers {
+		cy.res.Metrics = append(cy.res.Metrics,
+			Metric{Name: "hls_server_requests", Server: at.host, IP: at.ip, Value: s.requests},
+			Metric{Name: "hls_server_rtt_seconds", Server: at.host, IP: at.ip, Value: s.rtt / s.requests},
+			Metric{Name: "hls_server_out_of_order", Server: at.host, IP: at.ip, Value: s.outOfOrder},
+			Metric{Name: "hls_server_retransmits", Server: at.host, IP: at.ip, Value: s.retransmits})
 	}
 	cy.res.Metrics = append(cy.res.Metrics,
 		Metric{Name: "hls_stream_status", Value: overall},

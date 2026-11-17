@@ -2,14 +2,14 @@
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@/api'
-import { statusLabel, type Unit } from '@/catalog'
+import { fmtUnit, statusLabel, type Unit } from '@/catalog'
 import { fmtAgo, fmtBits, fmtSeconds } from '@/format'
 import { t } from '@/i18n'
 import { usePolling } from '@/poll'
 import { useSort } from '@/sort'
 import { useLive } from '@/stores/live'
 import { useSession } from '@/stores/session'
-import type { Aggregate, ServerView, Status, Stream, Timeline } from '@/types'
+import type { Aggregate, ServerSeries, ServersNetwork, ServerView, Status, Stream, Timeline } from '@/types'
 import FilterEmpty from '@/components/FilterEmpty.vue'
 import IncidentTable from '@/components/IncidentTable.vue'
 import SortTh from '@/components/SortTh.vue'
@@ -46,6 +46,8 @@ interface SummaryChart {
   /** Counts: a step without a point is zero, not a gap. */
   zeroFill?: boolean
   series: { id: string; label: string }[]
+  /** A line per server, of this figure, instead of the series. */
+  perServer?: 'rtt' | 'loss' | 'requests'
 }
 
 const green = '#2ec4b6'
@@ -94,6 +96,38 @@ const summaryCharts: SummaryChart[] = [
     ],
   },
   {
+    id: 'rtt-by-server', title: t('dashboard.rttByServer'), hint: t('dashboard.rttByServerHint'), unit: 's', perServer: 'rtt',
+    series: [],
+  },
+  {
+    id: 'loss-by-server', title: t('dashboard.lossByServer'), hint: t('dashboard.lossByServerHint'), unit: 'pct', perServer: 'loss',
+    series: [],
+  },
+  {
+    id: 'requests-by-server', title: t('dashboard.requestsByServer'), hint: t('dashboard.requestsByServerHint'), unit: 'count', perServer: 'requests',
+    series: [],
+  },
+  {
+    id: 'connect', title: t('dashboard.connectionSetup'), hint: t('dashboard.connectionSetupHint'), unit: 's',
+    series: [
+      { id: 'connect_avg', label: t('dashboard.connectAverage') },
+      { id: 'connect_p95', label: t('dashboard.connect95') },
+      { id: 'dns_avg', label: 'DNS' },
+      { id: 'tls_avg', label: 'TLS' },
+    ],
+  },
+  {
+    id: 'entry-time', title: t('dashboard.entryTime'), hint: t('dashboard.entryTimeHint'), unit: 's',
+    series: [
+      { id: 'entry_time_avg', label: t('dashboard.average') },
+      { id: 'entry_time_p95', label: '95 %' },
+    ],
+  },
+  {
+    id: 'entry-redirects', title: t('dashboard.entryRedirects'), hint: t('dashboard.entryRedirectsHint'), unit: 'count',
+    series: [{ id: 'entry_redirects_avg', label: t('dashboard.redirectsPerRequest') }],
+  },
+  {
     id: 'segment-ttfb', title: t('dashboard.segmentFirstByte'), hint: t('dashboard.timeToTheFirstByteOf'), unit: 's',
     series: [
       { id: 'segment_ttfb_avg', label: t('dashboard.average') },
@@ -116,6 +150,10 @@ const summaryCharts: SummaryChart[] = [
 function lines(c: SummaryChart): ChartLine[] {
   const a = aggregate.value
   if (!a) return []
+  if (c.perServer) {
+    const figure = c.perServer
+    return busiest.value.map((s) => ({ label: serverLabel(s), points: s.series[figure] ?? [] }))
+  }
   return c.series.map((s) => {
     let points = a.series[s.id] ?? []
     if (c.zeroFill) {
@@ -129,6 +167,21 @@ function lines(c: SummaryChart): ChartLine[] {
 }
 
 // ── Servers ──────────────────────────────────────────────────────────
+const network = ref<ServersNetwork | null>(null)
+const { refresh: reloadNetwork } = usePolling(async (signal) => {
+  network.value = await api.get<ServersNetwork>(`/api/v1/servers/network?range=${range.value}&buckets=120`, signal)
+}, 30_000)
+// A chart reads well with a dozen lines at most: the servers that answer the most.
+const busiest = computed(() => {
+  const total = (s: ServerSeries) => (s.series.requests ?? []).reduce((sum, p) => sum + p[1], 0)
+  return [...(network.value?.servers ?? [])].sort((a, b) => total(b) - total(a)).slice(0, 12).sort((a, b) => serverLabel(a).localeCompare(serverLabel(b)))
+})
+function serverLabel(s: ServerSeries): string {
+  const same = (network.value?.servers ?? []).filter((o) => o.host === s.host).length
+  return same > 1 && s.ip ? `${s.host} (${s.ip})` : s.host
+}
+const lossOf = (s: ServerView) => (s.network && s.network.requests > 0 ? s.network.retransmits / s.network.requests : undefined)
+
 const servers = ref<ServerView[]>([])
 usePolling(async (signal) => {
   servers.value = await api.get<ServerView[]>('/api/v1/servers', signal)
@@ -141,6 +194,8 @@ const serverSort = useSort(() => servers.value, {
   ok: { value: (s) => s.ok, filter: 'range' },
   warn: { value: (s) => s.warn, filter: 'range' },
   fail: { value: (s) => s.fail, filter: 'range' },
+  rtt: { value: (s) => s.network?.rtt_seconds ?? -1, filter: 'range' },
+  loss: { value: (s) => lossOf(s) ?? -1, filter: 'range' },
 }, 'dash-servers')
 
 // ── Streams ──────────────────────────────────────────────────────────
@@ -151,6 +206,7 @@ const { error: timelineError, refresh: reloadTimeline } = usePolling(async (sign
 watch(range, () => {
   void reloadAggregate()
   void reloadTimeline()
+  void reloadNetwork()
 })
 
 const order: Record<Status, number> = { fail: 0, warn: 1, nodata: 2, ok: 3, disabled: 4 }
@@ -265,6 +321,8 @@ const creating = ref(false)
               <SortTh :sort="serverSort" by="ok" class="right">{{ t('common.ok') }}</SortTh>
               <SortTh :sort="serverSort" by="warn" class="right">{{ t('common.warning') }}</SortTh>
               <SortTh :sort="serverSort" by="fail" class="right">{{ t('common.failure') }}</SortTh>
+              <SortTh :sort="serverSort" by="rtt" class="right" :title="t('dashboard.rttByServerHint')">RTT</SortTh>
+              <SortTh :sort="serverSort" by="loss" class="right" :title="t('dashboard.lossByServerHint')">{{ t('dashboard.loss') }}</SortTh>
               <th>{{ t('dashboard.failingStreams') }}</th>
             </tr>
           </thead>
@@ -280,6 +338,8 @@ const creating = ref(false)
               <td class="mono right">{{ s.ok }}</td>
               <td class="mono right" :style="s.warn ? 'color: var(--accent-warm)' : ''">{{ s.warn }}</td>
               <td class="mono right" :style="s.fail ? 'color: #ff7a85' : ''">{{ s.fail }}</td>
+              <td class="mono right">{{ s.network ? fmtSeconds(s.network.rtt_seconds) : '—' }}</td>
+              <td class="mono right" :style="s.network?.lossy ? 'color: var(--accent-warm)' : ''" :title="s.network?.lossy ? t('dashboard.lossyServer') : ''">{{ fmtUnit(lossOf(s), 'pct') }}</td>
               <td class="muted failing">
                 <template v-for="(f, i) in s.failing_streams" :key="f.id"><template v-if="i">, </template><RouterLink :to="{ name: 'stream', params: { id: f.id } }">{{ f.name }}</RouterLink></template>
                 <RouterLink v-if="s.fail > s.failing_streams.length" :to="{ name: 'server', params: { host: s.host, ip: s.ip } }"> {{ t('dashboard.andMore', { n: s.fail - s.failing_streams.length }) }}</RouterLink>

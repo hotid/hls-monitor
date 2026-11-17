@@ -195,6 +195,14 @@ export const chartGroups = perLocale((): ChartGroup[] => [
         ],
       },
       {
+        id: 'connection-setup', title: t('catalog.connectionSetup'), hint: t('catalog.connectionSetupHint'), unit: 's', agg: 'avg',
+        series: [
+          { metric: 'hls_dns_seconds', label: 'DNS' },
+          { metric: 'hls_connect_seconds', label: t('catalog.connect') },
+          { metric: 'hls_tls_seconds', label: 'TLS' },
+        ],
+      },
+      {
         id: 'segment-net', title: t('catalog.segmentDownloadByPhase'), hint: t('catalog.averageOverTheSelectedVariantsAnd'), unit: 's', agg: 'avg', levels: ['header', 'segments', 'container'],
         series: [
           { metric: 'hls_segment_dns_seconds', label: 'DNS' },

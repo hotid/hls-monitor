@@ -396,6 +396,22 @@ export interface ServerView {
   last_seen: string
   failing_streams: { id: number; name: string }[]
   stream_ids: number[]
+  /** The way to the server over the last five minutes; absent where it cannot be measured. */
+  network?: { rtt_seconds: number; requests: number; retransmits: number; out_of_order: number; lossy: boolean }
+}
+
+export interface ServerSeries {
+  host: string
+  ip: string
+  /** "rtt" in seconds, "loss" as retransmissions per request, "requests" per second. */
+  series: Record<string, [number, number][]>
+}
+
+export interface ServersNetwork {
+  from: number
+  to: number
+  step: number
+  servers: ServerSeries[]
 }
 
 export interface ProbeProblem {

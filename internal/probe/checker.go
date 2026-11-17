@@ -21,8 +21,10 @@ const (
 	playlistMaxBody    = 8 << 20
 	segmentMaxBody     = 256 << 20
 	variantConcurrency = 4
-	defaultInterval    = 5 * time.Second
-	vodInterval        = 30 * time.Second
+	// freshEvery is how often a check makes its own connection.
+	freshEvery      = 5 * time.Minute
+	defaultInterval = 5 * time.Second
+	vodInterval     = 30 * time.Second
 )
 
 // Checker checks one stream cycle after cycle. Run must not be called
@@ -49,6 +51,9 @@ type Checker struct {
 	plSource map[string]*Endpoint
 
 	entryKind string // KindMaster or KindMedia once known
+	// freshAt is when the stream's address was last asked on a connection
+	// made for it.
+	freshAt time.Time
 	// entryText is the entry playlist as last read, entryAt when.
 	entryText   []byte
 	entryAt     time.Time
@@ -131,10 +136,14 @@ func (c *Checker) Run(ctx context.Context) *Result {
 	start := c.now()
 	cy := newCycle(c.t.ID, start)
 
-	resp, err := c.get(ctx, httpx.Request{URL: c.t.URL, MaxBody: playlistMaxBody, Reach: httpx.ReachFirstAny}, c.timeout())
-	if resp != nil && resp.RemoteAddr != "" {
-		c.inside = resp.Inside
+	// Connections are kept between checks, so the time it takes to make
+	// one shows only when one is made on purpose: every few minutes the
+	// stream's own address is asked on a fresh connection.
+	fresh := c.freshAt.IsZero() || start.Sub(c.freshAt) >= freshEvery
+	if fresh {
+		c.freshAt = start
 	}
+	resp, err := c.get(ctx, httpx.Request{URL: c.t.URL, MaxBody: playlistMaxBody, Reach: httpx.ReachFirstAny, Fresh: fresh}, c.timeout())
 
 	var pl m3u8.Playlist
 	var typ m3u8.ListType
@@ -149,6 +158,27 @@ func (c *Checker) Run(ctx context.Context) *Result {
 	key := VariantMedia
 	if (fetched && parseErr == nil && typ == m3u8.MASTER) || ((!fetched || parseErr != nil) && c.entryKind == KindMaster) {
 		key = VariantMaster
+	}
+
+	if resp != nil && err == nil && !fresh {
+		// The way in: a balancer often answers the stream's address with
+		// a redirect, and how long that takes is not the stream's doing.
+		// Not when the connections were made for it: that is another figure.
+		cy.metric("hls_entry_seconds", key, resp.Total.Seconds())
+		cy.metric("hls_entry_redirects", key, float64(resp.Redirects))
+	}
+	if fresh && resp != nil && resp.Connects > 0 {
+		n := float64(resp.Connects)
+		cy.metric("hls_connect_seconds", key, resp.Connect.Seconds()/n)
+		if resp.Lookups > 0 {
+			cy.metric("hls_dns_seconds", key, resp.DNS.Seconds()/float64(resp.Lookups))
+		}
+		if resp.TLS > 0 {
+			cy.metric("hls_tls_seconds", key, resp.TLS.Seconds()/n)
+		}
+	}
+	if resp != nil && resp.RemoteAddr != "" {
+		c.inside = resp.Inside
 	}
 
 	if c.entryText != nil {

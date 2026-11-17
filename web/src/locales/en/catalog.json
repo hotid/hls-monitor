@@ -10,6 +10,8 @@
   "buffer": "Buffer",
   "bufferOfAPlayerRunningThree": "Buffer of a player running three segments behind the live edge",
   "connect": "Connect",
+  "connectionSetup": "Connection setup",
+  "connectionSetupHint": "Every five minutes the stream's address is requested on a connection made on purpose: how long the name lookup, the connection and TLS took, on average per connection on the way. The rest of the time connections are kept, and there is nothing to measure.",
   "continuity": "Continuity",
   "continuityCounterAndSync": "Continuity counter and sync",
   "continuityCounterErrors": "Continuity counter errors",

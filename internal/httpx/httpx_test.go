@@ -311,3 +311,39 @@ func TestConnectionCountersGrowth(t *testing.T) {
 		t.Errorf("a new connection under the same addresses: %+v", again)
 	}
 }
+
+func TestFreshRequestMakesItsOwnConnection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/in" {
+			http.Redirect(w, r, "/there", http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer srv.Close()
+	c := New(Options{})
+	ctx := context.Background()
+
+	// Kept connections are used again, and nothing is measured on them.
+	if _, err := c.Get(ctx, Request{URL: srv.URL + "/in"}); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := c.Get(ctx, Request{URL: srv.URL + "/in"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Connects != 0 || kept.Connect != 0 {
+		t.Errorf("a kept connection: %d connections made in %v", kept.Connects, kept.Connect)
+	}
+
+	// A fresh request makes one for every hop, whatever is kept.
+	for range 2 {
+		fresh, err := c.Get(ctx, Request{URL: srv.URL + "/in", Fresh: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fresh.Connects != 2 || fresh.Connect <= 0 || fresh.ConnReused {
+			t.Errorf("a fresh request: %d connections in %v, reused %v; want 2", fresh.Connects, fresh.Connect, fresh.ConnReused)
+		}
+	}
+}

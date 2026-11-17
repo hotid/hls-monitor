@@ -971,6 +971,46 @@
                 }
             }
         },
+        "/api/v1/servers/network": {
+            "get": {
+                "description": "By the kernel's count on the connections of the checks, from every vantage point together. Loss is the TCP retransmissions per request on the way to the server.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "overview"
+                ],
+                "summary": "Round trip time, loss and the share of requests, by server",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Length of the history in seconds (default 3600, max 604800)",
+                        "name": "range",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Number of steps (default 120, max 300)",
+                        "name": "buckets",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.serversNetworkResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/snapshots/{id}": {
             "get": {
                 "produces": [
@@ -2471,7 +2511,14 @@
         "github_com_hotid_hls-monitor_internal_probe.Metric": {
             "type": "object",
             "properties": {
+                "ip": {
+                    "type": "string"
+                },
                 "n": {
+                    "type": "string"
+                },
+                "s": {
+                    "description": "Server and IP name the server a figure is about, for the few that\ndescribe the way to a server rather than a playlist: the host that\nanswered and the address the connection went to.",
                     "type": "string"
                 },
                 "v": {
@@ -3683,6 +3730,54 @@
                 }
             }
         },
+        "internal_api.serverNetwork": {
+            "type": "object",
+            "properties": {
+                "lossy": {
+                    "description": "Lossy tells that the share of requests that needed a retransmission\nis above what a network loses in the ordinary way.",
+                    "type": "boolean"
+                },
+                "out_of_order": {
+                    "type": "number"
+                },
+                "requests": {
+                    "description": "Requests is how many requests the figures rest on; Retransmits how\nmany TCP segments had to be sent again on the way there, OutOfOrder\nhow many arrived out of order on the way back.",
+                    "type": "number"
+                },
+                "retransmits": {
+                    "type": "number"
+                },
+                "rtt_seconds": {
+                    "description": "RTT is the round trip time in seconds, averaged over the requests.",
+                    "type": "number"
+                }
+            }
+        },
+        "internal_api.serverSeries": {
+            "type": "object",
+            "properties": {
+                "host": {
+                    "type": "string"
+                },
+                "ip": {
+                    "type": "string"
+                },
+                "series": {
+                    "description": "Series maps a figure to [unix seconds, value] points: \"rtt\" in\nseconds, \"loss\" as the retransmissions per request, \"requests\" per\nsecond.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "items": {
+                                "type": "number",
+                                "format": "float64"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "internal_api.serverView": {
             "type": "object",
             "properties": {
@@ -3704,6 +3799,14 @@
                 },
                 "last_seen": {
                     "type": "string"
+                },
+                "network": {
+                    "description": "Network is the way to the server over the last five minutes, by the\nkernel's count on the connections of the checks; absent where it\ncannot be read (the checks do not run on Linux).",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_api.serverNetwork"
+                        }
+                    ]
                 },
                 "ok": {
                     "type": "integer"
@@ -3730,6 +3833,26 @@
                 },
                 "warn": {
                     "type": "integer"
+                }
+            }
+        },
+        "internal_api.serversNetworkResponse": {
+            "type": "object",
+            "properties": {
+                "from": {
+                    "type": "number"
+                },
+                "servers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.serverSeries"
+                    }
+                },
+                "step": {
+                    "type": "number"
+                },
+                "to": {
+                    "type": "number"
                 }
             }
         },

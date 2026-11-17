@@ -154,6 +154,11 @@ type Metric struct {
 	Name    string  `json:"n"`
 	Variant string  `json:"v,omitempty"`
 	Value   float64 `json:"x"`
+	// Server and IP name the server a figure is about, for the few that
+	// describe the way to a server rather than a playlist: the host that
+	// answered and the address the connection went to.
+	Server string `json:"s,omitempty"`
+	IP     string `json:"ip,omitempty"`
 }
 
 // Segment is the record of one checked media segment.

@@ -138,6 +138,7 @@ func (s *Server) routes(ui http.Handler) {
 	user.GET("/timeline", s.timeline)
 	user.GET("/aggregate", s.aggregate)
 	user.GET("/servers", s.servers)
+	user.GET("/servers/network", s.serversNetwork)
 	user.GET("/streams/:id/sources", s.streamSources)
 	user.GET("/streams", s.listStreams)
 	user.GET("/streams/:id", s.getStream)
