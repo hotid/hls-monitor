@@ -892,3 +892,25 @@ func TestServersThatNumberSegmentsDifferently(t *testing.T) {
 		t.Error("the fourth check came from the same server as the third")
 	}
 }
+
+func TestRedirectLinesAreReadable(t *testing.T) {
+	hop := func(u, server string) httpx.Hop { return httpx.Hop{URL: u, Status: 302, Server: server} }
+	got := hopLines([]httpx.Hop{
+		hop("http://cdn.example/a.m3u8", ""),
+		hop("http://n6.example/a.m3u8", "Streamer 26.10"),
+		hop("http://n4.example:80/a.m3u8", "Streamer 26.09"),
+		hop("http://n4.example:80/a.m3u8", "Streamer 26.09"),
+		hop("http://n4.example:80/a.m3u8", "Streamer 26.09"),
+	})
+	want := []string{
+		"HTTP 302 http://cdn.example/a.m3u8 → http://n6.example/a.m3u8",
+		"HTTP 302 http://n6.example/a.m3u8 (Streamer 26.10) → http://n4.example:80/a.m3u8",
+		"HTTP 302 http://n4.example:80/a.m3u8 (Streamer 26.09) → http://n4.example:80/a.m3u8 ×3",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("got:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if one := hopLines([]httpx.Hop{hop("http://a.example/x", "")}); len(one) != 1 || one[0] != "HTTP 302 http://a.example/x" {
+		t.Errorf("a single redirect: %v", one)
+	}
+}

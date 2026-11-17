@@ -76,6 +76,16 @@ func New(o Options) *Client {
 		Transport: tr,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxRedirects {
+				// Most often it is not a long way but a circle.
+				for i := len(via) - 1; i >= 0; i-- {
+					if via[i].URL.String() != req.URL.String() {
+						continue
+					}
+					if i == len(via)-1 {
+						return fmt.Errorf("redirect loop: %s redirects to itself (stopped after %d redirects)", req.URL.Host, maxRedirects)
+					}
+					return fmt.Errorf("redirect loop: the request came back to %s (stopped after %d redirects)", req.URL.Host, maxRedirects)
+				}
 				return fmt.Errorf("stopped after %d redirects", maxRedirects)
 			}
 			// Go carries headers over to the redirect target; the configured

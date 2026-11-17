@@ -622,14 +622,29 @@ func (c *Checker) checkVariant(ctx context.Context, cy *cycle, v Variant, base s
 	return c.checkMediaPlaylist(ctx, cy, v, u, pl.(*m3u8.MediaPlaylist), resp, entry)
 }
 
-// hopLines renders the redirects that were followed, one per line.
+// hopLines renders the redirects that were followed, one per line: who
+// answered, and where it sent the request when that is known. The same
+// redirect made several times in a row, as by a server that redirects to
+// itself, is one line with a count.
 func hopLines(hops []httpx.Hop) []string {
 	out := make([]string, 0, len(hops))
-	for _, h := range hops {
+	repeats := 1
+	for i, h := range hops {
 		line := fmt.Sprintf("HTTP %d %s", h.Status, h.URL)
 		if h.Server != "" {
 			line += " (" + h.Server + ")"
 		}
+		if i+1 < len(hops) {
+			line += " → " + hops[i+1].URL
+		} else if i > 0 && hops[i-1].URL == h.URL {
+			line += " → " + h.URL // the last of a run to itself: it did it again
+		}
+		if n := len(out); n > 0 && strings.TrimSuffix(out[n-1], fmt.Sprintf(" ×%d", repeats)) == line {
+			repeats++
+			out[n-1] = fmt.Sprintf("%s ×%d", line, repeats)
+			continue
+		}
+		repeats = 1
 		out = append(out, line)
 	}
 	return out
