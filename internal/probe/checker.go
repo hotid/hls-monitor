@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"net/url"
 	"sort"
@@ -140,7 +141,12 @@ func (c *Checker) Run(ctx context.Context) *Result {
 	// one shows only when one is made on purpose: every few minutes the
 	// stream's own address is asked on a fresh connection.
 	fresh := c.freshAt.IsZero() || start.Sub(c.freshAt) >= freshEvery
-	if fresh {
+	switch {
+	case c.freshAt.IsZero():
+		// Streams start together; their next turns are spread over half
+		// the period so that they do not all open connections at once.
+		c.freshAt = start.Add(-time.Duration(rand.Int64N(int64(freshEvery / 2))))
+	case fresh:
 		c.freshAt = start
 	}
 	resp, err := c.get(ctx, httpx.Request{URL: c.t.URL, MaxBody: playlistMaxBody, Reach: httpx.ReachFirstAny, Fresh: fresh}, c.timeout())

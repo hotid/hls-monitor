@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"net/url"
 	"sort"
 	"sync"
 	"time"
@@ -133,18 +132,8 @@ type serverSeen struct {
 }
 
 func serverOf(resp *httpx.Response) serverKey {
-	var k serverKey
-	at := resp.FinalURL
-	if at == "" {
-		at = resp.URL
-	}
-	if u, err := url.Parse(at); err == nil {
-		k.host = u.Host
-	}
-	if ip, _, err := net.SplitHostPort(resp.RemoteAddr); err == nil {
-		k.ip = ip
-	}
-	return k
+	e := endpoint(resp.URL, resp)
+	return serverKey{host: e.Host, ip: e.IP}
 }
 
 // doubt marks the latest occurrence of a problem as resting on timing
