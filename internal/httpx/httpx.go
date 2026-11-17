@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,9 @@ type Options struct {
 type Client struct {
 	hc *http.Client
 	ua string
+	// proxied is set when requests go through a proxy: the connection is
+	// then made to the proxy, and Reach cannot be applied.
+	proxied bool
 }
 
 // redirectTrace collects what happened on the way to the final response.
@@ -52,7 +56,11 @@ func New(o Options) *Client {
 	if o.DialTimeout == 0 {
 		o.DialTimeout = 10 * time.Second
 	}
-	dialer := &net.Dialer{Timeout: o.DialTimeout, KeepAlive: 30 * time.Second}
+	dialer := &net.Dialer{Timeout: o.DialTimeout, KeepAlive: 30 * time.Second, ControlContext: controlDial}
+	proxied := false
+	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
+		proxied = proxied || os.Getenv(name) != ""
+	}
 	tr := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
 		DialContext:           dialer.DialContext,
@@ -90,7 +98,7 @@ func New(o Options) *Client {
 			return nil
 		},
 	}
-	return &Client{hc: hc, ua: o.UserAgent}
+	return &Client{hc: hc, ua: o.UserAgent, proxied: proxied}
 }
 
 // CloseIdle closes idle connections of the client's pool.
@@ -106,6 +114,9 @@ type Request struct {
 	HeadersFor string
 	// MaxBody limits how many body bytes are kept and read. Zero means 64 MiB.
 	MaxBody int64
+	// Reach says which addresses the request may connect to; ReachAny by
+	// default. It is not applied when the client goes through a proxy.
+	Reach Reach
 	// RangeOffset/RangeLength request a byte range when RangeLength > 0.
 	RangeOffset int64
 	RangeLength int64
@@ -131,6 +142,9 @@ type Response struct {
 	Hops []Hop
 
 	RemoteAddr string // ip:port of the server that answered
+	// Inside tells that the first connection of the request was made to
+	// an address that is not public.
+	Inside     bool
 	Proto      string // HTTP/1.1, HTTP/2.0
 	TLSVersion string
 	// CertNotAfter is the leaf certificate expiry, zero for plain HTTP.
@@ -233,6 +247,20 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 	}
 	rt := &redirectTrace{}
 	ctx = context.WithValue(ctx, redirectKey{}, rt)
+	reach := &reachState{mode: rq.Reach}
+	if c.proxied {
+		reach.mode = ReachAny
+	}
+	ctx, reach.cancel = context.WithCancelCause(ctx)
+	defer reach.cancel(nil)
+	ctx = context.WithValue(ctx, reachKey{}, reach)
+	// refused replaces the error of a request ended for where it connected.
+	refused := func(err error) error {
+		if cause := context.Cause(ctx); errors.Is(cause, ErrNotPublic) {
+			return cause
+		}
+		return err
+	}
 
 	res := &Response{URL: rq.URL, ContentLength: -1}
 	var start, dnsStart, connStart, tlsStart time.Time
@@ -261,6 +289,9 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 				res.RemoteAddr = i.Conn.RemoteAddr().String()
 			}
 			rt.addrs = append(rt.addrs, res.RemoteAddr)
+			if res.RemoteAddr != "" {
+				reach.use(res.RemoteAddr)
+			}
 		},
 		GotFirstResponseByte: func() { res.TTFB = time.Since(start) },
 	}
@@ -295,9 +326,12 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 		// The way to the failure is worth knowing, a redirect loop above all.
 		res.Hops = rt.hops
 		res.Redirects = len(rt.hops)
-		return res, cleanErr(err)
+		return res, refused(cleanErr(err))
 	}
 	defer resp.Body.Close()
+	if len(rt.addrs) > 0 {
+		res.Inside = !addrPublic(rt.addrs[0])
+	}
 
 	res.Status = resp.StatusCode
 	res.Proto = resp.Proto
@@ -338,7 +372,7 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 		if errors.Is(err, io.ErrUnexpectedEOF) {
 			res.LengthMismatch = true
 		}
-		return res, cleanErr(err)
+		return res, refused(cleanErr(err))
 	}
 	// Transparent gzip decoding makes ContentLength -1, so a mismatch can only
 	// be judged when the length is known.

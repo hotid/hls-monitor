@@ -2,9 +2,12 @@ package httpx
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -187,5 +190,76 @@ func TestHeadersStayOnTheirSite(t *testing.T) {
 	}
 	if len(got) != 4 {
 		t.Errorf("requests seen: %v", got)
+	}
+}
+
+func TestPublicAddresses(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"8.8.8.8": true, "195.191.5.207": true, "2a00:1450:4010:c0b::8a": true,
+		"127.0.0.1": false, "10.1.2.3": false, "172.16.0.1": false, "192.168.1.1": false,
+		"169.254.169.254": false, "100.64.0.1": false, "198.18.0.1": false, "0.0.0.0": false,
+		"::1": false, "fe80::1": false, "fd00::1": false, "::ffff:10.0.0.1": false, "224.0.0.1": false,
+	} {
+		if got := Public(netip.MustParseAddr(addr)); got != want {
+			t.Errorf("Public(%s) = %v, want %v", addr, got, want)
+		}
+	}
+}
+
+// What a request may connect to, connection by connection.
+func TestReachDecisions(t *testing.T) {
+	const pub, in = "195.191.5.207:443", "10.0.0.5:80"
+	for _, tc := range []struct {
+		name  string
+		mode  Reach
+		conns []string
+		want  []bool
+	}{
+		{"no restriction", ReachAny, []string{pub, in, in}, []bool{true, true, true}},
+		{"public only", ReachPublic, []string{pub, in}, []bool{true, false}},
+		{"public only, inside at once", ReachPublic, []string{in}, []bool{false}},
+		{"a public stream redirects inside", ReachFirstAny, []string{pub, pub, in}, []bool{true, true, false}},
+		{"a stream that is inside may stay there and leave", ReachFirstAny, []string{in, in, pub, in}, []bool{true, true, true, true}},
+	} {
+		st := &reachState{mode: tc.mode, cancel: func(error) {}}
+		for i, addr := range tc.conns {
+			got := st.allowed(addr)
+			if got != tc.want[i] {
+				t.Errorf("%s: connection %d to %s allowed = %v, want %v", tc.name, i+1, addr, got, tc.want[i])
+			}
+			if got {
+				st.use(addr)
+			}
+		}
+	}
+}
+
+func TestReachIsEnforced(t *testing.T) {
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		_, _ = w.Write([]byte("secret"))
+	}))
+	defer srv.Close()
+	c := New(Options{})
+	ctx := context.Background()
+
+	// The test server is on the loopback: not a public address.
+	resp, err := c.Get(ctx, Request{URL: srv.URL, Reach: ReachPublic})
+	if !errors.Is(err, ErrNotPublic) || hits.Load() != 0 || (resp != nil && len(resp.Body) > 0) {
+		t.Fatalf("a request that may only go to public addresses reached the loopback: err=%v hits=%d", err, hits.Load())
+	}
+	resp, err = c.Get(ctx, Request{URL: srv.URL, Reach: ReachFirstAny})
+	if err != nil || !resp.Inside || string(resp.Body) != "secret" {
+		t.Fatalf("the stream's own address may be inside: %v %+v", err, resp)
+	}
+	// The connection is kept by now; a request that may not have it does
+	// not get it from the pool either.
+	_, err = c.Get(ctx, Request{URL: srv.URL, Reach: ReachPublic})
+	if !errors.Is(err, ErrNotPublic) || hits.Load() != 1 {
+		t.Fatalf("a kept connection was given to a request that may not use it: err=%v hits=%d", err, hits.Load())
+	}
+	if resp, err = c.Get(ctx, Request{URL: srv.URL}); err != nil || resp.Status != 200 {
+		t.Fatalf("no restriction by default: %v", err)
 	}
 }

@@ -763,3 +763,32 @@ func TestOverloadedCheckerDoesNotBlameTheStream(t *testing.T) {
 		t.Errorf("Overloaded = %q", r.Overloaded)
 	}
 }
+
+// The policy of the process decides whether checks may go inside the
+// monitor's own network; the test origin is on the loopback.
+func TestPrivateNetworksPolicy(t *testing.T) {
+	t.Cleanup(func() { _ = SetPrivateNetworks("same") })
+	if err := SetPrivateNetworks("anything"); err == nil {
+		t.Error("an unknown policy must be refused")
+	}
+
+	// By default a stream that was pointed inside is followed inside.
+	f := newFixture(t, hlstest.Options{}, "/master.m3u8", LevelSegments)
+	wantClean(t, f.step(4))
+
+	// Under "deny" nothing inside is requested at all.
+	_ = SetPrivateNetworks("deny")
+	f = newFixture(t, hlstest.Options{}, "/master.m3u8", LevelSegments)
+	r := f.step(4)
+	p := wantProblem(t, r, ProbPlaylistUnreachable, SevCrit)
+	if !strings.Contains(p.Message, "not a public one") {
+		t.Errorf("the finding must say why: %q", p.Message)
+	}
+	if n := f.origin.Requests("/master.m3u8"); n != 0 {
+		t.Errorf("the origin was requested %d times", n)
+	}
+
+	_ = SetPrivateNetworks("allow")
+	f = newFixture(t, hlstest.Options{}, "/master.m3u8", LevelSegments)
+	wantClean(t, f.step(4))
+}

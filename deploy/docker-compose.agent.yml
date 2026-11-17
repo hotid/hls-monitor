@@ -28,6 +28,7 @@ services:
       HLSMON_ENROLL_TOKEN: ${HLSMON_ENROLL_TOKEN:-}
       HLSMON_LOG_LEVEL: ${HLSMON_LOG_LEVEL:-info}
       HLSMON_BODY_MEMORY_MB: ${HLSMON_BODY_MEMORY_MB:-}
+      HLSMON_PRIVATE_NETWORKS: ${HLSMON_PRIVATE_NETWORKS:-}
       HLSMON_QUEUE_MAX_MB: ${HLSMON_QUEUE_MAX_MB:-}
     volumes:
       - agent-data:/var/lib/hls-monitor

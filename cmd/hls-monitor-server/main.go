@@ -48,6 +48,7 @@ type config struct {
 	eventRetention                                 time.Duration
 	segmentKeep, segmentKeepProblems, journalMaxMB int
 	bodyMemoryMB                                   int
+	privateNetworks                                string
 	snapshotRetention                              time.Duration
 	incidentRetention                              time.Duration
 }
@@ -72,6 +73,7 @@ func parseConfig() config {
 	envflag.Int(fs, &c.segmentKeepProblems, "segment-keep-problems", "HLSMON_SEGMENT_KEEP_PROBLEMS", 500, "the same for segments that had problems")
 	envflag.Int(fs, &c.journalMaxMB, "journal-max-mb", "HLSMON_JOURNAL_MAX_MB", 512, "size in MiB the segment journal file cannot exceed")
 	envflag.Int(fs, &c.bodyMemoryMB, "body-memory-mb", "HLSMON_BODY_MEMORY_MB", probe.DefaultBodyMemory>>20, "MiB of segment bodies the local checks may hold in memory at once; downloads wait for room")
+	envflag.String(fs, &c.privateNetworks, "private-networks", "HLSMON_PRIVATE_NETWORKS", "same", "whether local checks may connect to addresses that are not public: same (only for streams whose own address is such), allow or deny")
 	envflag.Duration(fs, &c.eventRetention, "event-retention", "HLSMON_EVENT_RETENTION", 7*24*time.Hour, "how long closed informational incidents are kept")
 	envflag.Duration(fs, &c.snapshotRetention, "snapshot-retention", "HLSMON_SNAPSHOT_RETENTION", 7*24*time.Hour, "how long playlist snapshots are kept")
 	envflag.Duration(fs, &c.incidentRetention, "incident-retention", "HLSMON_INCIDENT_RETENTION", 90*24*time.Hour, "how long closed incidents are kept")
@@ -131,6 +133,9 @@ func run(cfg config, log *slog.Logger) error {
 	bg, cancelBG := context.WithCancel(context.Background())
 	defer cancelBG()
 	probe.SetBodyMemory(int64(cfg.bodyMemoryMB) << 20)
+	if err := probe.SetPrivateNetworks(cfg.privateNetworks); err != nil {
+		return err
+	}
 	local := runner.New(func(ctx context.Context, r *probe.Result) {
 		// The request context of a check is gone when the runner stops; a
 		// result that was produced is still worth storing.

@@ -47,6 +47,9 @@ type Checker struct {
 	variantKeys []string
 	vars        map[string]*variantState
 	interval    time.Duration
+	// inside tells that the stream's own address is not a public one: it
+	// was pointed inside on purpose, and so may its playlists.
+	inside bool
 	// maxInterval is the longest pause that still sees every segment of the
 	// shortest live playlist window; zero until a live playlist was read.
 	maxInterval time.Duration
@@ -103,6 +106,22 @@ func (c *Checker) get(ctx context.Context, rq httpx.Request, timeout time.Durati
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	rq.Headers, rq.HeadersFor = c.t.Headers, c.t.URL
+	// The request for the stream's own address comes marked ReachFirstAny.
+	entry := rq.Reach == httpx.ReachFirstAny
+	switch PrivateNetworks(privateNetworks.Load()) {
+	case PrivateAllow:
+		rq.Reach = httpx.ReachAny
+	case PrivateDeny:
+		rq.Reach = httpx.ReachPublic
+	default:
+		switch {
+		case entry:
+		case c.inside:
+			rq.Reach = httpx.ReachAny
+		default:
+			rq.Reach = httpx.ReachPublic
+		}
+	}
 	return c.hc.Get(ctx, rq)
 }
 
@@ -111,7 +130,10 @@ func (c *Checker) Run(ctx context.Context) *Result {
 	start := c.now()
 	cy := newCycle(c.t.ID, start)
 
-	resp, err := c.get(ctx, httpx.Request{URL: c.t.URL, MaxBody: playlistMaxBody}, c.timeout())
+	resp, err := c.get(ctx, httpx.Request{URL: c.t.URL, MaxBody: playlistMaxBody, Reach: httpx.ReachFirstAny}, c.timeout())
+	if resp != nil && resp.RemoteAddr != "" {
+		c.inside = resp.Inside
+	}
 
 	var pl m3u8.Playlist
 	var typ m3u8.ListType

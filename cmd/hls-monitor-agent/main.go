@@ -33,6 +33,8 @@ func main() {
 	envflag.Int(fs, &queueMaxMB, "queue-max-mb", "HLSMON_QUEUE_MAX_MB", agent.DefaultQueueBytes>>20, "MiB of disk the undelivered results may take; beyond it the oldest are dropped")
 	var bodyMemoryMB int
 	envflag.Int(fs, &bodyMemoryMB, "body-memory-mb", "HLSMON_BODY_MEMORY_MB", probe.DefaultBodyMemory>>20, "MiB of segment bodies the checks may hold in memory at once; downloads wait for room")
+	var privateNetworks string
+	envflag.String(fs, &privateNetworks, "private-networks", "HLSMON_PRIVATE_NETWORKS", "same", "whether checks may connect to addresses that are not public: same (only for streams whose own address is such), allow or deny")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	_ = fs.Parse(os.Args[1:])
 	if *showVersion {
@@ -51,6 +53,10 @@ func main() {
 	defer stop()
 	log.Info("hls-monitor agent starting", "version", version, "server", serverURL)
 	probe.SetBodyMemory(int64(bodyMemoryMB) << 20)
+	if err := probe.SetPrivateNetworks(privateNetworks); err != nil {
+		log.Error("fatal", "error", err)
+		os.Exit(1)
+	}
 	err := agent.Run(ctx, agent.Options{QueueDir: queueDir, QueueBytes: int64(queueMaxMB) << 20, ServerURL: serverURL, EnrollToken: token, KeyFile: keyFile, Version: version, Log: log})
 	if err != nil {
 		log.Error("fatal", "error", err)
