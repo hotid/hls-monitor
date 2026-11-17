@@ -16,12 +16,18 @@ services:
   agent:
     image: ${HLSMON_IMAGE_PREFIX:-ghcr.io/hotid/}hls-monitor-agent:${HLSMON_VERSION:-latest}
     restart: unless-stopped
+    # Segment bodies are held in memory while they are checked. Their total
+    # is bounded by HLSMON_BODY_MEMORY_MB (1024 by default); parsing takes
+    # about as much again, hence the default limit. Raise both together.
+    mem_limit: ${HLSMON_MEMORY_LIMIT:-3g}
+    cpus: ${HLSMON_CPUS:-0}
     environment:
       # Required: the agent exits with an error when it is empty. Not
       # enforced here so that "down" and "logs" work without it.
       HLSMON_SERVER_URL: ${HLSMON_SERVER_URL:-}
       HLSMON_ENROLL_TOKEN: ${HLSMON_ENROLL_TOKEN:-}
       HLSMON_LOG_LEVEL: ${HLSMON_LOG_LEVEL:-info}
+      HLSMON_BODY_MEMORY_MB: ${HLSMON_BODY_MEMORY_MB:-}
     volumes:
       - agent-data:/var/lib/hls-monitor
 

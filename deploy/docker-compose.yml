@@ -19,6 +19,11 @@ services:
   server:
     image: ${HLSMON_IMAGE_PREFIX:-ghcr.io/hotid/}hls-monitor-server:${HLSMON_VERSION:-latest}
     restart: unless-stopped
+    # Segment bodies are held in memory while they are checked. Their total
+    # is bounded by HLSMON_BODY_MEMORY_MB (1024 by default); parsing takes
+    # about as much again, hence the default limit. Raise both together.
+    mem_limit: ${HLSMON_MEMORY_LIMIT:-3g}
+    cpus: ${HLSMON_CPUS:-0}
     depends_on:
       victoriametrics:
         condition: service_healthy
@@ -37,6 +42,7 @@ services:
       HLSMON_SEGMENT_KEEP_PROBLEMS: ${HLSMON_SEGMENT_KEEP_PROBLEMS:-}
       HLSMON_SEGMENT_RETENTION: ${HLSMON_SEGMENT_RETENTION:-}
       HLSMON_JOURNAL_MAX_MB: ${HLSMON_JOURNAL_MAX_MB:-}
+      HLSMON_BODY_MEMORY_MB: ${HLSMON_BODY_MEMORY_MB:-}
       HLSMON_SNAPSHOT_RETENTION: ${HLSMON_SNAPSHOT_RETENTION:-}
       HLSMON_INCIDENT_RETENTION: ${HLSMON_INCIDENT_RETENTION:-}
       HLSMON_EVENT_RETENTION: ${HLSMON_EVENT_RETENTION:-}

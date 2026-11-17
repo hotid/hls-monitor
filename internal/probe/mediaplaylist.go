@@ -80,6 +80,9 @@ type prevSegment struct {
 	// estimated is set when the ends were not measured but derived from the
 	// start timestamp and the playlist duration.
 	estimated bool
+	// lastCC holds the MPEG-TS continuity counter each PID ended with; nil
+	// unless the whole segment was read.
+	lastCC map[uint16]uint8
 }
 
 type plSegment struct {

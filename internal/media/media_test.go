@@ -1,6 +1,7 @@
 package media
 
 import (
+	"bytes"
 	"math"
 	"path"
 	"testing"
@@ -212,5 +213,75 @@ func TestRecoveryPointIsKeyframe(t *testing.T) {
 	}
 	if _, vcl, _ := scanNALs(join(aud, idr), false, false); vcl != 5 {
 		t.Errorf("IDR type = %d, want 5", vcl)
+	}
+}
+
+// tsPacket builds one transport packet with a payload on the given PID.
+func tsPacket(pid uint16, cc uint8, fill byte) []byte {
+	p := make([]byte, tsPacketSize)
+	p[0] = 0x47
+	p[1] = byte(pid >> 8 & 0x1f)
+	p[2] = byte(pid)
+	p[3] = 0x10 | cc&0x0f // payload only
+	for i := 4; i < len(p); i++ {
+		p[i] = fill
+	}
+	return p
+}
+
+func scanPackets(packets ...[]byte) *Info {
+	info := &Info{}
+	scanTSPackets(bytes.Join(packets, nil), info)
+	return info
+}
+
+// A packet may be repeated once, unchanged. A repeated counter with other
+// content, or a third copy, is a break.
+func TestTSRepeatedPackets(t *testing.T) {
+	a, b := tsPacket(256, 3, 0xaa), tsPacket(256, 4, 0xbb)
+	if n := scanPackets(a, a, b).CCErrors; n != 0 {
+		t.Errorf("one unchanged repeat: %d continuity errors, want 0", n)
+	}
+	if n := scanPackets(a, tsPacket(256, 3, 0xcc), b).CCErrors; n != 1 {
+		t.Errorf("same counter, different content: %d continuity errors, want 1", n)
+	}
+	if n := scanPackets(a, a, a, b).CCErrors; n != 1 {
+		t.Errorf("a packet sent three times: %d continuity errors, want 1", n)
+	}
+	if n := scanPackets(a, tsPacket(256, 6, 0xbb)).CCErrors; n != 1 {
+		t.Errorf("a skipped counter: %d continuity errors, want 1", n)
+	}
+}
+
+// The counters a segment begins and ends with are kept per PID.
+func TestTSEdgeCounters(t *testing.T) {
+	info := scanPackets(tsPacket(256, 14, 1), tsPacket(257, 2, 1), tsPacket(256, 15, 2), tsPacket(256, 0, 3))
+	if info.FirstCC[256] != 14 || info.LastCC[256] != 0 || info.FirstCC[257] != 2 || info.LastCC[257] != 2 || info.CCErrors != 0 {
+		t.Errorf("first %v, last %v, errors %d", info.FirstCC, info.LastCC, info.CCErrors)
+	}
+}
+
+func TestCountPictures(t *testing.T) {
+	nal := func(header ...byte) []byte { return append([]byte{0, 0, 1}, header...) }
+	join := func(parts ...[]byte) []byte { return bytes.Join(parts, []byte{0x55, 0x55}) }
+	aud, sps, slice, more := nal(0x09, 0xf0), nal(0x67, 0x42), nal(0x41, 0x9a), nal(0x41, 0x1a)
+	for name, c := range map[string]struct {
+		data []byte
+		want int
+	}{
+		"one picture with a delimiter":        {join(aud, sps, slice), 1},
+		"two pictures, each with delimiter":   {join(aud, slice, aud, slice), 2},
+		"no delimiters, two first slices":     {join(slice, slice), 2},
+		"one picture of two slices":           {join(aud, slice, more), 1},
+		"nothing recognisable is one picture": {[]byte{1, 2, 3}, 1},
+	} {
+		if got := countPictures(c.data, false); got != c.want {
+			t.Errorf("%s: %d, want %d", name, got, c.want)
+		}
+	}
+	// HEVC: delimiter is type 35, a slice starts a picture when the first bit after the two header bytes is set.
+	hevc := join(nal(35<<1, 1), nal(1<<1, 1, 0x80), nal(1<<1, 1, 0x00), nal(35<<1, 1), nal(1<<1, 1, 0x80))
+	if got := countPictures(hevc, true); got != 2 {
+		t.Errorf("hevc: %d, want 2", got)
 	}
 }

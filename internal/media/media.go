@@ -86,6 +86,12 @@ type Info struct {
 	HasPMT          bool `json:"has_pmt,omitempty"`
 	Scrambled       bool `json:"scrambled,omitempty"`
 
+	// FirstCC and LastCC are the continuity counters of the first and the
+	// last packet with a payload on every PID: what the joints with the
+	// neighbouring segments are checked by.
+	FirstCC map[uint16]uint8 `json:"-"`
+	LastCC  map[uint16]uint8 `json:"-"`
+
 	// TimeWrap is the period in seconds after which timestamps wrap around
 	// (2^33 / 90000 for MPEG-TS), zero when they do not wrap.
 	TimeWrap float64 `json:"time_wrap,omitempty"`

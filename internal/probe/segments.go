@@ -42,8 +42,14 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 	header := c.t.Level == LevelHeader
 	agg := &segAgg{minBps: math.MaxFloat64, partial: header}
 	startupDone := false
+	// held is what the body of the segment being looked at takes of the
+	// memory budget; it is given back when the next one is started.
+	var held int64
+	defer func() { bodies.release(held) }()
 
 	for _, s := range selected {
+		bodies.release(held)
+		held = 0
 		if ctx.Err() != nil {
 			return
 		}
@@ -113,7 +119,16 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 				rq.RangeLength = min(s.seg.Limit, headerBytes)
 			}
 		}
+		if !header {
+			if held = bodies.acquire(ctx, expectedBody(v, s)); held == 0 {
+				return // the cycle was cancelled while waiting for memory
+			}
+		}
 		resp, err := c.get(ctx, rq, timeout)
+		if resp != nil && held > 0 && resp.Size > held {
+			bodies.grow(resp.Size - held)
+			held = resp.Size
+		}
 		agg.checked++
 		size := int64(0)
 		if resp != nil {
@@ -358,7 +373,17 @@ func (c *Checker) judgeMedia(v Variant, s plSegment, info *media.Info, st *varia
 	}
 
 	// Continuity with the previous segment of this variant.
+	if whole && info.Container == media.ContainerTS {
+		cur.lastCC = info.LastCC
+	}
 	if p := st.prev; p.ok && p.seq+1 == s.seq && !s.seg.Discontinuity {
+		// Within a segment the parser counts the breaks; the joint between
+		// two segments is checked here. Without a discontinuity tag the
+		// counters must run on (RFC 8216, section 3).
+		if n, pid, was, now := ccBreaks(p.lastCC, info.FirstCC); n > 0 {
+			agg.ccErrors += n
+			flag(ProbTSContinuity, SevWarn, "segment %d: continuity counters break at the joint with the previous segment on %d PIDs (PID %d: %d after %d)", s.seq, n, pid, now, was)
+		}
 		check := func(has bool, start, prevEnd float64, what string) {
 			if !has {
 				return
@@ -465,4 +490,22 @@ func (c *Checker) emitSegmentMetrics(cy *cycle, v Variant, a *segAgg) {
 
 func ms(d time.Duration) float64 {
 	return math.Round(d.Seconds()*1e6) / 1e3
+}
+
+// ccBreaks compares the continuity counters a segment ended with and the
+// ones the next begins with. It returns how many PIDs do not continue, and
+// one of them (the lowest) with its two counters. A PID present on one side
+// only says nothing.
+func ccBreaks(last, first map[uint16]uint8) (n int, pid uint16, was, now uint8) {
+	for p, f := range first {
+		l, ok := last[p]
+		if !ok || f == (l+1)&0x0f {
+			continue
+		}
+		if n == 0 || p < pid {
+			pid, was, now = p, l, f
+		}
+		n++
+	}
+	return n, pid, was, now
 }

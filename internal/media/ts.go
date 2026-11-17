@@ -40,10 +40,14 @@ func analyzeTS(data []byte, info *Info) {
 // scanTSPackets walks raw packets checking sync bytes, continuity counters
 // and error flags. It returns the offset of the first valid packet.
 func scanTSPackets(data []byte, info *Info) int {
-	var lastCC [8192]int8
-	for i := range lastCC {
-		lastCC[i] = -1
+	type pidState struct {
+		cc  uint8
+		pkt []byte // the last packet with a payload
+		// repeated is set once that packet has been sent again.
+		repeated bool
 	}
+	pids := map[uint16]*pidState{}
+	info.FirstCC, info.LastCC = map[uint16]uint8{}, map[uint16]uint8{}
 	first := -1
 	off := 0
 	for off+tsPacketSize <= len(data) {
@@ -74,21 +78,51 @@ func scanTSPackets(data []byte, info *Info) int {
 			info.Scrambled = true
 		}
 		afc := (p[3] >> 4) & 3
-		cc := int8(p[3] & 0x0f)
-		discontinuity := afc&2 != 0 && p[4] > 0 && p[5]&0x80 != 0
-		if afc&1 != 0 { // packet carries payload: counter must advance
-			prev := lastCC[pid]
-			if prev >= 0 && !discontinuity && cc != (prev+1)&0x0f && cc != prev {
-				info.CCErrors++
-			}
-			lastCC[pid] = cc
+		if afc&1 == 0 {
+			continue // no payload: the counter does not advance
 		}
+		cc := p[3] & 0x0f
+		discontinuity := afc&2 != 0 && p[4] > 0 && p[5]&0x80 != 0
+		st := pids[pid]
+		if st == nil {
+			pids[pid] = &pidState{cc: cc, pkt: p}
+			info.FirstCC[pid] = cc
+			info.LastCC[pid] = cc
+			continue
+		}
+		switch {
+		case discontinuity:
+			st.repeated = false
+		case cc == (st.cc+1)&0x0f:
+			st.repeated = false
+		case cc == st.cc && !st.repeated && sameTSPacket(st.pkt, p):
+			// A packet may be sent twice, unchanged, and no more than twice.
+			st.repeated = true
+		default:
+			info.CCErrors++
+			st.repeated = false
+		}
+		st.cc, st.pkt = cc, p
+		info.LastCC[pid] = cc
 	}
 	if off < len(data) {
 		// Trailing bytes that do not form a whole packet.
 		info.SyncErrors++
 	}
 	return first
+}
+
+// sameTSPacket reports whether b repeats a: every byte equal except the
+// program clock reference, which a repeated packet may carry updated.
+func sameTSPacket(a, b []byte) bool {
+	if bytes.Equal(a, b) {
+		return true
+	}
+	hasPCR := func(p []byte) bool { return (p[3]>>4)&2 != 0 && p[4] >= 7 && p[5]&0x10 != 0 }
+	if !hasPCR(a) || !hasPCR(b) {
+		return false
+	}
+	return bytes.Equal(a[:6], b[:6]) && bytes.Equal(a[12:], b[12:])
 }
 
 type tsTrack struct {
@@ -100,7 +134,12 @@ type tsTrack struct {
 	minPTS   int64
 	maxPTS   int64
 
-	pesCount      int
+	pesCount int
+	// pictures counts coded pictures; a PES packet usually carries one,
+	// but nothing in MPEG-TS requires that. lastPictures is how many the
+	// last PES packet carried.
+	pictures      int
+	lastPictures  int
 	keyPTS        []int64
 	spsDone       bool
 	adtsFrames    int
@@ -237,6 +276,11 @@ func handlePES(t *tsTrack, d *astits.DemuxerData) {
 				applyHEVCSPS(&t.Track, sps)
 			}
 		}
+		t.lastPictures = 1
+		if t.Codec == "h264" || t.Codec == "hevc" {
+			t.lastPictures = countPictures(d.PES.Data, t.Codec == "hevc")
+		}
+		t.pictures += t.lastPictures
 		if t.pesCount == 1 {
 			t.FirstKeyframe = key
 		}
@@ -274,12 +318,17 @@ func finalizeTSTrack(t *tsTrack) {
 		t.Frames = t.adtsFrames
 		end = t.lastPESPTS + int64(float64(t.lastPESFrames)*1024*tsClock/float64(t.SampleRate))
 		end = max(end, t.maxPTS)
+	case t.Kind == KindVideo && t.pictures > t.lastPictures && span > 0:
+		// Timestamps come one per PES packet, pictures may come several:
+		// the span covers every picture but those of the last packet.
+		// For field-coded interlaced video this is the field rate.
+		t.Frames = t.pictures
+		frameDur := float64(span) / float64(t.pictures-t.lastPictures)
+		end = t.maxPTS + int64(frameDur*float64(t.lastPictures))
+		t.FPS = roundTo(tsClock/frameDur, 3)
 	case t.pesCount > 1 && span > 0:
 		frameDur := float64(span) / float64(t.pesCount-1)
 		end = t.maxPTS + int64(frameDur)
-		if t.Kind == KindVideo {
-			t.FPS = roundTo(tsClock/frameDur, 3)
-		}
 	}
 	t.StartPTS = float64(t.minPTS) / tsClock
 	t.EndPTS = float64(end) / tsClock
@@ -341,6 +390,45 @@ func scanNALs(data []byte, isHEVC, wantSPS bool) (sps []byte, vclType int, recov
 		}
 		pos = nal
 	}
+}
+
+// countPictures counts the coded pictures in the payload of one PES
+// packet: access unit delimiters when the stream has them, otherwise
+// slices that begin a picture. It never returns less than one.
+func countPictures(data []byte, isHEVC bool) int {
+	startCode := []byte{0, 0, 1}
+	delimiters, firstSlices := 0, 0
+	pos := 0
+	for {
+		i := bytes.Index(data[pos:], startCode)
+		if i < 0 {
+			break
+		}
+		nal := pos + i + 3
+		pos = nal
+		if isHEVC {
+			if nal+2 >= len(data) {
+				break
+			}
+			switch typ := int(data[nal]>>1) & 0x3f; {
+			case typ == 35:
+				delimiters++
+			case typ <= 31 && data[nal+2]&0x80 != 0: // first_slice_segment_in_pic_flag
+				firstSlices++
+			}
+			continue
+		}
+		if nal+1 >= len(data) {
+			break
+		}
+		switch typ := int(data[nal]) & 0x1f; {
+		case typ == 9:
+			delimiters++
+		case typ >= 1 && typ <= 5 && data[nal+1]&0x80 != 0: // first_mb_in_slice is 0
+			firstSlices++
+		}
+	}
+	return max(delimiters, firstSlices, 1)
 }
 
 func applyH264SPS(t *Track, nalu []byte) {

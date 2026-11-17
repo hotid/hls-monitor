@@ -641,3 +641,50 @@ func TestVariantEdgesApart(t *testing.T) {
 		}
 	}
 }
+
+// Continuity counters must run on from one segment into the next.
+func TestContinuityAcrossSegments(t *testing.T) {
+	last := map[uint16]uint8{256: 15, 257: 4, 300: 9}
+	if n, _, _, _ := ccBreaks(last, map[uint16]uint8{256: 0, 257: 5, 400: 7}); n != 0 {
+		t.Errorf("counters that continue (with wrap) and a new PID: %d breaks, want 0", n)
+	}
+	n, pid, was, now := ccBreaks(last, map[uint16]uint8{256: 0, 257: 0, 300: 9})
+	if n != 2 || pid != 257 || was != 4 || now != 0 {
+		t.Errorf("breaks = %d, reported PID %d: %d after %d; want 2, PID 257: 0 after 4", n, pid, now, was)
+	}
+	if n, _, _, _ := ccBreaks(nil, map[uint16]uint8{256: 3}); n != 0 {
+		t.Errorf("no previous segment: %d breaks, want 0", n)
+	}
+}
+
+// The memory budget makes a download wait for room instead of piling up.
+func TestBodyBudget(t *testing.T) {
+	b := newBudget(100)
+	ctx := context.Background()
+	if got := b.acquire(ctx, 60); got != 60 {
+		t.Fatalf("first reservation = %d, want 60", got)
+	}
+	done := make(chan int64)
+	go func() { done <- b.acquire(ctx, 60) }()
+	select {
+	case <-done:
+		t.Fatal("a reservation that does not fit must wait")
+	case <-time.After(50 * time.Millisecond):
+	}
+	b.release(60)
+	if got := <-done; got != 60 {
+		t.Fatalf("after room was given back the reservation = %d, want 60", got)
+	}
+	b.release(60)
+
+	// Larger than the whole budget: let through alone rather than never.
+	if got := b.acquire(ctx, 500); got != 500 {
+		t.Fatalf("an oversized reservation with nothing held = %d, want 500", got)
+	}
+	// Cancelled while waiting.
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if got := b.acquire(cancelled, 10); got != 0 {
+		t.Fatalf("a cancelled wait reserved %d, want 0", got)
+	}
+}

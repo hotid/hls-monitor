@@ -54,7 +54,7 @@ docker compose -f deploy/docker-compose.yml logs server | grep password
 
 Save it or change it at once: the line is gone from the log as soon as the container is recreated, for example on an update.
 
-Compose starts two containers: the server and VictoriaMetrics (the time series storage, not published outside).
+Compose starts two containers: the server and VictoriaMetrics (the time series storage, not published outside). The server container is limited to 3 GB of memory (`HLSMON_MEMORY_LIMIT`); `HLSMON_CPUS` limits its CPU cores, by default it does not.
 
 To update, change `HLSMON_VERSION` (or keep `latest`) and run `docker compose -f deploy/docker-compose.yml pull && docker compose -f deploy/docker-compose.yml up -d`. To build the images from source instead, see [Development](#development).
 
@@ -75,7 +75,7 @@ What is collected:
 - **Multivariant playlist:** the set of variants and its changes, declared bitrate, resolution, codecs; audio and subtitle renditions are checked as separate playlists.
 - **Media playlist:** progress of `MEDIA-SEQUENCE` (gaps, rollbacks, replaced segments), update interval and stalling, window depth, durations against `TARGETDURATION`, discontinuities, lag behind real time and jumps by `PROGRAM-DATE-TIME`, availability of encryption keys and the initialization section, ad markers, video variants drifting apart in time (by `PROGRAM-DATE-TIME`; media sequence numbers are not compared, variants may count them independently).
 - **Segment:** availability, size, download time relative to duration, actual bitrate against declared.
-- **Container (MPEG-TS, fMP4):** sync loss and continuity counter errors, presence of PAT/PMT, track composition, duration by timestamps against `EXTINF`, timestamp continuity between segments, audio/video offset, starting with a keyframe, GOP length, resolution, profile, frame rate.
+- **Container (MPEG-TS, fMP4):** sync loss and continuity counter errors, inside a segment and at the joint between two, presence of PAT/PMT, track composition, duration by timestamps against `EXTINF`, timestamp continuity between segments, audio/video offset, starting with a keyframe, GOP length, resolution, profile, frame rate.
 - **Player model:** the player buffer of a player running three segments behind the live edge, and the moments when it would stall for buffering.
 
 The interval set for a stream is an upper bound: if the playlist window is shorter, the stream is polled more often so that no segments are missed between checks.
@@ -136,6 +136,7 @@ Every setting is given as a flag or an environment variable.
 | `HLSMON_SEGMENT_KEEP_PROBLEMS` | `-segment-keep-problems` | `500` | The same for segments with problems; they are counted separately |
 | `HLSMON_SEGMENT_RETENTION` | `-segment-retention` | `48h` | Maximum age of a segment journal entry |
 | `HLSMON_JOURNAL_MAX_MB` | `-journal-max-mb` | `512` | Size in MiB that the journal file cannot exceed |
+| `HLSMON_BODY_MEMORY_MB` | `-body-memory-mb` | `1024` | MiB of segment bodies all local checks together may hold in memory; a download waits when there is no room. The agent has the same setting |
 | `HLSMON_SNAPSHOT_RETENTION` | `-snapshot-retention` | `168h` | Retention of playlist snapshots |
 | `HLSMON_INCIDENT_RETENTION` | `-incident-retention` | `2160h` | Retention of closed incidents |
 | `HLSMON_EVENT_RETENTION` | `-event-retention` | `168h` | Retention of closed events (informational incidents) |

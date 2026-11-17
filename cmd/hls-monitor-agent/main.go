@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/hotid/hls-monitor/internal/probe"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -26,6 +27,8 @@ func main() {
 	envflag.String(fs, &token, "enroll-token", "HLSMON_ENROLL_TOKEN", "", "one-time enrollment token; needed only on the first start")
 	envflag.String(fs, &keyFile, "key-file", "HLSMON_KEY_FILE", "data/agent.key", "file where the agent key is kept")
 	envflag.String(fs, &logLevel, "log-level", "HLSMON_LOG_LEVEL", "info", "debug, info, warn or error")
+	var bodyMemoryMB int
+	envflag.Int(fs, &bodyMemoryMB, "body-memory-mb", "HLSMON_BODY_MEMORY_MB", probe.DefaultBodyMemory>>20, "MiB of segment bodies the checks may hold in memory at once; downloads wait for room")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	_ = fs.Parse(os.Args[1:])
 	if *showVersion {
@@ -43,6 +46,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	log.Info("hls-monitor agent starting", "version", version, "server", serverURL)
+	probe.SetBodyMemory(int64(bodyMemoryMB) << 20)
 	err := agent.Run(ctx, agent.Options{ServerURL: serverURL, EnrollToken: token, KeyFile: keyFile, Version: version, Log: log})
 	if err != nil {
 		log.Error("fatal", "error", err)
