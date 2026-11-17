@@ -12,6 +12,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -272,5 +275,96 @@ func TestAgentRejected(t *testing.T) {
 	}
 	if err := Run(ctx, Options{ServerURL: "monitor.example.com", KeyFile: stale, Log: quiet}); err == nil {
 		t.Error("a server URL without a scheme must be an error")
+	}
+}
+
+// A stream is watched through an agent: the viewer asks the server, the
+// server the agent, the agent the origin. The agent accepts no
+// connections; it takes this work as answers to its own requests.
+func TestWatchThroughAgent(t *testing.T) {
+	e := newEnv(t)
+	var en enrollment
+	e.call(http.StatusCreated, "POST", "/api/v1/agents", map[string]string{"name": "edge-1"}, &en)
+	e.call(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{
+		"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "header", "agent_ids": []int64{en.Agent.ID},
+	}, nil)
+
+	type watch struct {
+		Vantages []struct {
+			ID        int64  `json:"id"`
+			Local     bool   `json:"local"`
+			Available bool   `json:"available"`
+			Why       string `json:"why"`
+		} `json:"vantages"`
+		Vantage int64 `json:"vantage"`
+		Sources []struct {
+			URL string `json:"url"`
+		} `json:"sources"`
+	}
+	path := "/api/v1/streams/1/watch?agent=" + strconv.FormatInt(en.Agent.ID, 10)
+	var w watch
+	e.call(http.StatusOK, "GET", path, nil, &w)
+	if len(w.Vantages) != 2 || !w.Vantages[0].Local || w.Vantages[1].Available || w.Vantages[1].Why != "offline" || w.Vantage != store.LocalAgentID {
+		t.Fatalf("before the agent is connected: %+v", w)
+	}
+
+	e.start(en.Token, filepath.Join(t.TempDir(), "agent.key"))
+	waitFor(t, "the agent to offer itself", func() bool {
+		e.call(http.StatusOK, "GET", path, nil, &w)
+		return w.Vantage == en.Agent.ID && w.Vantages[1].Available
+	})
+
+	get := func(p string) (int, []byte, http.Header) {
+		t.Helper()
+		resp, err := e.admin.Get(e.server.URL + p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, b, resp.Header
+	}
+	first := func(playlist []byte) string {
+		for _, line := range strings.Split(string(playlist), "\n") {
+			if line != "" && !strings.HasPrefix(line, "#") {
+				return line
+			}
+		}
+		t.Fatalf("no address in\n%s", playlist)
+		return ""
+	}
+	code, master, _ := get(w.Sources[0].URL)
+	if code != http.StatusOK || !bytes.HasPrefix(master, []byte("#EXTM3U")) {
+		t.Fatalf("master through the agent: %d %s", code, master)
+	}
+	code, media, _ := get("/api/v1/play/" + first(master))
+	if code != http.StatusOK || !bytes.Contains(media, []byte("#EXTINF")) {
+		t.Fatalf("media playlist through the agent: %d %s", code, media)
+	}
+	code, seg, hdr := get("/api/v1/play/" + first(media))
+	want, _ := http.Get(e.origin.URL + "/v0/seg-0.ts")
+	direct, _ := io.ReadAll(want.Body)
+	want.Body.Close()
+	if code != http.StatusOK || len(seg) == 0 || seg[0] != 0x47 || len(seg) != len(direct) {
+		t.Fatalf("segment through the agent: %d, %d bytes, the origin serves %d", code, len(seg), len(direct))
+	}
+	if !strings.HasPrefix(hdr.Get("X-Upstream"), "127.0.0.1:") {
+		t.Errorf("X-Upstream = %q", hdr.Get("X-Upstream"))
+	}
+	// Several at once: a player asks for a playlist and segments together.
+	var wg sync.WaitGroup
+	for range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if code, b, _ := get("/api/v1/play/" + first(media)); code != http.StatusOK || len(b) != len(direct) {
+				t.Errorf("a concurrent fetch: %d, %d bytes", code, len(b))
+			}
+		}()
+	}
+	wg.Wait()
+	// What the origin does not have is its answer, passed on.
+	if code, _, _ := get("/api/v1/play/" + first(master) + "x"); code != http.StatusForbidden {
+		t.Errorf("a damaged token: %d", code)
 	}
 }

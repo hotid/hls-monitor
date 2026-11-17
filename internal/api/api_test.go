@@ -817,8 +817,12 @@ func TestWatchThroughTheServer(t *testing.T) {
 	admin.want(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "header", "interval_sec": 1}, nil)
 	e.client().want(http.StatusUnauthorized, "GET", "/api/v1/streams/1/watch", nil, nil)
 
-	var sources []watchSource
-	admin.want(http.StatusOK, "GET", "/api/v1/streams/1/watch", nil, &sources)
+	var watch watchResponse
+	admin.want(http.StatusOK, "GET", "/api/v1/streams/1/watch", nil, &watch)
+	sources := watch.Sources
+	if len(watch.Vantages) != 1 || !watch.Vantages[0].Local || !watch.Vantages[0].Available || watch.Vantage != store.LocalAgentID {
+		t.Fatalf("vantages = %+v", watch)
+	}
 	if len(sources) != 1 || sources[0].Kind != "configured" || !strings.HasPrefix(sources[0].URL, "/api/v1/play/") {
 		t.Fatalf("sources = %+v", sources)
 	}
@@ -899,9 +903,16 @@ func TestWatchThroughTheServer(t *testing.T) {
 
 	// Once the stream has been checked, the server it was served from is known.
 	waitFor(t, "the stream to be checked", func() bool {
-		admin.want(http.StatusOK, "GET", "/api/v1/streams/1/watch", nil, &sources)
 		return e.srv.entryFinalURL(context.Background(), 1) != nil
 	})
+
+	// An agent that is not asking for such work: the viewer is told so,
+	// and soon.
+	e.srv.fetchHandOver = 100 * time.Millisecond
+	idle := e.srv.signPlay(playToken{URL: e.origin.URL + "/master.m3u8", Stream: 1, Agent: 7, Expires: time.Now().Add(time.Minute).Unix(), Entry: true})
+	if code, body, _ := get("/api/v1/play/" + idle); code != http.StatusBadGateway || !strings.Contains(body, "not taking requests") {
+		t.Errorf("an agent that does not listen: %d %s", code, body)
+	}
 }
 
 func TestRewritePlaylist(t *testing.T) {

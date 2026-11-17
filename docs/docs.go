@@ -99,6 +99,86 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/agent/v1/fetch": {
+            "get": {
+                "description": "Held for up to 25 seconds; answers 204 when there was nothing to do. An agent keeps several such requests open.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent"
+                ],
+                "summary": "Something for the agent to fetch",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer agent key",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.FetchRequest"
+                        }
+                    },
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/agent/v1/fetch/{id}": {
+            "post": {
+                "description": "The body is the body that was fetched; the X-Fetch-Result header is base64 of the JSON of a FetchResult.",
+                "tags": [
+                    "agent"
+                ],
+                "summary": "What the agent fetched",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer agent key",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "ID of the fetch request",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/agent/v1/results": {
             "post": {
                 "description": "The body may be gzip-compressed (Content-Encoding: gzip). Results for streams not assigned to the agent are rejected.",
@@ -1528,16 +1608,19 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Watch through this agent: the browser asks the server, the server the agent, the agent the origin (default: the server itself)",
+                        "name": "agent",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/internal_api.watchSource"
-                            }
+                            "$ref": "#/definitions/internal_api.watchResponse"
                         }
                     },
                     "404": {
@@ -2000,6 +2083,47 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_hotid_hls-monitor_internal_agentproto.FetchRequest": {
+            "type": "object",
+            "properties": {
+                "entry": {
+                    "description": "Entry marks the stream's own address; Inside tells that it was not\na public one. The agent applies its own policy on private networks.",
+                    "type": "boolean"
+                },
+                "headers": {
+                    "description": "Headers are sent only to the site of HeadersFor, the stream's own\naddress.",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "headers_for": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "insecure": {
+                    "type": "boolean"
+                },
+                "inside": {
+                    "type": "boolean"
+                },
+                "max_body": {
+                    "type": "integer"
+                },
+                "range_length": {
+                    "type": "integer"
+                },
+                "range_offset": {
+                    "description": "RangeLength above zero asks for that many bytes from RangeOffset.",
+                    "type": "integer"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_hotid_hls-monitor_internal_agentproto.ResultsRequest": {
             "type": "object",
             "properties": {
@@ -2040,6 +2164,10 @@ const docTemplate = `{
                 },
                 "cpu_limit": {
                     "type": "number"
+                },
+                "fetches": {
+                    "description": "Fetches tells that the agent takes requests to fetch something for\nthe server (see FetchRequest); older agents do not.",
+                    "type": "boolean"
                 },
                 "memory_bytes": {
                     "type": "integer"
@@ -3944,6 +4072,27 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.watchResponse": {
+            "type": "object",
+            "properties": {
+                "sources": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.watchSource"
+                    }
+                },
+                "vantage": {
+                    "description": "Vantage is the place the sources below are for.",
+                    "type": "integer"
+                },
+                "vantages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.watchVantage"
+                    }
+                }
+            }
+        },
         "internal_api.watchSource": {
             "type": "object",
             "properties": {
@@ -3972,6 +4121,28 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.watchVantage": {
+            "type": "object",
+            "properties": {
+                "available": {
+                    "description": "Available tells that it can be used now; otherwise Why is\n\"offline\" or \"too_old\" (an agent that does not take such requests).",
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "local": {
+                    "description": "Local is the server itself.",
+                    "type": "boolean"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "why": {
                     "type": "string"
                 }
             }

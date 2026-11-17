@@ -65,9 +65,12 @@ type Server struct {
 
 	// For watching streams through the server: the key that signs the
 	// addresses it hands out, and the clients that fetch what they name.
-	playKey      []byte
-	playSecure   *httpx.Client
-	playInsecure *httpx.Client
+	relays        relays
+	fetchPoll     time.Duration
+	fetchHandOver time.Duration
+	playKey       []byte
+	playSecure    *httpx.Client
+	playInsecure  *httpx.Client
 
 	// reports holds what each remote agent last told about itself.
 	reportsMu sync.Mutex
@@ -91,6 +94,7 @@ func New(cfg Config, st *store.Store, mx *metrics.Client, ing *ingest.Ingester, 
 	}
 	s := &Server{cfg: cfg, st: st, mx: mx, ing: ing, local: local, log: log, now: time.Now, logins: newLoginLimiter(), diagnoses: make(chan struct{}, maxDiagnoses), reports: map[int64]agentReport{}}
 
+	s.fetchPoll, s.fetchHandOver = fetchPoll, fetchHandOver
 	s.playKey = make([]byte, 32)
 	_, _ = rand.Read(s.playKey)
 	s.playSecure = httpx.New(httpx.Options{UserAgent: "hls-monitor/" + cfg.Version})
@@ -165,6 +169,8 @@ func (s *Server) routes(ui http.Handler) {
 	agAuth := ag.Group("", s.requireAgent)
 	agAuth.GET("/config", s.agentConfig)
 	agAuth.POST("/results", s.agentResults)
+	agAuth.GET("/fetch", s.agentFetchPoll)
+	agAuth.POST("/fetch/:id", s.agentFetchResult)
 
 	ext := r.Group("/api/ext/v1", noStore, s.requireAPIToken)
 	ext.GET("/discovery/streams", s.extDiscoverStreams)

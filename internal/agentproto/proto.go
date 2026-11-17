@@ -37,6 +37,53 @@ type Status struct {
 	CPUCores    float64 `json:"cpu_cores"`
 	CPULimit    float64 `json:"cpu_limit"`
 	MemoryBytes int64   `json:"memory_bytes"`
+	// Fetches tells that the agent takes requests to fetch something for
+	// the server (see FetchRequest); older agents do not.
+	Fetches bool `json:"fetches,omitempty"`
+}
+
+// An agent accepts no connections, so when the server wants something
+// fetched from where the agent stands — a stream watched through it — the
+// agent asks for such work: it keeps a few requests to the server open,
+// each answered with a FetchRequest when there is one, and posts what it
+// got back. HeaderFetchResult carries a FetchResult as base64 of its JSON;
+// the body of that request is the body that was fetched.
+const HeaderFetchResult = "X-Fetch-Result"
+
+// FetchRequest is one address for the agent to fetch.
+type FetchRequest struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+	// Headers are sent only to the site of HeadersFor, the stream's own
+	// address.
+	Headers    map[string]string `json:"headers,omitempty"`
+	HeadersFor string            `json:"headers_for,omitempty"`
+	Insecure   bool              `json:"insecure,omitempty"`
+	// Entry marks the stream's own address; Inside tells that it was not
+	// a public one. The agent applies its own policy on private networks.
+	Entry  bool `json:"entry,omitempty"`
+	Inside bool `json:"inside,omitempty"`
+	// RangeLength above zero asks for that many bytes from RangeOffset.
+	RangeOffset int64 `json:"range_offset,omitempty"`
+	RangeLength int64 `json:"range_length,omitempty"`
+	MaxBody     int64 `json:"max_body"`
+}
+
+// FetchResult is what came of a FetchRequest.
+type FetchResult struct {
+	// Status is the HTTP status, zero when there was no answer; Error
+	// says why, or what broke the answer off.
+	Status       int    `json:"status"`
+	Error        string `json:"error,omitempty"`
+	ContentType  string `json:"content_type,omitempty"`
+	ContentRange string `json:"content_range,omitempty"`
+	AcceptRanges string `json:"accept_ranges,omitempty"`
+	// FinalURL is the address after redirects, RemoteAddr the server
+	// that answered, Inside whether the first connection went to an
+	// address that is not public.
+	FinalURL   string `json:"final_url,omitempty"`
+	RemoteAddr string `json:"remote_addr,omitempty"`
+	Inside     bool   `json:"inside,omitempty"`
 }
 
 // EnrollRequest exchanges a one-time enrollment token for a permanent key.

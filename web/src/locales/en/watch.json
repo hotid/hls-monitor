@@ -1,4 +1,6 @@
 {
+  "agentOffline": "out of contact",
+  "agentTooOld": "its version cannot do this",
   "answeredBy": "Segments come from",
   "asConfigured": "The stream's own address",
   "asConfiguredHint": "With whatever balancing and redirects lie behind it — what a viewer gets.",
@@ -12,7 +14,7 @@
   "droppedHint": "Frames the browser did not show in time. Says more about this computer than about the stream.",
   "latency": "Behind live",
   "latencyHint": "How far the point being played is behind the newest segment of the playlist.",
-  "lead": "The stream as the monitor sees it: the server requests playlists and segments itself, from where it makes its checks, and passes them to this page. Ask the stream's own address, or one particular server behind it.",
+  "lead": "The stream as the monitor sees it: the server, or one of its agents, requests playlists and segments from where it makes its checks, and they are passed to this page. Ask the stream's own address, or one particular server behind it.",
   "nowPlaying": "Playing now",
   "passedOn": "{asked} did not serve the stream itself: it passed the request on to {got}.",
   "play": "Play",
@@ -39,5 +41,8 @@
   "stateStopped": "Stopped",
   "title": "Watch",
   "unsupportedHint": "The browser has no decoder for this stream. H.264 video with AAC audio plays everywhere; MPEG-2 video, AC-3 audio and HEVC depend on the browser and the system. This says nothing about the stream itself.",
+  "vantage": "Watch from",
+  "vantageAgentHint": "The agent requests the stream from where it stands and hands it over to the server: browser → server → agent → origin.",
+  "vantageServerHint": "The server itself requests the stream.",
   "whatWentWrong": "What the player ran into"
 }

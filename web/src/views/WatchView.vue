@@ -4,12 +4,15 @@ import type Hls from 'hls.js'
 import { ApiError, api, basePath } from '@/api'
 import { fmtAgo, fmtBits, fmtNumber } from '@/format'
 import { t } from '@/i18n'
-import type { StreamDetail, WatchSource } from '@/types'
+import type { StreamDetail, WatchInfo, WatchSource, WatchVantage } from '@/types'
 
 const props = defineProps<{ id: number }>()
 
 const info = ref<StreamDetail | null>(null)
 const missing = ref(false)
+const vantages = ref<WatchVantage[]>([])
+/** Who requests the stream: the server itself or one of its agents. */
+const vantage = ref(1)
 const sources = ref<WatchSource[]>([])
 const sourceIndex = ref(0)
 const loadError = ref<string | null>(null)
@@ -57,6 +60,28 @@ const passedOn = computed(() => {
   const bare = (h: string) => h.replace(/:\d+$/, '').toLowerCase()
   return bare(got) === bare(asked.host) ? '' : bare(got)
 })
+
+function vantageLabel(v: WatchVantage): string {
+  const name = v.local ? t('common.serverLocal') : v.name
+  return v.available ? name : `${name} — ${v.why === 'too_old' ? t('watch.agentTooOld') : t('watch.agentOffline')}`
+}
+
+async function loadSources() {
+  const info = await api.get<WatchInfo>(`/api/v1/streams/${props.id}/watch?agent=${vantage.value}`)
+  vantages.value = info.vantages
+  sources.value = info.sources
+  if (sourceIndex.value >= info.sources.length) sourceIndex.value = 0
+}
+
+async function changeVantage() {
+  stop()
+  try {
+    await loadSources()
+    await start()
+  } catch (e) {
+    loadError.value = e instanceof Error ? e.message : String(e)
+  }
+}
 
 function sourceLabel(s: WatchSource): string {
   if (s.kind === 'configured') return t('watch.asConfigured')
@@ -237,7 +262,7 @@ const stateClass = computed(() => (state.value === 'playing' ? 'ok' : state.valu
 onMounted(async () => {
   try {
     info.value = await api.get<StreamDetail>(`/api/v1/streams/${props.id}`)
-    sources.value = await api.get<WatchSource[]>(`/api/v1/streams/${props.id}/watch`)
+    await loadSources()
     await start()
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) missing.value = true
@@ -274,6 +299,13 @@ onBeforeUnmount(stop)
 
         <div class="side">
           <div class="panel controls">
+            <div class="field">
+              <label for="watch-vantage">{{ t('watch.vantage') }}</label>
+              <select id="watch-vantage" v-model.number="vantage" class="input" @change="changeVantage">
+                <option v-for="v in vantages" :key="v.id" :value="v.id" :disabled="!v.available">{{ vantageLabel(v) }}</option>
+              </select>
+              <span class="help">{{ vantage === 1 ? t('watch.vantageServerHint') : t('watch.vantageAgentHint') }}</span>
+            </div>
             <div class="field">
               <label for="watch-source">{{ t('watch.source') }}</label>
               <select id="watch-source" v-model.number="sourceIndex" class="input">

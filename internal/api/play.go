@@ -18,8 +18,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/hotid/hls-monitor/internal/agentproto"
 	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/relay"
 	"github.com/hotid/hls-monitor/internal/store"
 )
 
@@ -47,6 +49,8 @@ const (
 type playToken struct {
 	URL    string `json:"u"`
 	Stream int64  `json:"s"`
+	// Agent is who fetches: zero for the server itself.
+	Agent int64 `json:"a,omitempty"`
 	// Expires is Unix seconds.
 	Expires int64 `json:"e"`
 	// Entry marks the address a source starts from; Inside tells that
@@ -101,14 +105,36 @@ type watchSource struct {
 	URL     string `json:"url"`
 }
 
+// watchVantage is a place a stream can be watched from.
+type watchVantage struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// Local is the server itself.
+	Local bool `json:"local"`
+	// Available tells that it can be used now; otherwise Why is
+	// "offline" or "too_old" (an agent that does not take such requests).
+	Available bool   `json:"available"`
+	Why       string `json:"why,omitempty"`
+}
+
+// watchResponse lists where a stream can be watched from and, for the
+// chosen place, what can be asked.
+type watchResponse struct {
+	Vantages []watchVantage `json:"vantages"`
+	// Vantage is the place the sources below are for.
+	Vantage int64         `json:"vantage"`
+	Sources []watchSource `json:"sources"`
+}
+
 // watchSources godoc
 //
 //	@Summary		Ways to watch a stream through the server
 //	@Description	The stream's own address, and every server known to answer for it or for other streams of the same site, asked directly. Each comes with a path that works for twelve hours and serves the playlist with all its addresses replaced by such paths: the browser requests everything from the monitor, the monitor from the origin.
 //	@Tags			streams
 //	@Produce		json
-//	@Param			id	path		int	true	"Stream ID"
-//	@Success		200	{array}		watchSource
+//	@Param			id		path		int	true	"Stream ID"
+//	@Param			agent	query		int	false	"Watch through this agent: the browser asks the server, the server the agent, the agent the origin (default: the server itself)"
+//	@Success		200		{object}	watchResponse
 //	@Failure		404	{object}	apiError
 //	@Router			/api/v1/streams/{id}/watch [get]
 func (s *Server) watchSources(c *gin.Context) {
@@ -121,9 +147,36 @@ func (s *Server) watchSources(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
-	expires := s.now().Add(playTTL).Unix()
+	agents, err := s.st.ListAgents(ctx)
+	if s.storeError(c, err) {
+		return
+	}
+	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+	now := s.now()
+	resp := watchResponse{Vantage: store.LocalAgentID, Sources: []watchSource{}}
+	want := queryInt(c, "agent")
+	for _, a := range agents {
+		v := watchVantage{ID: a.ID, Name: a.Name, Local: a.Kind == store.AgentLocal}
+		switch {
+		case v.Local:
+			v.Available = true
+		case !a.Enabled || !s.agentOnline(a, now):
+			v.Why = "offline"
+		default:
+			if rep := s.agentStatus(a); rep == nil || !rep.Fetches {
+				v.Why = "too_old"
+			} else {
+				v.Available = true
+			}
+		}
+		if a.ID == want && v.Available {
+			resp.Vantage = a.ID
+		}
+		resp.Vantages = append(resp.Vantages, v)
+	}
+	expires := now.Add(playTTL).Unix()
 	path := func(u string) string {
-		return "/api/v1/play/" + s.signPlay(playToken{URL: u, Stream: id, Expires: expires, Entry: true})
+		return "/api/v1/play/" + s.signPlay(playToken{URL: u, Stream: id, Agent: resp.Vantage, Expires: expires, Entry: true})
 	}
 	out := []watchSource{{Kind: "configured", Seen: true, Address: st.URL, URL: path(st.URL)}}
 
@@ -131,7 +184,8 @@ func (s *Server) watchSources(c *gin.Context) {
 	// directly means the same path on that server.
 	final := s.entryFinalURL(ctx, id)
 	if final == nil {
-		c.JSON(http.StatusOK, out)
+		resp.Sources = out
+		c.JSON(http.StatusOK, resp)
 		return
 	}
 	since := s.now().Add(-24 * time.Hour)
@@ -187,7 +241,8 @@ func (s *Server) watchSources(c *gin.Context) {
 		}
 		return list[i].Host < list[j].Host
 	})
-	c.JSON(http.StatusOK, append(out, list...))
+	resp.Sources = append(out, list...)
+	c.JSON(http.StatusOK, resp)
 }
 
 func hostname(hostport string) string {
@@ -253,65 +308,79 @@ func (s *Server) play(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
-	rq := httpx.Request{URL: tok.URL, Headers: st.Headers, HeadersFor: st.URL, MaxBody: playMaxBody, Reach: probe.Reach(tok.Entry, tok.Inside)}
+	job := agentproto.FetchRequest{URL: tok.URL, Headers: st.Headers, HeadersFor: st.URL, Insecure: st.Insecure,
+		Entry: tok.Entry, Inside: tok.Inside, MaxBody: playMaxBody}
 	if from, length, ok := parseRange(c.GetHeader("Range")); ok {
-		rq.RangeOffset, rq.RangeLength = from, length
+		job.RangeOffset, job.RangeLength = from, length
 	}
-	hc := s.playSecure
-	if st.Insecure {
-		hc = s.playInsecure
+	var res agentproto.FetchResult
+	var body []byte
+	if tok.Agent == 0 || tok.Agent == store.LocalAgentID {
+		res, body = s.fetchLocal(ctx, job)
+	} else {
+		res, body = s.fetchThroughAgent(ctx, tok.Agent, job)
 	}
-	resp, err := hc.Get(ctx, rq)
-	if err != nil && (resp == nil || resp.Status == 0) {
-		if errors.Is(c.Request.Context().Err(), context.Canceled) {
-			c.Abort() // the viewer went away
-			return
-		}
-		fail(c, http.StatusBadGateway, "upstream", "the origin did not answer: "+err.Error())
+	if errors.Is(c.Request.Context().Err(), context.Canceled) {
+		c.Abort() // the viewer went away
 		return
 	}
-	if resp.RemoteAddr != "" {
-		if e, err := url.Parse(resp.FinalURL); err == nil {
-			c.Header("X-Upstream", e.Host+" "+hostname(resp.RemoteAddr))
+	if res.RemoteAddr != "" {
+		if e, err := url.Parse(res.FinalURL); err == nil {
+			c.Header("X-Upstream", e.Host+" "+hostname(res.RemoteAddr))
 		}
 	}
-	if err != nil {
-		fail(c, http.StatusBadGateway, "upstream", "the answer of the origin broke off: "+err.Error())
+	switch {
+	case res.Status == 0:
+		fail(c, http.StatusBadGateway, "upstream", "the origin did not answer: "+res.Error)
+		return
+	case res.Error != "":
+		fail(c, http.StatusBadGateway, "upstream", "the answer of the origin broke off: "+res.Error)
 		return
 	}
-	if resp.OK() && isPlaylist(resp) {
-		base := resp.FinalURL
+	ok200 := res.Status == http.StatusOK || res.Status == http.StatusPartialContent
+	if ok200 && isPlaylist(body) {
+		base := res.FinalURL
 		if base == "" {
 			base = tok.URL
 		}
 		inside := tok.Inside
 		if tok.Entry {
-			inside = resp.Inside
+			inside = res.Inside
 		}
 		// What a playlist names lives as long as the playlist's own token,
 		// so that the same address is the same token every time the
 		// playlist is read: a player takes a segment whose address changed
 		// between two readings for another segment under the same number.
-		body := rewritePlaylist(resp.Body, base, func(u string) string {
-			return s.signPlay(playToken{URL: u, Stream: tok.Stream, Expires: tok.Expires, Inside: inside})
+		out := rewritePlaylist(body, base, func(u string) string {
+			return s.signPlay(playToken{URL: u, Stream: tok.Stream, Agent: tok.Agent, Expires: tok.Expires, Inside: inside})
 		})
-		c.Data(http.StatusOK, "application/vnd.apple.mpegurl", body)
+		c.Data(http.StatusOK, "application/vnd.apple.mpegurl", out)
 		return
 	}
-	for _, h := range []string{"Content-Range", "Accept-Ranges"} {
-		if v := resp.Header.Get(h); v != "" {
-			c.Header(h, v)
-		}
+	if res.ContentRange != "" {
+		c.Header("Content-Range", res.ContentRange)
 	}
-	ct := resp.Header.Get("Content-Type")
+	if res.AcceptRanges != "" {
+		c.Header("Accept-Ranges", res.AcceptRanges)
+	}
+	ct := res.ContentType
 	if ct == "" {
 		ct = "application/octet-stream"
 	}
-	c.Data(resp.Status, ct, resp.Body)
+	c.Data(res.Status, ct, body)
 }
 
-func isPlaylist(resp *httpx.Response) bool {
-	return bytes.HasPrefix(bytes.TrimLeft(resp.Body[:min(len(resp.Body), 16)], "\xef\xbb\xbf \r\n"), []byte("#EXTM3U"))
+// fetchLocal fetches from the server itself.
+func (s *Server) fetchLocal(ctx context.Context, job agentproto.FetchRequest) (agentproto.FetchResult, []byte) {
+	hc := s.playSecure
+	if job.Insecure {
+		hc = s.playInsecure
+	}
+	return relay.Fetch(ctx, hc, job)
+}
+
+func isPlaylist(body []byte) bool {
+	return bytes.HasPrefix(bytes.TrimLeft(body[:min(len(body), 16)], "\xef\xbb\xbf \r\n"), []byte("#EXTM3U"))
 }
 
 // parseRange reads "bytes=a-b"; other forms are not passed on.

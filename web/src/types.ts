@@ -23,6 +23,22 @@ export interface WatchSource {
   url: string
 }
 
+/** A place a stream can be watched from. */
+export interface WatchVantage {
+  id: number
+  name: string
+  /** The server itself. */
+  local: boolean
+  available: boolean
+  why?: 'offline' | 'too_old'
+}
+
+export interface WatchInfo {
+  vantages: WatchVantage[]
+  vantage: number
+  sources: WatchSource[]
+}
+
 export interface AgentStatus {
   agent_id: number
   agent_name: string

@@ -86,6 +86,7 @@ func (a *Agent) status() agentproto.Status {
 		st.QueueOldestSec = float64(oldest.Milliseconds()) / 1000
 	}
 	st.QueueFailing = a.writeFailed.Load()
+	st.Fetches = true
 	load := a.load.Status()
 	if load.Overloaded {
 		st.Overloaded = load.Reason
@@ -138,6 +139,9 @@ func Run(ctx context.Context, opt Options) error {
 	sendDone := make(chan struct{})
 	sctx, stopSend := context.WithCancel(context.Background())
 	go func() { a.sendLoop(sctx); close(sendDone) }()
+	for range fetchers {
+		go a.fetchLoop(ctx)
+	}
 	err = a.configLoop(ctx)
 	a.run.Stop()
 	stopSend()
