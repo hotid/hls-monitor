@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"math/rand/v2"
+	"runtime/debug"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -36,7 +37,7 @@ type Runner struct {
 	jobs map[int64]*job
 	wg   sync.WaitGroup
 
-	cycles, unreliable atomic.Int64
+	cycles, unreliable, short, crashed atomic.Int64
 }
 
 type job struct {
@@ -71,13 +72,19 @@ type Stats struct {
 	// them made while the process was overloaded.
 	Cycles     int64 `json:"cycles"`
 	Unreliable int64 `json:"unreliable_cycles"`
+	// Short counts the cycles that started late and therefore looked only
+	// at the latest segment of each playlist, to catch up.
+	Short int64 `json:"short_cycles"`
+	// Crashed counts the cycles that ended in a fault of the checking
+	// code itself; each is in the log with its stack.
+	Crashed int64 `json:"crashed_cycles"`
 }
 
 // Stats returns the current figures.
 func (r *Runner) Stats() Stats {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	st := Stats{Streams: len(r.jobs), Cycles: r.cycles.Load(), Unreliable: r.unreliable.Load()}
+	st := Stats{Streams: len(r.jobs), Cycles: r.cycles.Load(), Unreliable: r.unreliable.Load(), Short: r.short.Load(), Crashed: r.crashed.Load()}
 	lags := make([]float64, 0, len(r.jobs))
 	for _, j := range r.jobs {
 		if j.running {
@@ -180,13 +187,25 @@ func (r *Runner) loop(ctx context.Context, j *job, c *probe.Checker, startDelay 
 		// having taken longer than the interval.
 		j.lag, j.interval, j.running = max(lag-overran, 0), c.Interval(), true
 		r.mu.Unlock()
-		res := c.Run(ctx)
+		// A cycle that starts late, whoever is to blame, is a short one.
+		if c.CatchUp = lag > max(c.Interval(), time.Second); c.CatchUp {
+			r.short.Add(1)
+		}
+		res := r.run(ctx, c)
 		overran = max(time.Since(start)-c.Interval(), 0)
 		r.mu.Lock()
 		j.running = false
 		r.mu.Unlock()
 		if ctx.Err() != nil {
 			return // a cancelled cycle reports failures that are not real
+		}
+		if res == nil {
+			// The cycle crashed; the next one may fare better.
+			if !sleep(ctx, max(c.Interval(), 5*time.Second), j.trigger) {
+				return
+			}
+			next = time.Now()
+			continue
 		}
 		r.cycles.Add(1)
 		if res.Overloaded != "" {
@@ -212,6 +231,21 @@ func (r *Runner) loop(ctx context.Context, j *job, c *probe.Checker, startDelay 
 			next = time.Now() // woken early by CheckNow
 		}
 	}
+}
+
+// run makes one cycle. What is checked comes from servers the runner does
+// not control; a fault in the checking code that such data brings out must
+// stop one cycle of one stream, not every check the process makes. It
+// returns nil for a cycle that crashed.
+func (r *Runner) run(ctx context.Context, c *probe.Checker) (res *probe.Result) {
+	defer func() {
+		if p := recover(); p != nil {
+			r.crashed.Add(1)
+			r.log.Error("a check crashed", "stream", c.Target().ID, "panic", p, "stack", string(debug.Stack()))
+			res = nil
+		}
+	}()
+	return c.Run(ctx)
 }
 
 // sleep waits for d, an early trigger or cancellation; it reports false on cancellation.

@@ -153,3 +153,33 @@ func TestBehindIsTheRunnersOwnDelay(t *testing.T) {
 		t.Errorf("results that wait to be stored make the runner late: %+v", st)
 	}
 }
+
+// A fault in the checking code stops one cycle of one stream, and is
+// counted; the runner goes on.
+func TestCrashedCycleDoesNotStopTheRunner(t *testing.T) {
+	origin := hlstest.New(hlstest.Options{})
+	origin.Publish(4)
+	origin.End()
+	srv := httptest.NewServer(origin.Handler())
+	defer srv.Close()
+
+	col := &collector{seen: map[int64]int{}}
+	r := New(col.sink, "test", nil)
+	defer r.Stop()
+	var crash atomic.Bool
+	crash.Store(true)
+	r.SetOverloaded(func(time.Time) string {
+		if crash.Load() {
+			panic("a fault in the checking code")
+		}
+		return ""
+	})
+	r.Sync([]probe.Target{{ID: 1, URL: srv.URL + "/v0/index.m3u8", Level: probe.LevelPlaylist, IntervalSec: 3600, Revision: 1}})
+	waitFor(t, "the crash to be counted", func() bool { return r.Stats().Crashed == 1 })
+	if col.count(1) != 0 {
+		t.Error("a crashed cycle must not be reported")
+	}
+	crash.Store(false)
+	r.CheckNow(1)
+	waitFor(t, "a cycle after the crash", func() bool { return col.count(1) == 1 })
+}

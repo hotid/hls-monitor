@@ -179,6 +179,8 @@ func (s *Server) selfMetrics(c *gin.Context) {
 		metric("hlsmon_local_check_lag_seconds", "gauge", "How late check cycles start.", rs.LagP95, "quantile", "0.95")
 		metric("hlsmon_local_check_lag_seconds", "", "", rs.LagMax, "quantile", "1")
 		metric("hlsmon_local_checks_total", "counter", "Check cycles made by the server.", float64(rs.Cycles))
+		metric("hlsmon_local_checks_crashed_total", "counter", "Check cycles that ended in a fault of the checking code; see the server log.", float64(rs.Crashed))
+		metric("hlsmon_local_checks_short_total", "counter", "Check cycles that started late and looked only at the latest segment of each playlist.", float64(rs.Short))
 		metric("hlsmon_local_checks_unreliable_total", "counter", "Of them, made while the server was overloaded.", float64(rs.Unreliable))
 	}
 

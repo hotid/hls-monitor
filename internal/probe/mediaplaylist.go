@@ -227,9 +227,13 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 			}
 		}
 		selected = fresh
-		if len(selected) > c.t.MaxSegments {
-			cy.metric("hls_segments_skipped", v.Key, float64(len(selected)-c.t.MaxSegments))
-			selected = selected[len(selected)-c.t.MaxSegments:]
+		limit := c.t.MaxSegments
+		if c.CatchUp {
+			limit = 1
+		}
+		if len(selected) > limit {
+			cy.metric("hls_segments_skipped", v.Key, float64(len(selected)-limit))
+			selected = selected[len(selected)-limit:]
 		}
 	}
 	cy.metric("hls_playlist_new_segments", v.Key, float64(len(fresh)))

@@ -32,6 +32,13 @@ type Checker struct {
 	th  Thresholds
 	now func() time.Time
 
+	// CatchUp makes the next cycle a short one: of the segments that are
+	// new, only the latest of each playlist is requested. The runner sets
+	// it for a cycle that starts late. A checker that has fallen behind
+	// finds more new segments at every cycle, takes longer over them and
+	// falls further behind; looking at fewer of them is the way back.
+	CatchUp bool
+
 	// Overloaded, when set, tells what the process was short of at any time
 	// since the given moment, or "" when it kept up. Set it before Run.
 	Overloaded func(since time.Time) string
@@ -217,16 +224,29 @@ func (c *Checker) finish(cy *cycle, start time.Time) *Result {
 // decodePlaylist parses strictly first; when that fails it retries leniently
 // and reports the strict failure as a syntax problem.
 func decodePlaylist(body []byte) (pl m3u8.Playlist, typ m3u8.ListType, syntaxErr, err error) {
-	pl, typ, err = m3u8.DecodeFrom(bytes.NewReader(body), true)
+	pl, typ, err = decodeM3U8(body, true)
 	if err == nil {
 		return pl, typ, nil, nil
 	}
 	strictErr := err
-	pl, typ, err = m3u8.DecodeFrom(bytes.NewReader(body), false)
+	pl, typ, err = decodeM3U8(body, false)
 	if err != nil {
 		return nil, 0, nil, err
 	}
 	return pl, typ, strictErr, nil
+}
+
+// decodeM3U8 parses a playlist. The text comes from a server the monitor
+// does not control, and the parser is known to panic on some of it (a tag
+// without its attributes, for one): that is a playlist that cannot be
+// parsed, not a reason for the process to die.
+func decodeM3U8(body []byte, strict bool) (pl m3u8.Playlist, typ m3u8.ListType, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			pl, typ, err = nil, 0, fmt.Errorf("the playlist parser failed: %v", r)
+		}
+	}()
+	return m3u8.DecodeFrom(bytes.NewReader(body), strict)
 }
 
 // playlistResponse records the network metrics of a playlist request and

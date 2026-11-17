@@ -792,3 +792,41 @@ func TestPrivateNetworksPolicy(t *testing.T) {
 	f = newFixture(t, hlstest.Options{}, "/master.m3u8", LevelSegments)
 	wantClean(t, f.step(4))
 }
+
+// A cycle that starts late looks only at the latest segment of each
+// playlist: that is how a checker that fell behind catches up.
+func TestCatchUpCycleIsShort(t *testing.T) {
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	f.step(4)
+	f.c.CatchUp = true
+	r := f.step(3)
+	wantClean(t, r)
+	if len(r.Segments) != 1 || r.Segments[0].Seq != 6 {
+		t.Fatalf("segments checked = %+v, want the latest one only", r.Segments)
+	}
+	if v, _ := metric(r, "hls_segments_skipped", VariantMedia); v != 2 {
+		t.Errorf("hls_segments_skipped = %v, want 2", v)
+	}
+	// Back on time, the next cycle is a full one and finds nothing wrong
+	// with having skipped.
+	f.c.CatchUp = false
+	r = f.step(2)
+	wantClean(t, r)
+	if len(r.Segments) != 2 {
+		t.Errorf("segments checked = %d, want 2", len(r.Segments))
+	}
+}
+
+// Found by fuzzing: a tag without its attributes made the playlist parser
+// panic, and the process with it.
+func TestPlaylistThatCrashesTheParser(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-MEDIA:0\n"))
+	}))
+	defer srv.Close()
+	r := New(Target{ID: 1, URL: srv.URL + "/p.m3u8", Level: LevelSegments}, nil).Run(context.Background())
+	p := wantProblem(t, r, ProbPlaylistParse, SevCrit)
+	if !strings.Contains(p.Message, "parser failed") {
+		t.Errorf("message = %q", p.Message)
+	}
+}

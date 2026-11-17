@@ -139,3 +139,32 @@ func TestSpoolStatistics(t *testing.T) {
 		t.Errorf("dropped total = %d, want %d", again, dropped)
 	}
 }
+
+// A queue file may be cut anywhere by a crash or damaged by the disk.
+// Reading it must give records that are really in it, and never fail.
+func FuzzSpoolFile(f *testing.F) {
+	f.Add([]byte{0, 0, 0, 2, '{', '}', 0, 0, 0, 1, 'x'})
+	f.Add([]byte{0, 0, 0, 9, 'c', 'u', 't'})
+	f.Add([]byte{0xff, 0xff, 0xff, 0xff, 1, 2, 3})
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		path := filepath.Join(t.TempDir(), "0000000000000001.q")
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		records, err := readSpoolFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		total := 0
+		for _, r := range records {
+			if len(r) == 0 {
+				t.Fatal("an empty record")
+			}
+			total += 4 + len(r)
+		}
+		if total > len(data) {
+			t.Fatalf("records of %d bytes read from a file of %d", total, len(data))
+		}
+	})
+}
