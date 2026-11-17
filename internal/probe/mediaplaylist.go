@@ -196,6 +196,7 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 				sev = SevInfo
 			}
 			cy.problem(ProbSeqJump, sev, v.Key, "%d segments left the playlist between checks (%d → %d)", missed, st.lastSeq, first)
+			cy.doubt(ProbSeqJump, v.Key) // a late check misses segments of a healthy stream as well
 			cy.detail(ProbSeqJump, v.Key, "previous_last_sequence", st.lastSeq, "missed_segments", missed, "previous_playlist_keeps", promised)
 			cy.snapshot(v.Key, plURL, resp.Body)
 		}
@@ -460,6 +461,7 @@ func (c *Checker) playerModel(cy *cycle, v Variant, st *variantState, td float64
 	cy.metric("hls_stalls", v.Key, stalls)
 	if st.stalled {
 		cy.problem(ProbPlaybackStall, SevCrit, v.Key, "a player would have run out of buffer: segments arrive slower than real time")
+		cy.doubt(ProbPlaybackStall, v.Key)
 		cy.detail(ProbPlaybackStall, v.Key, st.stallDetails...)
 	}
 }

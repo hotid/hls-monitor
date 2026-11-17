@@ -25,6 +25,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/agentproto"
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/runner"
+	"github.com/hotid/hls-monitor/internal/selfstat"
 )
 
 const (
@@ -72,6 +73,28 @@ type Agent struct {
 	// writeFailed is set while results cannot be written to the queue, so
 	// that the log says it once.
 	writeFailed atomic.Bool
+	load        *selfstat.Monitor
+}
+
+// status is what the agent reports about itself.
+func (a *Agent) status() agentproto.Status {
+	var st agentproto.Status
+	if a.spool != nil {
+		var oldest time.Duration
+		st.QueueResults, st.QueueBytes, oldest, st.QueueDropped = a.spool.stats()
+		st.QueueOldestSec = float64(oldest.Milliseconds()) / 1000
+	}
+	st.QueueFailing = a.writeFailed.Load()
+	load := a.load.Status()
+	if load.Overloaded {
+		st.Overloaded = load.Reason
+	}
+	st.CPUCores, st.CPULimit, st.MemoryBytes = load.CPUCores, load.CPULimit, load.MemoryBytes
+	if a.run != nil {
+		rs := a.run.Stats()
+		st.Streams, st.Behind = rs.Streams, rs.Behind
+	}
+	return st
 }
 
 // Run starts the agent and blocks until ctx is done or the server rejects it.
@@ -108,6 +131,8 @@ func Run(ctx context.Context, opt Options) error {
 	}
 	a.run = runner.New(a.enqueue, "hls-monitor-agent/"+opt.Version, opt.Log)
 	defer a.run.Stop()
+	a.load = selfstat.Start(ctx)
+	a.run.SetOverloaded(a.load.Overloaded)
 
 	sendDone := make(chan struct{})
 	sctx, stopSend := context.WithCancel(context.Background())
@@ -209,6 +234,11 @@ func (a *Agent) request(ctx context.Context, method, path, query string, body []
 	}
 	req.Header.Set(agentproto.HeaderVersion, a.opt.Version)
 	req.Header.Set(agentproto.HeaderTime, strconv.FormatInt(time.Now().UnixMilli(), 10))
+	if a.key != "" {
+		if b, err := json.Marshal(a.status()); err == nil {
+			req.Header.Set(agentproto.HeaderStatus, string(b))
+		}
+	}
 	resp, err := a.hc.Do(req)
 	if err != nil {
 		var ue *url.Error

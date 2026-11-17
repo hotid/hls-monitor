@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/ingest"
 	"github.com/hotid/hls-monitor/internal/metrics"
 	"github.com/hotid/hls-monitor/internal/runner"
+	"github.com/hotid/hls-monitor/internal/selfstat"
 	"github.com/hotid/hls-monitor/internal/store"
 )
 
@@ -40,6 +42,8 @@ type Config struct {
 	// EnrollTTL is how long an enrollment token stays valid.
 	EnrollTTL      time.Duration
 	TrustedProxies []string
+	// Load watches the server process itself; may be nil.
+	Load *selfstat.Monitor
 }
 
 // Server wires storage and checking into HTTP handlers.
@@ -56,6 +60,10 @@ type Server struct {
 	// diagnoses holds one slot per live diagnosis allowed at a time.
 	diagnoses chan struct{}
 	router    *gin.Engine
+
+	// reports holds what each remote agent last told about itself.
+	reportsMu sync.Mutex
+	reports   map[int64]agentReport
 }
 
 // New builds the server. ui serves the web interface for every path that
@@ -73,7 +81,7 @@ func New(cfg Config, st *store.Store, mx *metrics.Client, ing *ingest.Ingester, 
 	if cfg.EnrollTTL <= 0 {
 		cfg.EnrollTTL = 24 * time.Hour
 	}
-	s := &Server{cfg: cfg, st: st, mx: mx, ing: ing, local: local, log: log, now: time.Now, logins: newLoginLimiter(), diagnoses: make(chan struct{}, maxDiagnoses)}
+	s := &Server{cfg: cfg, st: st, mx: mx, ing: ing, local: local, log: log, now: time.Now, logins: newLoginLimiter(), diagnoses: make(chan struct{}, maxDiagnoses), reports: map[int64]agentReport{}}
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -91,6 +99,8 @@ func (s *Server) Handler() http.Handler { return s.router }
 func (s *Server) routes(ui http.Handler) {
 	r := s.router
 	r.GET("/healthz", s.healthz)
+	r.GET("/readyz", s.readyz)
+	r.GET("/metrics", noStore, s.requireAPIToken, s.selfMetrics)
 
 	v1 := r.Group("/api/v1", noStore, s.requireCSRFHeader)
 	v1.POST("/auth/login", s.login)
@@ -233,7 +243,7 @@ func (s *Server) accessLog() gin.HandlerFunc {
 		start := time.Now()
 		c.Next()
 		p := c.Request.URL.Path
-		if p == "/healthz" || !strings.HasPrefix(p, "/api/") {
+		if !strings.HasPrefix(p, "/api/") {
 			return
 		}
 		lvl := slog.LevelDebug

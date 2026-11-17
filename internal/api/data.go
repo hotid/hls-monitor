@@ -9,7 +9,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/hotid/hls-monitor/internal/agentproto"
+	"github.com/hotid/hls-monitor/internal/ingest"
 	"github.com/hotid/hls-monitor/internal/metrics"
+	"github.com/hotid/hls-monitor/internal/runner"
+	"github.com/hotid/hls-monitor/internal/selfstat"
 	"github.com/hotid/hls-monitor/internal/store"
 )
 
@@ -18,6 +22,9 @@ type agentView struct {
 	*store.Agent
 	Online  bool `json:"online"`
 	Streams int  `json:"streams"`
+	// Status is what the agent last told about itself: its queue of
+	// undelivered results and its load. Absent while it is offline.
+	Status *agentproto.Status `json:"status,omitempty"`
 }
 
 // overviewResponse is the data of the dashboard.
@@ -41,7 +48,11 @@ func (s *Server) agentViews(agents map[int64]*store.Agent, streams []*store.Stre
 	}
 	out := make([]agentView, 0, len(agents))
 	for _, a := range agents {
-		out = append(out, agentView{Agent: a, Online: s.agentOnline(a, now), Streams: perAgent[a.ID]})
+		v := agentView{Agent: a, Online: s.agentOnline(a, now), Streams: perAgent[a.ID]}
+		if v.Online {
+			v.Status = s.agentStatus(a)
+		}
+		out = append(out, v)
 	}
 	// Map order is random; the local agent first, then by ID.
 	for i := 1; i < len(out); i++ {
@@ -100,6 +111,11 @@ type systemResponse struct {
 	PublicURL    string        `json:"public_url"`
 	// Storage is how much room the database and the segment journal take.
 	Storage store.Usage `json:"storage"`
+	// Load is the state of the server process, Checks of the checks it
+	// makes itself, Results of storing what all agents report.
+	Load    selfstat.Status `json:"load"`
+	Checks  runner.Stats    `json:"checks"`
+	Results ingest.Stats    `json:"results"`
 }
 
 // system godoc
@@ -113,7 +129,9 @@ func (s *Server) system(c *gin.Context) {
 	out := systemResponse{Version: s.cfg.Version, Time: s.now().UTC(), Metrics: s.mx.Stats(), PublicURL: s.publicURL(c)}
 	if s.local != nil {
 		out.LocalStreams = s.local.Count()
+		out.Checks = s.local.Stats()
 	}
+	out.Load, out.Results = s.cfg.Load.Status(), s.ing.Stats()
 	out.MetricsUp = s.mx.Healthy(c.Request.Context())
 	out.Storage = s.st.Usage(c.Request.Context())
 	c.JSON(http.StatusOK, out)

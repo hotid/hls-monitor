@@ -11,7 +11,33 @@ const (
 	// HeaderTime is the agent's clock in Unix milliseconds, used to measure
 	// how far it is from the server's.
 	HeaderTime = "X-Agent-Time"
+	// HeaderStatus carries a Status as JSON.
+	HeaderStatus = "X-Agent-Status"
 )
+
+// Status is what an agent tells about itself with every request.
+type Status struct {
+	// QueueResults and QueueBytes describe the results not delivered yet,
+	// QueueOldestSec how long the oldest of them has been waiting.
+	QueueResults   int     `json:"queue_results"`
+	QueueBytes     int64   `json:"queue_bytes"`
+	QueueOldestSec float64 `json:"queue_oldest_sec"`
+	// QueueDropped counts the results dropped since the agent started
+	// because the queue was full.
+	QueueDropped int64 `json:"queue_dropped"`
+	// QueueFailing tells that results cannot be written to the queue.
+	QueueFailing bool `json:"queue_failing,omitempty"`
+	// Overloaded names what the agent's host is short of, if anything.
+	Overloaded string `json:"overloaded,omitempty"`
+	// Streams is how many streams the agent checks, Behind how many of
+	// them it checks later than it should.
+	Streams int `json:"streams"`
+	Behind  int `json:"behind"`
+	// CPUCores and CPULimit: processors used and available; MemoryBytes.
+	CPUCores    float64 `json:"cpu_cores"`
+	CPULimit    float64 `json:"cpu_limit"`
+	MemoryBytes int64   `json:"memory_bytes"`
+}
 
 // EnrollRequest exchanges a one-time enrollment token for a permanent key.
 type EnrollRequest struct {

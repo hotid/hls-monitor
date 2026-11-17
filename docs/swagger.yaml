@@ -55,6 +55,43 @@ definitions:
       rejected:
         type: integer
     type: object
+  github_com_hotid_hls-monitor_internal_agentproto.Status:
+    properties:
+      behind:
+        type: integer
+      cpu_cores:
+        description: 'CPUCores and CPULimit: processors used and available; MemoryBytes.'
+        type: number
+      cpu_limit:
+        type: number
+      memory_bytes:
+        type: integer
+      overloaded:
+        description: Overloaded names what the agent's host is short of, if anything.
+        type: string
+      queue_bytes:
+        type: integer
+      queue_dropped:
+        description: |-
+          QueueDropped counts the results dropped since the agent started
+          because the queue was full.
+        type: integer
+      queue_failing:
+        description: QueueFailing tells that results cannot be written to the queue.
+        type: boolean
+      queue_oldest_sec:
+        type: number
+      queue_results:
+        description: |-
+          QueueResults and QueueBytes describe the results not delivered yet,
+          QueueOldestSec how long the oldest of them has been waiting.
+        type: integer
+      streams:
+        description: |-
+          Streams is how many streams the agent checks, Behind how many of
+          them it checks later than it should.
+        type: integer
+    type: object
   github_com_hotid_hls-monitor_internal_httpx.Hop:
     properties:
       remote_addr:
@@ -65,6 +102,19 @@ definitions:
         type: integer
       url:
         type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_ingest.Stats:
+    properties:
+      failed:
+        description: |-
+          Failed could not be stored; an agent sends such a result again, a
+          result of the server's own checks is lost after a few attempts.
+        type: integer
+      repeated:
+        description: Repeated were refused as delivered before (ErrStale).
+        type: integer
+      stored:
+        type: integer
     type: object
   github_com_hotid_hls-monitor_internal_media.Info:
     properties:
@@ -253,6 +303,13 @@ definitions:
         items:
           $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Metric'
         type: array
+      overloaded:
+        description: |-
+          Overloaded names what the checking process itself was short of during
+          the cycle; empty when it kept up. Findings that rest on timing alone
+          are left out of such a result: a monitor that cannot keep up measures
+          its own delay, not the stream's.
+        type: string
       problems:
         items:
           $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Problem'
@@ -424,6 +481,69 @@ definitions:
         type: string
       uri:
         type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_runner.Stats:
+    properties:
+      behind:
+        description: |-
+          Behind counts the streams whose latest cycle started later than it
+          should have by more than its own interval: the runner, or what it
+          checks, is too slow for them.
+        type: integer
+      cycles:
+        description: |-
+          Cycles counts the cycles made since the start, Unreliable those of
+          them made while the process was overloaded.
+        type: integer
+      lag_max_seconds:
+        type: number
+      lag_p95_seconds:
+        description: LagP95 and LagMax tell how late cycles start, in seconds.
+        type: number
+      running:
+        description: Running is how many cycles are being made right now.
+        type: integer
+      streams:
+        type: integer
+      unreliable_cycles:
+        type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_selfstat.Status:
+    properties:
+      cpu_cores:
+        description: |-
+          CPUCores is how many processors the process used, CPULimit how many
+          it may use.
+        type: number
+      cpu_limit:
+        type: number
+      cpu_throttled:
+        description: |-
+          CPUThrottled is the share of the time the process was stopped for
+          having used up its quota.
+        type: number
+      goroutines:
+        type: integer
+      memory_bytes:
+        description: |-
+          MemoryBytes is the memory of the container when it has a limit,
+          otherwise what the process took from the system. MemoryLimit is zero
+          when there is none.
+        type: integer
+      memory_limit_bytes:
+        type: integer
+      overloaded:
+        description: |-
+          Overloaded tells that the process did not get the processor time it
+          needed; Reason says how that showed.
+        type: boolean
+      reason:
+        type: string
+      scheduler_delay_seconds:
+        description: |-
+          SchedulerDelay is how long the slowest one in a hundred goroutines
+          waited for a processor after becoming ready, in seconds.
+        type: number
     type: object
   github_com_hotid_hls-monitor_internal_store.APIToken:
     properties:
@@ -687,6 +807,12 @@ definitions:
         type: boolean
       remote_addr:
         type: string
+      status:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.Status'
+        description: |-
+          Status is what the agent last told about itself: its queue of
+          undelivered results and its load. Absent while it is offline.
       streams:
         type: integer
       version:
@@ -949,6 +1075,21 @@ definitions:
       new:
         type: string
     type: object
+  internal_api.readiness:
+    properties:
+      checks:
+        additionalProperties:
+          type: string
+        description: |-
+          Checks: database, time_series ("ok", "down", "disabled"), load
+          ("ok" or what the process is short of), checks ("ok", "behind").
+        type: object
+      status:
+        description: |-
+          Status is "ok", "degraded" when the server works but something
+          needs attention, "unavailable" when it cannot do its job.
+        type: string
+    type: object
   internal_api.scopeAgent:
     properties:
       checked:
@@ -1153,6 +1294,14 @@ definitions:
     type: object
   internal_api.systemResponse:
     properties:
+      checks:
+        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_runner.Stats'
+      load:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_selfstat.Status'
+        description: |-
+          Load is the state of the server process, Checks of the checks it
+          makes itself, Results of storing what all agents report.
       local_streams:
         type: integer
       metrics:
@@ -1161,6 +1310,8 @@ definitions:
         type: boolean
       public_url:
         type: string
+      results:
+        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_ingest.Stats'
       storage:
         allOf:
         - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Usage'
@@ -2444,6 +2595,52 @@ paths:
               type: string
             type: object
       summary: Liveness check
+      tags:
+      - system
+  /metrics:
+    get:
+      description: 'Load of the process, the checks it makes, storing of results,
+        storage size and the state of every agent with its queue of undelivered results.
+        Figures of the monitored streams are not here: see the external monitoring
+        API.'
+      parameters:
+      - description: Bearer API token
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: The server's own metrics in the Prometheus text format
+      tags:
+      - system
+  /readyz:
+    get:
+      description: 'Answers 503 when the database does not respond. An overloaded
+        server, checks that fall behind and an unreachable time series storage are
+        reported in the body with status "degraded" and code 200: the server still
+        works.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.readiness'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/internal_api.readiness'
+      summary: 'Readiness: whether the server can do its job'
       tags:
       - system
 swagger: "2.0"

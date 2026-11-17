@@ -195,6 +195,18 @@ curl -H "Authorization: Bearer <token>" http://localhost:4000/api/ext/v1/status
 
 Time series names in VictoriaMetrics start with `hls_`; the labels are `stream`, `agent`, `variant` (identifiers).
 
+### Watching the monitor itself
+
+| Address | What it gives |
+|---|---|
+| `GET /healthz` | The process is alive |
+| `GET /readyz` | Readiness: 503 when the database does not answer; otherwise 200 and the state by part — database, time series storage, load, whether checks are on time (`ok` or `degraded`) |
+| `GET /metrics` | Figures of the server itself and of the agents in the Prometheus format. Needs the same token as `/api/ext/v1` |
+
+`/metrics` has: processor use and its limit, throttling, wake-up delay, memory, how many streams are checked and how many of them late, how many results were stored and lost, the size of the database and the journal, and for every agent whether it is in contact, whether it is overloaded, how many results wait in its queue, for how long, and how many it dropped.
+
+**Overload.** A monitor short of processor time measures its own delay, not the stream's. The server and the agent watch themselves: the process asks to be woken every 50 ms and looks at how late that happens — the same delay is added to everything it measures. When one wake-up in ten is more than 100 ms late, or one goroutine in a hundred that is ready to run waits longer than that for a processor, a check counts as made under overload. In such a check the findings that rest on timing alone — a slow segment, a playback stall, segments missed between checks, request timeouts — are not raised, and incidents already open are not closed: there is no evidence either way. Errors seen directly (HTTP 404, a broken container) are reported as usual. The overload is shown in the status bar of the interface, on the Agents page, in `/readyz` and in `/metrics`. A shortage of network capacity the monitor cannot recognise.
+
 ## Development
 
 Go 1.26 and Node.js 22 are required.

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/hotid/hls-monitor/internal/ingest"
 	"io"
 	"net/http"
 	"strconv"
@@ -16,6 +15,7 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/agentproto"
 	"github.com/hotid/hls-monitor/internal/auth"
+	"github.com/hotid/hls-monitor/internal/ingest"
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/store"
 )
@@ -40,6 +40,7 @@ func (s *Server) requireAgent(c *gin.Context) {
 		s.storeError(c, err)
 		return
 	}
+	s.noteAgentStatus(a.ID, c.GetHeader(agentproto.HeaderStatus))
 	c.Set(ctxAgent, a)
 	c.Next()
 }

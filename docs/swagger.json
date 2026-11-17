@@ -1795,6 +1795,67 @@
                     }
                 }
             }
+        },
+        "/metrics": {
+            "get": {
+                "description": "Load of the process, the checks it makes, storing of results, storage size and the state of every agent with its queue of undelivered results. Figures of the monitored streams are not here: see the external monitoring API.",
+                "produces": [
+                    "text/plain"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "The server's own metrics in the Prometheus text format",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer API token",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/readyz": {
+            "get": {
+                "description": "Answers 503 when the database does not respond. An overloaded server, checks that fall behind and an unreachable time series storage are reported in the body with status \"degraded\" and code 200: the server still works.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "Readiness: whether the server can do its job",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.readiness"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.readiness"
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -1883,6 +1944,50 @@
                 }
             }
         },
+        "github_com_hotid_hls-monitor_internal_agentproto.Status": {
+            "type": "object",
+            "properties": {
+                "behind": {
+                    "type": "integer"
+                },
+                "cpu_cores": {
+                    "description": "CPUCores and CPULimit: processors used and available; MemoryBytes.",
+                    "type": "number"
+                },
+                "cpu_limit": {
+                    "type": "number"
+                },
+                "memory_bytes": {
+                    "type": "integer"
+                },
+                "overloaded": {
+                    "description": "Overloaded names what the agent's host is short of, if anything.",
+                    "type": "string"
+                },
+                "queue_bytes": {
+                    "type": "integer"
+                },
+                "queue_dropped": {
+                    "description": "QueueDropped counts the results dropped since the agent started\nbecause the queue was full.",
+                    "type": "integer"
+                },
+                "queue_failing": {
+                    "description": "QueueFailing tells that results cannot be written to the queue.",
+                    "type": "boolean"
+                },
+                "queue_oldest_sec": {
+                    "type": "number"
+                },
+                "queue_results": {
+                    "description": "QueueResults and QueueBytes describe the results not delivered yet,\nQueueOldestSec how long the oldest of them has been waiting.",
+                    "type": "integer"
+                },
+                "streams": {
+                    "description": "Streams is how many streams the agent checks, Behind how many of\nthem it checks later than it should.",
+                    "type": "integer"
+                }
+            }
+        },
         "github_com_hotid_hls-monitor_internal_httpx.Hop": {
             "type": "object",
             "properties": {
@@ -1897,6 +2002,22 @@
                 },
                 "url": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_ingest.Stats": {
+            "type": "object",
+            "properties": {
+                "failed": {
+                    "description": "Failed could not be stored; an agent sends such a result again, a\nresult of the server's own checks is lost after a few attempts.",
+                    "type": "integer"
+                },
+                "repeated": {
+                    "description": "Repeated were refused as delivered before (ErrStale).",
+                    "type": "integer"
+                },
+                "stored": {
+                    "type": "integer"
                 }
             }
         },
@@ -2152,6 +2273,10 @@
                         "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Metric"
                     }
                 },
+                "overloaded": {
+                    "description": "Overloaded names what the checking process itself was short of during\nthe cycle; empty when it kept up. Findings that rest on timing alone\nare left out of such a result: a monitor that cannot keep up measures\nits own delay, not the stream's.",
+                    "type": "string"
+                },
                 "problems": {
                     "type": "array",
                     "items": {
@@ -2395,6 +2520,73 @@
                 },
                 "uri": {
                     "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_runner.Stats": {
+            "type": "object",
+            "properties": {
+                "behind": {
+                    "description": "Behind counts the streams whose latest cycle started later than it\nshould have by more than its own interval: the runner, or what it\nchecks, is too slow for them.",
+                    "type": "integer"
+                },
+                "cycles": {
+                    "description": "Cycles counts the cycles made since the start, Unreliable those of\nthem made while the process was overloaded.",
+                    "type": "integer"
+                },
+                "lag_max_seconds": {
+                    "type": "number"
+                },
+                "lag_p95_seconds": {
+                    "description": "LagP95 and LagMax tell how late cycles start, in seconds.",
+                    "type": "number"
+                },
+                "running": {
+                    "description": "Running is how many cycles are being made right now.",
+                    "type": "integer"
+                },
+                "streams": {
+                    "type": "integer"
+                },
+                "unreliable_cycles": {
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_selfstat.Status": {
+            "type": "object",
+            "properties": {
+                "cpu_cores": {
+                    "description": "CPUCores is how many processors the process used, CPULimit how many\nit may use.",
+                    "type": "number"
+                },
+                "cpu_limit": {
+                    "type": "number"
+                },
+                "cpu_throttled": {
+                    "description": "CPUThrottled is the share of the time the process was stopped for\nhaving used up its quota.",
+                    "type": "number"
+                },
+                "goroutines": {
+                    "type": "integer"
+                },
+                "memory_bytes": {
+                    "description": "MemoryBytes is the memory of the container when it has a limit,\notherwise what the process took from the system. MemoryLimit is zero\nwhen there is none.",
+                    "type": "integer"
+                },
+                "memory_limit_bytes": {
+                    "type": "integer"
+                },
+                "overloaded": {
+                    "description": "Overloaded tells that the process did not get the processor time it\nneeded; Reason says how that showed.",
+                    "type": "boolean"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "scheduler_delay_seconds": {
+                    "description": "SchedulerDelay is how long the slowest one in a hundred goroutines\nwaited for a processor after becoming ready, in seconds.",
+                    "type": "number"
                 }
             }
         },
@@ -2789,6 +2981,14 @@
                 "remote_addr": {
                     "type": "string"
                 },
+                "status": {
+                    "description": "Status is what the agent last told about itself: its queue of\nundelivered results and its load. Absent while it is offline.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.Status"
+                        }
+                    ]
+                },
                 "streams": {
                     "type": "integer"
                 },
@@ -3170,6 +3370,22 @@
                 }
             }
         },
+        "internal_api.readiness": {
+            "type": "object",
+            "properties": {
+                "checks": {
+                    "description": "Checks: database, time_series (\"ok\", \"down\", \"disabled\"), load\n(\"ok\" or what the process is short of), checks (\"ok\", \"behind\").",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "description": "Status is \"ok\", \"degraded\" when the server works but something\nneeds attention, \"unavailable\" when it cannot do its job.",
+                    "type": "string"
+                }
+            }
+        },
         "internal_api.scopeAgent": {
             "type": "object",
             "properties": {
@@ -3470,6 +3686,17 @@
         "internal_api.systemResponse": {
             "type": "object",
             "properties": {
+                "checks": {
+                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_runner.Stats"
+                },
+                "load": {
+                    "description": "Load is the state of the server process, Checks of the checks it\nmakes itself, Results of storing what all agents report.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_selfstat.Status"
+                        }
+                    ]
+                },
                 "local_streams": {
                     "type": "integer"
                 },
@@ -3481,6 +3708,9 @@
                 },
                 "public_url": {
                     "type": "string"
+                },
+                "results": {
+                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_ingest.Stats"
                 },
                 "storage": {
                     "description": "Storage is how much room the database and the segment journal take.",

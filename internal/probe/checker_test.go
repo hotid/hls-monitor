@@ -730,3 +730,36 @@ func TestSequenceRenumbered(t *testing.T) {
 		}
 	}
 }
+
+// A monitor that cannot keep up measures its own delay. What it concludes
+// from timing alone is left out; what it saw with its own eyes stays.
+func TestOverloadedCheckerDoesNotBlameTheStream(t *testing.T) {
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	overloaded := ""
+	f.c.Overloaded = func(time.Time) string { return overloaded }
+	f.step(4)
+
+	overloaded = "processor"
+	f.origin.SetFault(4, hlstest.Fault{Delay: 2100 * time.Millisecond})
+	f.origin.SetFault(5, hlstest.Fault{Status: 404})
+	r := f.step(2)
+	if r.Overloaded != "processor" {
+		t.Errorf("Overloaded = %q", r.Overloaded)
+	}
+	if p := hasProblem(r, ProbSegmentSlow); p != nil {
+		t.Errorf("a slow download measured by an overloaded checker was reported: %+v", p)
+	}
+	wantProblem(t, r, ProbSegmentHTTP, SevCrit)
+	if v, ok := metric(r, "hls_check_overloaded", ""); !ok || v != 1 {
+		t.Errorf("hls_check_overloaded = %v, %v", v, ok)
+	}
+
+	// The same without overload is reported as before.
+	overloaded = ""
+	f.origin.SetFault(6, hlstest.Fault{Delay: 2100 * time.Millisecond})
+	r = f.step(1)
+	wantProblem(t, r, ProbSegmentSlow, SevWarn)
+	if r.Overloaded != "" {
+		t.Errorf("Overloaded = %q", r.Overloaded)
+	}
+}

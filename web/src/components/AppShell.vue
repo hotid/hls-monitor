@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, basePath } from '@/api'
-import { fmtBytes, fmtTime } from '@/format'
+import { fmtBytes, fmtDuration, fmtNumber, fmtTime } from '@/format'
 import { locale, locales, setLocale, t } from '@/i18n'
 import { usePolling } from '@/poll'
 import { useLive } from '@/stores/live'
@@ -104,6 +104,24 @@ async function savePassword() {
       </template>
       <span class="spacer" />
       <template v-if="live.system">
+        <span
+          v-if="live.system.load?.overloaded"
+          class="item"
+          style="color: #ff8a93"
+          :title="t('shell.serverOverloadedHint', { cores: fmtNumber(live.system.load.cpu_cores, 1), limit: fmtNumber(live.system.load.cpu_limit, 1) })"
+        >
+          <span class="dot fail" />{{ t('shell.serverOverloaded') }}
+        </span>
+        <span
+          v-else-if="live.system.checks?.behind"
+          class="item hide-narrow"
+          :title="t('shell.checksBehindHint', { lag: fmtDuration(live.system.checks.lag_max_seconds) })"
+        >
+          <span class="dot warn" />{{ t('shell.checksBehind', { n: live.system.checks.behind }, live.system.checks.behind) }}
+        </span>
+        <span v-if="live.system.results?.failed" class="item hide-narrow">
+          <span class="dot fail" />{{ t('shell.resultsLost', { n: live.system.results.failed }, live.system.results.failed) }}
+        </span>
         <span v-if="!live.system.metrics.enabled" class="item hide-narrow" :title="t('shell.hlsmonVMURLIsNotSet')">
           <span class="dot warn" />{{ t('shell.metricsStorageIsNotConnected') }}
         </span>

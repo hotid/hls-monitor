@@ -170,9 +170,15 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 		case err != nil && (resp == nil || resp.Status == 0):
 			rec.Error = err.Error()
 			flag(ProbSegmentUnreachable, SevCrit, "segment %d request failed: %v", s.seq, err)
+			if timedOut(err) {
+				cy.doubt(ProbSegmentUnreachable, v.Key)
+			}
 		case err != nil:
 			rec.Error = err.Error()
 			flag(ProbSegmentTruncated, SevCrit, "segment %d download broke off after %d bytes: %v", s.seq, resp.Size, err)
+			if timedOut(err) {
+				cy.doubt(ProbSegmentTruncated, v.Key)
+			}
 		case !resp.OK():
 			flag(ProbSegmentHTTP, SevCrit, "segment %d returned HTTP %d", s.seq, resp.Status)
 		case resp.LengthMismatch && !header:
@@ -207,6 +213,7 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 				agg.maxRatio = max(agg.maxRatio, ratio)
 				if ratio > 1 {
 					flag(ProbSegmentSlow, SevWarn, "segment %d (%.1fs of media) took %.1fs to download", s.seq, s.seg.Duration, resp.Total.Seconds())
+					cy.doubt(ProbSegmentSlow, v.Key)
 				}
 			}
 			bitrate := float64(size*8) / s.seg.Duration

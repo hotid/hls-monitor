@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 // The spool keeps results on disk until the server has taken them, so that
@@ -29,6 +30,8 @@ type spoolFile struct {
 	seq     uint64
 	size    int64
 	records int
+	// created is when the file was begun: no result in it is older.
+	created time.Time
 }
 
 type spool struct {
@@ -43,6 +46,8 @@ type spool struct {
 	// dropped counts results deleted to keep the spool within maxBytes
 	// since the last call of takeDropped.
 	dropped int
+	// droppedTotal counts them since the agent started.
+	droppedTotal int64
 }
 
 func openSpool(dir string, maxBytes, maxFile int64) (*spool, error) {
@@ -76,7 +81,11 @@ func openSpool(dir string, maxBytes, maxFile int64) (*spool, error) {
 		for _, r := range records {
 			size += int64(len(r))
 		}
-		s.files = append(s.files, spoolFile{seq: seq, size: size, records: len(records)})
+		created := time.Now()
+		if info, err := e.Info(); err == nil {
+			created = info.ModTime() // not before its last result; close enough after a restart
+		}
+		s.files = append(s.files, spoolFile{seq: seq, size: size, records: len(records), created: created})
 		s.total += size
 	}
 	sort.Slice(s.files, func(i, j int) bool { return s.files[i].seq < s.files[j].seq })
@@ -132,7 +141,7 @@ func (s *spool) add(b []byte) error {
 			return err
 		}
 		s.active = f
-		s.files = append(s.files, spoolFile{seq: seq})
+		s.files = append(s.files, spoolFile{seq: seq, created: time.Now()})
 	}
 	var head [4]byte
 	binary.BigEndian.PutUint32(head[:], uint32(len(b)))
@@ -149,6 +158,7 @@ func (s *spool) add(b []byte) error {
 	// Over the limit the oldest results go first; the file being written stays.
 	for s.total > s.maxBytes && len(s.files) > 1 {
 		s.dropped += s.files[0].records
+		s.droppedTotal += int64(s.files[0].records)
 		s.remove(0)
 	}
 	return nil
@@ -239,6 +249,20 @@ func (s *spool) queued() (records int, bytes int64) {
 		records += f.records
 	}
 	return records, s.total
+}
+
+// stats reports what waits, how long the oldest of it has been waiting and
+// how many results were dropped for space since the start.
+func (s *spool) stats() (records int, bytes int64, oldest time.Duration, dropped int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range s.files {
+		records += f.records
+	}
+	if len(s.files) > 0 && records > 0 {
+		oldest = max(time.Since(s.files[0].created), 0)
+	}
+	return records, s.total, oldest, s.droppedTotal
 }
 
 func (s *spool) takeDropped() int {

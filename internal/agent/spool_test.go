@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func rec(i int) []byte { return []byte(fmt.Sprintf(`{"n":%04d,"pad":"0123456789"}`, i)) }
@@ -109,5 +110,32 @@ func TestSpoolSizeLimit(t *testing.T) {
 	got := drain(t, s)
 	if dropped == 0 || dropped+len(got) != 40 || got[len(got)-1] != string(rec(39)) {
 		t.Errorf("dropped %d, kept %d of 40, last kept %s", dropped, len(got), got[len(got)-1])
+	}
+}
+
+func TestSpoolStatistics(t *testing.T) {
+	s, err := openSpool(t.TempDir(), 250, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.close()
+	if n, size, oldest, dropped := s.stats(); n != 0 || size != 0 || oldest != 0 || dropped != 0 {
+		t.Errorf("empty spool: %d %d %s %d", n, size, oldest, dropped)
+	}
+	rec := make([]byte, 60)
+	for range 6 {
+		if err := s.add(rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	time.Sleep(20 * time.Millisecond)
+	n, size, oldest, dropped := s.stats()
+	if n+int(dropped) != 6 || dropped == 0 || size != int64(n*60) || oldest < 20*time.Millisecond || oldest > 5*time.Second {
+		t.Errorf("stats: %d results, %d bytes, oldest %s, dropped %d", n, size, oldest, dropped)
+	}
+	// What was dropped stays counted after the log line about it.
+	s.takeDropped()
+	if _, _, _, again := s.stats(); again != dropped {
+		t.Errorf("dropped total = %d, want %d", again, dropped)
 	}
 }

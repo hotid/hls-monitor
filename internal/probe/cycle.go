@@ -1,7 +1,10 @@
 package probe
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net"
 	"sort"
 	"sync"
 	"time"
@@ -22,6 +25,9 @@ type cycle struct {
 	// context holds, per variant, the circumstances of the check that
 	// every problem of that variant is reported with.
 	context map[string]map[string]any
+	// doubts counts, per problem, the occurrences that rest on timing alone:
+	// a slow download, a request that timed out. See overloaded.
+	doubts map[string]int
 
 	minTargetDuration float64
 	// minSlack is the shortest time, across live playlists, in which a
@@ -58,6 +64,37 @@ func (cy *cycle) problem(kind, severity, variant, format string, args ...any) {
 		return
 	}
 	cy.probs[key] = &Problem{Kind: kind, Severity: severity, Variant: variant, Message: fmt.Sprintf(format, args...), Count: 1}
+}
+
+// doubt marks the latest occurrence of a problem as resting on timing
+// alone: it would look the same if the checking process were the slow one.
+func (cy *cycle) doubt(kind, variant string) {
+	cy.mu.Lock()
+	if cy.doubts == nil {
+		cy.doubts = map[string]int{}
+	}
+	cy.doubts[kind+"\x00"+variant]++
+	cy.mu.Unlock()
+}
+
+// overloaded records that the process could not keep up during the cycle
+// and drops the problems that every occurrence of rests on timing.
+func (cy *cycle) overloaded(reason string) {
+	cy.mu.Lock()
+	defer cy.mu.Unlock()
+	cy.res.Overloaded = reason
+	for key, n := range cy.doubts {
+		if p, ok := cy.probs[key]; ok && n >= p.Count {
+			delete(cy.probs, key)
+		}
+	}
+	cy.res.Metrics = append(cy.res.Metrics, Metric{Name: "hls_check_overloaded", Value: 1})
+}
+
+// timedOut reports whether a request failed for taking too long.
+func timedOut(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout())
 }
 
 // lastMessage is what this cycle said about a playlist that could not be

@@ -243,6 +243,11 @@ type Result struct {
 	Segments  []Segment  `json:"segments,omitempty"`
 	Problems  []Problem  `json:"problems,omitempty"`
 	Snapshots []Snapshot `json:"snapshots,omitempty"`
+	// Overloaded names what the checking process itself was short of during
+	// the cycle; empty when it kept up. Findings that rest on timing alone
+	// are left out of such a result: a monitor that cannot keep up measures
+	// its own delay, not the stream's.
+	Overloaded string `json:"overloaded,omitempty"`
 }
 
 // Thresholds tune when observations become problems.

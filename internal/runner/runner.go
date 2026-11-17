@@ -6,8 +6,11 @@ package runner
 import (
 	"context"
 	"log/slog"
+	"math"
 	"math/rand/v2"
+	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/httpx"
@@ -26,15 +29,81 @@ type Runner struct {
 	secure   *httpx.Client
 	insecure *httpx.Client
 
+	// overloaded is given to every checker; see SetOverloaded.
+	overloaded func(since time.Time) string
+
 	mu   sync.Mutex
 	jobs map[int64]*job
 	wg   sync.WaitGroup
+
+	cycles, unreliable atomic.Int64
 }
 
 type job struct {
 	target  probe.Target
 	cancel  context.CancelFunc
 	trigger chan struct{}
+
+	// Of the latest cycle, guarded by the runner's lock: how late it
+	// started, how long the pause before it was meant to be, and whether
+	// it is still running.
+	lag, interval time.Duration
+	running       bool
+}
+
+// Stats tells how the runner is doing.
+type Stats struct {
+	Streams int `json:"streams"`
+	// Running is how many cycles are being made right now.
+	Running int `json:"running"`
+	// Behind counts the streams whose latest cycle started later than it
+	// should have by more than its own interval: the runner, or what it
+	// checks, is too slow for them.
+	Behind int `json:"behind"`
+	// LagP95 and LagMax tell how late cycles start, in seconds.
+	LagP95 float64 `json:"lag_p95_seconds"`
+	LagMax float64 `json:"lag_max_seconds"`
+	// Cycles counts the cycles made since the start, Unreliable those of
+	// them made while the process was overloaded.
+	Cycles     int64 `json:"cycles"`
+	Unreliable int64 `json:"unreliable_cycles"`
+}
+
+// Stats returns the current figures.
+func (r *Runner) Stats() Stats {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st := Stats{Streams: len(r.jobs), Cycles: r.cycles.Load(), Unreliable: r.unreliable.Load()}
+	lags := make([]float64, 0, len(r.jobs))
+	for _, j := range r.jobs {
+		if j.running {
+			st.Running++
+		}
+		if j.lag > max(j.interval, time.Second) {
+			st.Behind++
+		}
+		lags = append(lags, j.lag.Seconds())
+	}
+	if len(lags) > 0 {
+		sort.Float64s(lags)
+		st.LagP95 = math.Round(lags[min(len(lags)-1, len(lags)*95/100)]*1000) / 1000
+		st.LagMax = math.Round(lags[len(lags)-1]*1000) / 1000
+	}
+	return st
+}
+
+// SetOverloaded gives the runner the means to learn that the process
+// could not keep up (see probe.Checker.Overloaded). Call it before Sync.
+func (r *Runner) SetOverloaded(f func(since time.Time) string) { r.overloaded = f }
+
+func (r *Runner) checker(t probe.Target) *probe.Checker {
+	hc := r.secure
+	if t.Insecure {
+		hc = r.insecure
+	}
+	c := probe.New(t, hc)
+	c.Overloaded = r.overloaded
+	return c
 }
 
 // New creates a runner with no targets.
@@ -82,14 +151,11 @@ func (r *Runner) start(t probe.Target, startDelay time.Duration) {
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &job{target: t, cancel: cancel, trigger: make(chan struct{}, 1)}
 	r.jobs[t.ID] = j
-	hc := r.secure
-	if t.Insecure {
-		hc = r.insecure
-	}
+	c := r.checker(t)
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()
-		r.loop(ctx, j, probe.New(t, hc), startDelay)
+		r.loop(ctx, j, c, startDelay)
 	}()
 }
 
@@ -102,13 +168,23 @@ func (r *Runner) loop(ctx context.Context, j *job, c *probe.Checker, startDelay 
 	first := true
 	next := time.Now()
 	for {
-		lag := time.Since(next)
+		lag := max(time.Since(next), 0)
 		start := time.Now()
+		r.mu.Lock()
+		j.lag, j.interval, j.running = lag, c.Interval(), true
+		r.mu.Unlock()
 		res := c.Run(ctx)
+		r.mu.Lock()
+		j.running = false
+		r.mu.Unlock()
 		if ctx.Err() != nil {
 			return // a cancelled cycle reports failures that are not real
 		}
-		res.Metrics = append(res.Metrics, probe.Metric{Name: "hls_check_lag_seconds", Value: max(lag.Seconds(), 0)})
+		r.cycles.Add(1)
+		if res.Overloaded != "" {
+			r.unreliable.Add(1)
+		}
+		res.Metrics = append(res.Metrics, probe.Metric{Name: "hls_check_lag_seconds", Value: lag.Seconds()})
 		r.sink(ctx, res)
 
 		// The interval counts from the start of a cycle; a cycle that took
@@ -166,10 +242,7 @@ func (r *Runner) CheckNow(id int64) bool {
 // Checker returns a checker for t that shares the runner's HTTP clients but
 // is not one of its loops: the caller runs it and keeps what it finds.
 func (r *Runner) Checker(t probe.Target) *probe.Checker {
-	if t.Insecure {
-		return probe.New(t, r.insecure)
-	}
-	return probe.New(t, r.secure)
+	return r.checker(t)
 }
 
 // Count returns the number of streams being checked.

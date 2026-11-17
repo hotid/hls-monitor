@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { api } from '@/api'
-import { fmtAgo, fmtFull, fmtMs } from '@/format'
+import { fmtAgo, fmtBytes, fmtDuration, fmtFull, fmtMs, fmtNumber } from '@/format'
 import { t } from '@/i18n'
 import { timeValue, useSort } from '@/sort'
 import { useLive } from '@/stores/live'
@@ -30,6 +30,32 @@ function state(a: Agent): { cls: string; text: string } {
   if (a.kind === 'local') return { cls: 'ok', text: t('agents.running') }
   if (!a.enrolled) return { cls: 'warn', text: t('agents.waitingToConnect') }
   return a.online ? { cls: 'ok', text: t('agents.online') } : { cls: 'fail', text: t('agents.offline') }
+}
+
+/** What needs attention in what the agent tells about itself. */
+function notes(a: Agent): { cls: string; text: string; hint?: string }[] {
+  const st = a.status
+  if (!st || !a.enabled) return []
+  const out: { cls: string; text: string; hint?: string }[] = []
+  if (st.overloaded) {
+    out.push({
+      cls: 'fail',
+      text: t('agents.overloaded'),
+      hint: t('agents.overloadedHint', { cores: fmtNumber(st.cpu_cores, 1), limit: fmtNumber(st.cpu_limit, 1) }),
+    })
+  }
+  if (st.behind > 0) out.push({ cls: 'warn', text: t('agents.behind', { n: st.behind }, st.behind), hint: t('agents.behindHint') })
+  if (st.queue_failing) out.push({ cls: 'fail', text: t('agents.queueFailing') })
+  // Results leave the queue every couple of seconds; older ones mean they do not.
+  if (st.queue_results > 0 && st.queue_oldest_sec >= 30) {
+    out.push({
+      cls: 'warn',
+      text: t('agents.queueWaiting', { n: st.queue_results, age: fmtDuration(st.queue_oldest_sec) }, st.queue_results),
+      hint: t('agents.queueWaitingHint', { size: fmtBytes(st.queue_bytes) }),
+    })
+  }
+  if (st.queue_dropped > 0) out.push({ cls: 'fail', text: t('agents.queueDropped', { n: st.queue_dropped }, st.queue_dropped) })
+  return out
 }
 
 const sort = useSort(() => agents.value, {
@@ -155,6 +181,7 @@ function localOnly(url: string): boolean {
                 <div v-if="a.kind === 'remote' && !a.enrolled && a.enroll_expires" class="muted" style="margin-top: 3px">
                   {{ t('agents.tokenIsValidUntil', { time: fmtFull(a.enroll_expires) }) }}
                 </div>
+                <div v-for="n in notes(a)" :key="n.text" class="agent-note" :class="n.cls" :title="n.hint">{{ n.text }}</div>
               </td>
               <td class="mono right">{{ a.streams }}</td>
               <td class="hide-narrow nowrap" :title="fmtFull(a.last_seen)">{{ a.kind === 'local' ? '—' : fmtAgo(a.last_seen, live.updatedAt) }}</td>
@@ -231,5 +258,16 @@ function localOnly(url: string): boolean {
 .lead {
   max-width: 78ch;
   margin: -6px 0 14px;
+}
+.agent-note {
+  margin-top: 3px;
+  font-size: 12px;
+  cursor: help;
+}
+.agent-note.fail {
+  color: #ff8a93;
+}
+.agent-note.warn {
+  color: var(--accent-warm);
 }
 </style>

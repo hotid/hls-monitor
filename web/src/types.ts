@@ -103,6 +103,24 @@ export interface Agent {
   clock_offset_ms: number | null
   online: boolean
   streams: number
+  /** What the agent last told about itself; absent while it is offline. */
+  status?: AgentStatus
+}
+
+export interface AgentStatus {
+  queue_results: number
+  queue_bytes: number
+  queue_oldest_sec: number
+  queue_dropped: number
+  queue_failing?: boolean
+  /** What the agent's host is short of, if anything. */
+  overloaded?: string
+  streams: number
+  /** Streams checked later than they should be. */
+  behind: number
+  cpu_cores: number
+  cpu_limit: number
+  memory_bytes: number
 }
 
 export interface Enrollment {
@@ -285,6 +303,9 @@ export interface SystemInfo {
     disk_free_bytes: number
     disk_total_bytes: number
   }
+  load: { overloaded: boolean; reason?: string; cpu_cores: number; cpu_limit: number; memory_bytes: number; memory_limit_bytes: number }
+  checks: { streams: number; running: number; behind: number; lag_p95_seconds: number; lag_max_seconds: number }
+  results: { stored: number; repeated: number; failed: number }
 }
 
 export interface SourceSeen {

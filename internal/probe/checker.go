@@ -32,6 +32,10 @@ type Checker struct {
 	th  Thresholds
 	now func() time.Time
 
+	// Overloaded, when set, tells what the process was short of at any time
+	// since the given moment, or "" when it kept up. Set it before Run.
+	Overloaded func(since time.Time) string
+
 	// plSource is the server that last answered for each playlist.
 	mu       sync.Mutex
 	plSource map[string]*Endpoint
@@ -170,6 +174,11 @@ func (c *Checker) Run(ctx context.Context) *Result {
 }
 
 func (c *Checker) finish(cy *cycle, start time.Time) *Result {
+	if c.Overloaded != nil {
+		if reason := c.Overloaded(start); reason != "" {
+			cy.overloaded(reason)
+		}
+	}
 	switch {
 	case cy.anyLive && cy.minTargetDuration > 0:
 		c.interval = min(max(time.Duration(cy.minTargetDuration*float64(time.Second))/2, time.Second), 15*time.Second)
@@ -217,6 +226,9 @@ func (c *Checker) playlistResponse(cy *cycle, variant, reqURL string, resp *http
 		}
 		cy.metric("hls_playlist_up", variant, 0)
 		cy.problem(ProbPlaylistUnreachable, SevCrit, variant, "playlist request failed: %v", err)
+		if timedOut(err) {
+			cy.doubt(ProbPlaylistUnreachable, variant)
+		}
 		return false
 	}
 	cy.metric("hls_playlist_dns_seconds", variant, resp.DNS.Seconds())

@@ -23,6 +23,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/metrics"
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/runner"
+	"github.com/hotid/hls-monitor/internal/selfstat"
 	"github.com/hotid/hls-monitor/internal/store"
 	"github.com/hotid/hls-monitor/internal/webui"
 )
@@ -127,16 +128,34 @@ func run(cfg config, log *slog.Logger) error {
 	}
 	ing := ingest.New(st, mx, log)
 
+	bg, cancelBG := context.WithCancel(context.Background())
+	defer cancelBG()
 	probe.SetBodyMemory(int64(cfg.bodyMemoryMB) << 20)
 	local := runner.New(func(ctx context.Context, r *probe.Result) {
 		// The request context of a check is gone when the runner stops; a
 		// result that was produced is still worth storing.
 		actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
-		if err := ing.Apply(actx, store.LocalAgentID, r); err != nil && !errors.Is(err, store.ErrNotFound) {
-			log.Error("cannot store check result", "stream", r.TargetID, "error", err)
+		// The stream's next cycle waits for this one to be stored: a
+		// database that cannot keep up slows the checks down instead of
+		// losing what they found.
+		for attempt := 1; ; attempt++ {
+			err := ing.Apply(actx, store.LocalAgentID, r)
+			if err == nil || errors.Is(err, store.ErrNotFound) || errors.Is(err, ingest.ErrStale) {
+				return
+			}
+			if attempt == 3 || actx.Err() != nil {
+				log.Error("cannot store check result", "stream", r.TargetID, "attempts", attempt, "error", err)
+				return
+			}
+			select {
+			case <-actx.Done():
+			case <-time.After(time.Duration(attempt) * time.Second):
+			}
 		}
 	}, "hls-monitor/"+version, log)
+	load := selfstat.Start(bg)
+	local.SetOverloaded(load.Overloaded)
 
 	var proxies []string
 	for _, p := range strings.Split(cfg.trustedProxies, ",") {
@@ -156,10 +175,10 @@ func run(cfg config, log *slog.Logger) error {
 		AgentImage:     cfg.agentImage,
 		BasePath:       basePath,
 		TrustedProxies: proxies,
+		Load:           load,
 	}, st, mx, ing, local, webui.Handler(basePath), log)
 	srv.SyncLocal(ctx)
 
-	bg, cancelBG := context.WithCancel(context.Background())
 	done := make(chan struct{}, 2)
 	go func() { mx.Run(bg); done <- struct{}{} }()
 	go func() { housekeeping(bg, st, srv, cfg, log); done <- struct{}{} }()

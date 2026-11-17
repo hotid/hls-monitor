@@ -30,7 +30,9 @@ for (const code of readdirSync(localesDir).filter((d) => statSync(join(localesDi
 }
 
 const all = new Set([...languages.values()].flatMap((texts) => [...texts.keys()]))
-const params = (text) => [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(',')
+// A parameter repeated in every form of a plural text is one parameter:
+// languages differ in the number of forms.
+const params = (text) => [...new Set([...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]))].sort().join(',')
 // Forms of a plural text are separated by " | ".
 const forms = (text) => text.split(' | ').length
 

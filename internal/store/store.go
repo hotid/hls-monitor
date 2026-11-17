@@ -32,6 +32,8 @@ type Store struct {
 	journal *sql.DB
 	path    string
 	opts    Options
+	// writing holds one token: the right to run a write transaction.
+	writing chan struct{}
 }
 
 // Open opens the storage with default options.
@@ -76,7 +78,7 @@ func OpenWith(ctx context.Context, path string, opts Options) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, journal: journal, path: path, opts: opts}, nil
+	return &Store{db: db, journal: journal, path: path, opts: opts, writing: make(chan struct{}, 1)}, nil
 }
 
 // reclaim gives back to the file system the room left by a table that was
@@ -119,7 +121,19 @@ type Tx struct {
 }
 
 // Tx runs fn in a transaction, committing when it returns nil.
+//
+// SQLite lets one transaction write at a time and makes the others poll
+// for their turn until a timeout; under load some never get it and fail
+// with "database is locked". Transactions of this process therefore wait
+// for each other here, in the order they came and for as long as ctx
+// allows, and reach SQLite one at a time.
 func (s *Store) Tx(ctx context.Context, fn func(tx *Tx) error) error {
+	select {
+	case s.writing <- struct{}{}:
+		defer func() { <-s.writing }()
+	case <-ctx.Done():
+		return fmt.Errorf("waiting for the database: %w", ctx.Err())
+	}
 	t, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -129,6 +143,12 @@ func (s *Store) Tx(ctx context.Context, fn func(tx *Tx) error) error {
 		return err
 	}
 	return t.Commit()
+}
+
+// Ping reports whether the database answers.
+func (s *Store) Ping(ctx context.Context) error {
+	var one int
+	return s.db.QueryRowContext(ctx, "SELECT 1").Scan(&one)
 }
 
 func (s *Store) tx() *Tx { return &Tx{q: s.db} }

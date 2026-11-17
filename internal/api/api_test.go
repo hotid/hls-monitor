@@ -11,6 +11,7 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -652,4 +653,87 @@ func TestIncidentScope(t *testing.T) {
 		t.Errorf("server scope = %+v; want streams b and c on the same server, one elsewhere", sc)
 	}
 	c.want(404, "GET", "/api/v1/incidents/999999/scope", nil, nil)
+}
+
+func TestSelfDiagnostics(t *testing.T) {
+	e := newEnv(t)
+	admin := e.login("admin")
+	anon := e.client()
+
+	var ready readiness
+	anon.want(http.StatusOK, "GET", "/readyz", nil, &ready)
+	if ready.Status != "ok" || ready.Checks["database"] != "ok" || ready.Checks["time_series"] != "disabled" || ready.Checks["load"] != "ok" {
+		t.Errorf("readiness = %+v", ready)
+	}
+
+	// The server's own metrics need an API token, as the rest of what
+	// monitoring systems read.
+	anon.want(http.StatusUnauthorized, "GET", "/metrics", nil, nil)
+	admin.want(http.StatusUnauthorized, "GET", "/metrics", nil, nil)
+	var tok createdToken
+	admin.want(http.StatusCreated, "POST", "/api/v1/tokens", map[string]string{"name": "prometheus"}, &tok)
+	var en enrollment
+	admin.want(http.StatusCreated, "POST", "/api/v1/agents", map[string]string{"name": "edge-1"}, &en)
+	var enrolled agentproto.EnrollResponse
+	anon.want(http.StatusOK, "POST", "/api/agent/v1/enroll", map[string]string{"token": en.Token, "version": "1.0"}, &enrolled)
+
+	// An agent tells about itself with every request.
+	agent := e.client()
+	agent.headers["Authorization"] = "Bearer " + enrolled.Key
+	agent.headers[agentproto.HeaderStatus] = `{"queue_results":7,"queue_bytes":4096,"queue_oldest_sec":12.5,"queue_dropped":3,"overloaded":"processor","streams":2,"behind":1}`
+	agent.want(http.StatusOK, "GET", "/api/agent/v1/config", nil, nil)
+
+	var agents []agentView
+	admin.want(http.StatusOK, "GET", "/api/v1/agents", nil, &agents)
+	if len(agents) != 2 || agents[0].Status == nil || agents[1].Status == nil {
+		t.Fatalf("agents = %+v", agents)
+	}
+	if st := agents[1].Status; st.QueueResults != 7 || st.QueueDropped != 3 || st.Overloaded != "processor" || st.Behind != 1 {
+		t.Errorf("status of the remote agent = %+v", st)
+	}
+
+	scrape := e.client()
+	scrape.headers["Authorization"] = "Bearer " + tok.Token
+	code, body := scrape.do("GET", "/metrics", nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /metrics = %d: %s", code, body)
+	}
+	for _, want := range []string{
+		`hlsmon_build_info{version="test"} 1`,
+		"hlsmon_overloaded 0",
+		"# TYPE hlsmon_results_total counter",
+		`hlsmon_results_total{outcome="failed"} 0`,
+		"hlsmon_local_streams 0",
+		`hlsmon_agent_online{agent="edge-1"} 1`,
+		`hlsmon_agent_queue_results{agent="edge-1"} 7`,
+		`hlsmon_agent_queue_oldest_seconds{agent="edge-1"} 12.5`,
+		`hlsmon_agent_queue_dropped_total{agent="edge-1"} 3`,
+		`hlsmon_agent_overloaded{agent="edge-1"} 1`,
+	} {
+		if !strings.Contains(string(body), want+"\n") {
+			t.Errorf("metrics lack %q", want)
+		}
+	}
+	// Every sample line is a name, optional labels and a number.
+	sample := regexp.MustCompile(`^[a-z_]+(\{[a-z_]+="[^"]*"(,[a-z_]+="[^"]*")*\})? -?[0-9.e+]+$`)
+	seenType := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+		if strings.HasPrefix(line, "# TYPE ") {
+			name := strings.Fields(line)[2]
+			if seenType[name] {
+				t.Errorf("TYPE of %s is given twice", name)
+			}
+			seenType[name] = true
+			continue
+		}
+		if !strings.HasPrefix(line, "# ") && !sample.MatchString(line) {
+			t.Errorf("malformed line %q", line)
+		}
+	}
+
+	var sys systemResponse
+	admin.want(http.StatusOK, "GET", "/api/v1/system", nil, &sys)
+	if sys.Load.Overloaded || sys.Results.Failed != 0 {
+		t.Errorf("system = %+v", sys)
+	}
 }

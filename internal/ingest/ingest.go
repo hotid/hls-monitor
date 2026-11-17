@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/metrics"
@@ -30,6 +31,37 @@ type Ingester struct {
 	// CloseEventAfter is how long an informational incident stays open
 	// after its last occurrence.
 	CloseEventAfter time.Duration
+
+	stored, repeated, failed atomic.Int64
+}
+
+// Stats counts what became of the results given to Apply since the start.
+type Stats struct {
+	Stored int64 `json:"stored"`
+	// Repeated were refused as delivered before (ErrStale).
+	Repeated int64 `json:"repeated"`
+	// Failed could not be stored; an agent sends such a result again, a
+	// result of the server's own checks is lost after a few attempts.
+	Failed int64 `json:"failed"`
+}
+
+// Stats returns the counters.
+func (in *Ingester) Stats() Stats {
+	return Stats{Stored: in.stored.Load(), Repeated: in.repeated.Load(), Failed: in.failed.Load()}
+}
+
+// Apply stores one result; see apply. It counts the outcome.
+func (in *Ingester) Apply(ctx context.Context, agentID int64, r *probe.Result) error {
+	err := in.apply(ctx, agentID, r)
+	switch {
+	case err == nil:
+		in.stored.Add(1)
+	case errors.Is(err, ErrStale):
+		in.repeated.Add(1)
+	case !errors.Is(err, store.ErrNotFound):
+		in.failed.Add(1)
+	}
+	return err
 }
 
 // New creates an ingester. mx may be nil.
@@ -66,7 +98,7 @@ var summaryAggregates = []struct {
 // already stored for the same stream from the same agent.
 var ErrStale = errors.New("the result is not newer than what is already stored")
 
-// Apply stores one result reported by one agent. It returns store.ErrNotFound
+// apply stores one result reported by one agent. It returns store.ErrNotFound
 // when the stream no longer exists.
 //
 // An agent delivers the results of a stream in the order it made them, so a
@@ -75,7 +107,7 @@ var ErrStale = errors.New("the result is not newer than what is already stored")
 // It is refused with ErrStale and changes nothing; that is what makes
 // delivery safe to repeat, and keeps an old result from replacing the
 // state a newer one has set.
-func (in *Ingester) Apply(ctx context.Context, agentID int64, r *probe.Result) error {
+func (in *Ingester) apply(ctx context.Context, agentID int64, r *probe.Result) error {
 	now := in.now()
 	// Agents may deliver results late, but a time from the future is a clock problem.
 	if r.Time.IsZero() || r.Time.After(now.Add(5*time.Minute)) {
@@ -244,8 +276,10 @@ func (in *Ingester) Apply(ctx context.Context, agentID int64, r *probe.Result) e
 			case r.Variants != nil && !active[inc.VariantKey]:
 				// The variant is gone from the stream, and its problems with it.
 				err = tx.CloseIncident(ctx, inc.ID, t)
-			case !up[inc.VariantKey]:
-				// The variant was not reached in this cycle: no evidence either way.
+			case !up[inc.VariantKey] || r.Overloaded != "":
+				// The variant was not reached in this cycle, or the checker
+				// could not keep up and left out what rests on timing: no
+				// evidence either way.
 			case inc.Severity == probe.SevInfo && t.Sub(inc.LastSeen) < in.CloseEventAfter:
 				// Something a source does over and over is one event that
 				// keeps recurring, not a new one every minute.
@@ -337,5 +371,8 @@ func summarize(r *probe.Result, streamLevel map[string]float64, perVariant map[s
 		}
 	}
 	out["problems"] = float64(problems)
+	if r.Overloaded != "" {
+		out["overloaded"] = 1
+	}
 	return out
 }

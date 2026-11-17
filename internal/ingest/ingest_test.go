@@ -414,3 +414,33 @@ func TestRepeatedAndLateResults(t *testing.T) {
 		t.Errorf("the state must stay as the newest result left it, got %+v", states[0])
 	}
 }
+
+// A result made by an overloaded checker lacks what rests on timing; that
+// is no evidence that the problem is over.
+func TestOverloadedResultClosesNothing(t *testing.T) {
+	e := newEnv(t)
+	e.apply(e.result(twoVariants, probe.Problem{Kind: probe.ProbSegmentSlow, Severity: probe.SevWarn, Variant: "lo.m3u8", Message: "slow", Count: 1}))
+	for range 6 {
+		e.clock = e.clock.Add(20 * time.Second)
+		r := e.result(twoVariants)
+		r.Overloaded = "processor"
+		e.apply(r)
+	}
+	if open := e.incidents(true); len(open) != 1 {
+		t.Fatalf("the incident must stay open while the checker is overloaded: %+v", open)
+	}
+	st, _ := e.st.StreamStates(ctx, e.stream.ID)
+	if len(st) != 1 || st[0].Summary["overloaded"] != 1 {
+		t.Errorf("the state must say the check was made under overload: %+v", st)
+	}
+	for range 4 {
+		e.clock = e.clock.Add(20 * time.Second)
+		e.apply(e.result(twoVariants))
+	}
+	if open := e.incidents(true); len(open) != 0 {
+		t.Errorf("clean checks without overload close it: %+v", open)
+	}
+	if s := e.in.Stats(); s.Stored != 11 || s.Failed != 0 {
+		t.Errorf("stats = %+v", s)
+	}
+}

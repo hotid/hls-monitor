@@ -16,6 +16,8 @@ type budget struct {
 	mu    sync.Mutex
 	limit int64
 	used  int64
+	// waiting is how many downloads wait for room.
+	waiting int
 	// freed is closed and replaced every time room is given back.
 	freed chan struct{}
 }
@@ -36,11 +38,17 @@ func (b *budget) acquire(ctx context.Context, n int64) int64 {
 			return n
 		}
 		freed := b.freed
+		b.waiting++
 		b.mu.Unlock()
 		select {
 		case <-ctx.Done():
-			return 0
 		case <-freed:
+		}
+		b.mu.Lock()
+		b.waiting--
+		b.mu.Unlock()
+		if ctx.Err() != nil {
+			return 0
 		}
 	}
 }
@@ -76,6 +84,15 @@ func SetBodyMemory(bytes int64) {
 	if bytes > 0 {
 		bodies = newBudget(bytes)
 	}
+}
+
+// BodyMemory reports how many bytes of segment bodies are held, how many
+// may be, and how many downloads wait for room.
+func BodyMemory() (used, limit int64, waiting int) {
+	b := bodies
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.used, b.limit, b.waiting
 }
 
 // expectedBody estimates the size of a segment before it is requested:
