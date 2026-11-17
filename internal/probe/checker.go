@@ -112,6 +112,9 @@ func (c *Checker) Interval() time.Duration {
 	return c.interval
 }
 
+// freshJitter picks a moment within a period; tests make it certain.
+var freshJitter = func(d time.Duration) time.Duration { return time.Duration(rand.Int64N(int64(d))) }
+
 func (c *Checker) timeout() time.Duration {
 	if c.t.TimeoutSec > 0 {
 		return time.Duration(c.t.TimeoutSec * float64(time.Second))
@@ -143,9 +146,9 @@ func (c *Checker) Run(ctx context.Context) *Result {
 	fresh := c.freshAt.IsZero() || start.Sub(c.freshAt) >= freshEvery
 	switch {
 	case c.freshAt.IsZero():
-		// Streams start together; their next turns are spread over half
-		// the period so that they do not all open connections at once.
-		c.freshAt = start.Add(-time.Duration(rand.Int64N(int64(freshEvery / 2))))
+		// Streams start together; their next turns are spread over the
+		// period, so that connections are opened evenly and not all at once.
+		c.freshAt = start.Add(-freshJitter(freshEvery))
 	case fresh:
 		c.freshAt = start
 	}

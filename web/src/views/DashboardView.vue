@@ -343,7 +343,7 @@ const creating = ref(false)
               <td class="mono right" :style="s.network?.lossy ? 'color: var(--accent-warm)' : ''" :title="s.network?.lossy ? t('dashboard.lossyServer') : ''">{{ fmtUnit(lossOf(s), 'pct') }}</td>
               <td class="muted failing">
                 <template v-for="(f, i) in s.failing_streams" :key="f.id"><template v-if="i">, </template><RouterLink :to="{ name: 'stream', params: { id: f.id } }">{{ f.name }}</RouterLink></template>
-                <RouterLink v-if="s.fail > s.failing_streams.length" :to="{ name: 'server', params: { host: s.host, ip: s.ip } }"> {{ t('dashboard.andMore', { n: s.fail - s.failing_streams.length }) }}</RouterLink>
+                <RouterLink v-if="s.fail > s.failing_streams.length" :to="{ name: 'server', params: { host: s.host, ip: s.ip } }" style="margin-left: 0.3em">{{ t('dashboard.andMore', { n: s.fail - s.failing_streams.length }) }}</RouterLink>
               </td>
             </tr>
             <FilterEmpty :sort="serverSort" />
