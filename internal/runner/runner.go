@@ -45,8 +45,8 @@ type job struct {
 	trigger chan struct{}
 
 	// Of the latest cycle, guarded by the runner's lock: how late it
-	// started, how long the pause before it was meant to be, and whether
-	// it is still running.
+	// started for reasons of the runner's own (see Stats.Behind), how long
+	// the pause before it was meant to be, and whether it is still running.
 	lag, interval time.Duration
 	running       bool
 }
@@ -57,10 +57,14 @@ type Stats struct {
 	// Running is how many cycles are being made right now.
 	Running int `json:"running"`
 	// Behind counts the streams whose latest cycle started later than it
-	// should have by more than its own interval: the runner, or what it
-	// checks, is too slow for them.
+	// should have by more than its own interval, not counting the time the
+	// check before it took: a stream that answers slowly makes its own
+	// checks late, and that is reported as its problem. What is left is
+	// the runner's: results that wait to be stored, a processor that is
+	// busy.
 	Behind int `json:"behind"`
-	// LagP95 and LagMax tell how late cycles start, in seconds.
+	// LagP95 and LagMax tell how late cycles start for such reasons, in
+	// seconds.
 	LagP95 float64 `json:"lag_p95_seconds"`
 	LagMax float64 `json:"lag_max_seconds"`
 	// Cycles counts the cycles made since the start, Unreliable those of
@@ -167,13 +171,17 @@ func (r *Runner) loop(ctx context.Context, j *job, c *probe.Checker, startDelay 
 	}
 	first := true
 	next := time.Now()
+	var overran time.Duration
 	for {
 		lag := max(time.Since(next), 0)
 		start := time.Now()
 		r.mu.Lock()
-		j.lag, j.interval, j.running = lag, c.Interval(), true
+		// overran is how much of the lag the previous check explains by
+		// having taken longer than the interval.
+		j.lag, j.interval, j.running = max(lag-overran, 0), c.Interval(), true
 		r.mu.Unlock()
 		res := c.Run(ctx)
+		overran = max(time.Since(start)-c.Interval(), 0)
 		r.mu.Lock()
 		j.running = false
 		r.mu.Unlock()

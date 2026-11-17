@@ -2,8 +2,10 @@ package runner
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -109,5 +111,45 @@ func TestStopDoesNotReportCancelledCycles(t *testing.T) {
 	}
 	if n := col.count(1); n != 0 {
 		t.Errorf("an interrupted cycle was reported %d times", n)
+	}
+}
+
+// A stream that answers slowly makes its own checks late; that is its
+// problem and is reported as such. The runner is behind only when the
+// delay is its own: here, a result that takes long to be stored.
+func TestBehindIsTheRunnersOwnDelay(t *testing.T) {
+	origin := hlstest.New(hlstest.Options{})
+	origin.Publish(4)
+	origin.End()
+	var delay atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		time.Sleep(time.Duration(delay.Load()))
+		origin.Handler().ServeHTTP(w, req)
+	}))
+	defer srv.Close()
+
+	var store atomic.Int64
+	var cycles atomic.Int64
+	r := New(func(context.Context, *probe.Result) {
+		time.Sleep(time.Duration(store.Load()))
+		cycles.Add(1)
+	}, "test", nil)
+	defer r.Stop()
+	r.Sync([]probe.Target{{ID: 1, URL: srv.URL + "/v0/index.m3u8", Level: probe.LevelPlaylist, IntervalSec: 0.2, Revision: 1}})
+
+	waitFor(t, "the first cycle", func() bool { return cycles.Load() >= 1 })
+	delay.Store(int64(1300 * time.Millisecond))
+	from := cycles.Load()
+	waitFor(t, "cycles against a slow stream", func() bool { return cycles.Load() >= from+3 })
+	if st := r.Stats(); st.Behind != 0 || st.Streams != 1 || st.Cycles < 3 {
+		t.Errorf("a slow stream must not count as the runner being behind: %+v", st)
+	}
+
+	delay.Store(0)
+	store.Store(int64(1300 * time.Millisecond))
+	from = cycles.Load()
+	waitFor(t, "cycles with slow storing", func() bool { return cycles.Load() >= from+2 })
+	if st := r.Stats(); st.Behind != 1 || st.LagMax < 1 {
+		t.Errorf("results that wait to be stored make the runner late: %+v", st)
 	}
 }
