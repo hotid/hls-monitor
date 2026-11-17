@@ -21,8 +21,15 @@ func tcpInfo(conn *net.TCPConn) (TCPInfo, bool) {
 	}); err != nil || gerr != nil || info == nil {
 		return TCPInfo{}, false
 	}
+	// The smoothed time includes how long the other side put off its
+	// acknowledgement, tens of milliseconds on a connection that waits for
+	// an answer; the smallest of the last minutes does not.
+	rtt := info.Rtt
+	if info.Min_rtt > 0 && info.Min_rtt < rtt {
+		rtt = info.Min_rtt
+	}
 	return TCPInfo{
-		RTT:         time.Duration(info.Rtt) * time.Microsecond,
+		RTT:         time.Duration(rtt) * time.Microsecond,
 		RTTVar:      time.Duration(info.Rttvar) * time.Microsecond,
 		Retransmits: info.Total_retrans,
 		OutOfOrder:  info.Rcv_ooopack,

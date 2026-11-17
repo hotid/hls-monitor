@@ -10,6 +10,20 @@ The monitor behaves like a player: it reads playlists, downloads every new segme
 
 The interface is available in English and Russian: the switch is in the top bar, and the default follows the browser language.
 
+## Features
+
+- **Checks at four depths, set per stream:** playlists only; the first kilobytes of every segment; whole segments; whole segments with the container parsed. The cheapest useful level costs a few percent of the stream's bitrate.
+- **Looks inside the media without decoding it:** MPEG-TS and fMP4 — continuity counters, tables, tracks, timestamps, frames and keyframes, GOP, frame rate; H.264, HEVC and MPEG-2, interlaced included. Compared with ffprobe on real broadcast segments.
+- **Incidents with their evidence:** every finding keeps the figures it was concluded from, the playlist as it was and as it had been at the check before, the redirects followed and the server that answered.
+- **Where to look for the cause:** whether other vantage points saw the same, and whether other streams of the same server have it.
+- **Watching through the monitor:** a player in the stream's page, fed by the server or by an agent — browser → server → agent → origin — with the choice of one particular server behind a balancer, and charts of every hop: speed, delay, round trip time, loss.
+- **Live diagnosis:** a separate check once a second with the result shown at once.
+- **Agents in other networks:** they make outgoing connections only, queue results on disk while the server is away, and report the state of their own link to the server.
+- **Knows when it cannot keep up itself:** an overloaded monitor does not report its own delay as a failure of the streams, and catches up instead of falling further behind.
+- **Careful with what it is pointed at:** a stream on a public address cannot lead the monitor into its own network; stream headers with tokens go only to the stream's own site; a playlist that crashes the parser is a finding, not a crash.
+- **Its own health:** `/readyz`, Prometheus `/metrics`, a Zabbix template; time series survive an outage of VictoriaMetrics in a queue on disk.
+- **Interface in English and Russian,** an API with a Swagger description, users with two roles.
+
 ## Screenshots
 
 Taken on a demo stand with simulated streams.
@@ -29,6 +43,10 @@ An incident with the figures it was concluded from.
 A playlist snapshot next to the playlist of the previous check.
 
 ![Playlist snapshot](docs/screenshots/snapshot.png)
+
+Watching a stream through an agent, with charts of every hop of the way.
+
+![Watching](docs/screenshots/watch.png)
 
 Live diagnosis: a separate check every second, shown as it happens.
 
