@@ -106,14 +106,18 @@ func (c *Checker) noteCoded(v Variant, st *variantState, info *media.Info, at ti
 	// A stream said to show a still picture is not asked what it shows;
 	// what it sounds like is another matter.
 	if video := info.Video(); video != nil && c.t.Picture == PictureCheck {
-		c.noteLoop(v.Key, v.Key, &st.keys, video.KeyHashes, false, slates, at)
+		c.noteLoop(v.Key, v.Key, &st.keys, video.KeyHashes, false, false, slates, at)
 	}
 	if audio := info.Audio(); audio != nil {
-		c.noteLoop(v.Key+soundKey, v.Key, &st.sound, audio.SoundHashes, true, slates, at)
+		// Sound that goes round with its picture is the picture's clip,
+		// and is told as that when the pictures have come round enough.
+		c.noteLoop(v.Key+soundKey, v.Key, &st.sound, audio.SoundHashes, true, st.keys.repeated.n > 0, slates, at)
 	}
 }
 
-func (c *Checker) noteLoop(key, variant string, k *coded, hashes []uint64, sound bool, slates []Slate, at time.Time) {
+// noteLoop takes the frames of one track of a segment. With quiet set a
+// clip found going round is not told: something else tells it.
+func (c *Checker) noteLoop(key, variant string, k *coded, hashes []uint64, sound, quiet bool, slates []Slate, at time.Time) {
 	if len(hashes) == 0 {
 		return
 	}
@@ -178,7 +182,7 @@ func (c *Checker) noteLoop(key, variant string, k *coded, hashes []uint64, sound
 		}
 		c.loops[key] = standingProblem{at: at, kind: ProbPictureSlate, severity: SevCrit, variant: variant, message: message,
 			details: []any{"slate", k.known, "known_by", "coded frames"}}
-	case k.repeated.n >= loopSegments && at.Sub(k.repeated.since) >= loopSpan:
+	case !quiet && k.repeated.n >= loopSegments && at.Sub(k.repeated.since) >= loopSpan:
 		// The clip is the frames seen since it began.
 		var clip []uint64
 		for h, t := range k.seen {

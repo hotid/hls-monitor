@@ -371,6 +371,9 @@ func (c *Checker) reportLooks(cy *cycle) {
 	// A clip going round is told once: by the name of the slate when a
 	// look knew it, and otherwise as what it is — not as a picture that
 	// does not change as well, nor as sound that goes round with it.
+	if slate || len(clips) > 0 {
+		c.clipAt = c.now()
+	}
 	switch {
 	case slate:
 	case len(clips) > 0:
@@ -381,7 +384,10 @@ func (c *Checker) reportLooks(cy *cycle) {
 			}
 		}
 		standing = append(kept, clips...)
-	case c.now().Sub(c.ownAt) >= knownFor:
+	case c.now().Sub(c.ownAt) >= knownFor && c.now().Sub(c.clipAt) >= knownFor:
+		// Not while the pictures went round a moment ago either: a clip
+		// with a keyframe that was not seen before drops out for a
+		// segment, and its sound does not.
 		standing = append(standing, sounds...)
 	}
 	c.mu.Unlock()

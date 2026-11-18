@@ -35,6 +35,12 @@ func TestClipGoingRound(t *testing.T) {
 		}
 	}
 
+	// The sound of the clip goes round with it, and is not told apart.
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelContainer)
+	if n, _ := watch(f, 3*time.Minute, ProbAudioLoop); n != 0 {
+		t.Errorf("the sound of a clip going round was told by itself %d times", n)
+	}
+
 	// A stream said to show a still picture, or not to be looked at, is left alone.
 	for _, setting := range []string{PictureStatic, PictureOff} {
 		f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelContainer)

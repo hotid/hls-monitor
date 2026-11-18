@@ -62,6 +62,8 @@ type Checker struct {
 	// ownAt is when a playlist was last found to play a clip known to be
 	// the channel's own.
 	ownAt time.Time
+	// clipAt is when a clip going round, or a slate, was last told.
+	clipAt time.Time
 
 	// plSource is the server that last answered for each playlist.
 	mu       sync.Mutex
