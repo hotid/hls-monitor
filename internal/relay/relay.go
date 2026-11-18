@@ -30,6 +30,7 @@ func Fetch(ctx context.Context, hc *httpx.Client, job agentproto.FetchRequest) (
 		TotalMs: ms(resp.Total), Bytes: resp.Size, Redirects: resp.Redirects, Reused: resp.ConnReused}
 	if resp.TCP != nil {
 		res.Timing.Measured, res.Timing.RTTMs, res.Timing.OutOfOrder = true, ms(resp.TCP.RTT), int64(resp.TCP.OutOfOrder)
+		res.Timing.Retransmits, res.Timing.Segments = int64(resp.TCP.NewRetransmits), int64(resp.TCP.NewSegsOut)
 	}
 	if resp.Header != nil {
 		res.ContentType, res.ContentRange, res.AcceptRanges = resp.Header.Get("Content-Type"), resp.Header.Get("Content-Range"), resp.Header.Get("Accept-Ranges")

@@ -32,12 +32,14 @@ type TCPInfo struct {
 	// more than to the one request that happened to read it.
 	NewRetransmits uint32
 	NewOutOfOrder  uint32
+	// NewSegsOut is the same for SegsOut.
+	NewSegsOut uint32
 }
 
 // connCounters remembers, per connection, the counters last read.
 type connCounters struct {
 	mu   sync.Mutex
-	seen map[string][2]uint32
+	seen map[string][3]uint32
 }
 
 // grown fills the New fields of info for the connection.
@@ -46,14 +48,14 @@ func (c *connCounters) grown(conn net.Conn, info *TCPInfo) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.seen == nil || len(c.seen) > 4096 {
-		c.seen = map[string][2]uint32{} // connections come and go
+		c.seen = map[string][3]uint32{} // connections come and go
 	}
 	before, known := c.seen[key]
-	if !known || info.Retransmits < before[0] || info.OutOfOrder < before[1] {
-		before = [2]uint32{}
+	if !known || info.Retransmits < before[0] || info.OutOfOrder < before[1] || info.SegsOut < before[2] {
+		before = [3]uint32{}
 	}
-	info.NewRetransmits, info.NewOutOfOrder = info.Retransmits-before[0], info.OutOfOrder-before[1]
-	c.seen[key] = [2]uint32{info.Retransmits, info.OutOfOrder}
+	info.NewRetransmits, info.NewOutOfOrder, info.NewSegsOut = info.Retransmits-before[0], info.OutOfOrder-before[1], info.SegsOut-before[2]
+	c.seen[key] = [3]uint32{info.Retransmits, info.OutOfOrder, info.SegsOut}
 }
 
 // ConnInfo reads the kernel's figures of a connection, through TLS if it

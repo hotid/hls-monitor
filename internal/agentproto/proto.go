@@ -91,6 +91,12 @@ type FetchTiming struct {
 	Measured   bool    `json:"measured,omitempty"`
 	RTTMs      float64 `json:"rtt_ms,omitempty"`
 	OutOfOrder int64   `json:"out_of_order,omitempty"`
+	// Retransmits and Segments are how many TCP segments had to be sent
+	// again to the origin and how many were sent, since the previous
+	// request on the same connection: the loss on the way there, counted
+	// by the one who sends.
+	Retransmits int64 `json:"retransmits,omitempty"`
+	Segments    int64 `json:"segments,omitempty"`
 }
 
 // An agent accepts no connections, so when the server wants something

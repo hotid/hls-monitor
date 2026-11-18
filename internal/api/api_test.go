@@ -893,6 +893,11 @@ func TestWatchThroughTheServer(t *testing.T) {
 	if err != nil || json.Unmarshal(raw, &info) != nil || info.Origin == nil || info.Origin.Bytes != int64(len(seg)) || info.Origin.TotalMs <= 0 || info.Relay != nil {
 		t.Errorf("X-Fetch-Info = %s (%v)", raw, err)
 	}
+	// The requests to the origin are sent from here, and the kernel tells
+	// how many packets that took: what loss on the way there is a share of.
+	if runtime.GOOS == "linux" && (info.Origin.Segments <= 0 || info.Origin.Retransmits < 0) {
+		t.Errorf("segments sent to the origin = %d, sent again = %d", info.Origin.Segments, info.Origin.Retransmits)
+	}
 	if !strings.HasPrefix(hdr.Get("Server-Timing"), "origin;dur=") {
 		t.Errorf("Server-Timing = %q", hdr.Get("Server-Timing"))
 	}

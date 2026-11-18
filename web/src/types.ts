@@ -38,6 +38,9 @@ export interface FetchInfo {
     measured?: boolean
     rtt_ms?: number
     out_of_order?: number
+    /** TCP segments sent again to the origin, and sent, since the previous request on the connection. */
+    retransmits?: number
+    segments?: number
   }
   /** The way through the agent; absent when the server fetched itself. */
   relay?: { wait_ms: number; upload_ms: number; bytes: number; total_ms: number }

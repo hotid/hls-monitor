@@ -68,7 +68,10 @@ let counted: Record<string, number> = {}
 /** Running totals the counts are differences of. */
 let totals: { link?: number; linkSegments?: number; ooo?: number; oooConn?: string; frames?: number } = {}
 /** Retransmissions and segments sent, second by second, per hop: loss is their share over lossWindow seconds. */
-let sent: Record<'link' | 'client', [number, number][]> = { link: [], client: [] }
+let sent: Record<Hop, [number, number][]> = { origin: [], link: [], client: [] }
+type Hop = 'origin' | 'link' | 'client'
+const hops: Hop[] = ['origin', 'link', 'client']
+const lossKey: Record<Hop, string> = { origin: 'lossOrigin', link: 'lossLink', client: 'lossClient' }
 const lossWindow = 30
 /** Round trips of the latest pings from this browser to the server. */
 let pings: number[] = []
@@ -82,7 +85,7 @@ function resetHistory() {
   latest = {}
   counted = {}
   totals = {}
-  sent = { link: [], client: [] }
+  sent = { origin: [], link: [], client: [] }
   pings = []
   kernelClient = false
   startedAt.value = Math.floor(Date.now() / 1000)
@@ -114,12 +117,12 @@ function sample() {
     for (const k of ['retransmits', 'outOfOrder', 'failed', 'stalls', 'dropped']) put(k, sec === now ? (counted[k] ?? 0) : 0)
     // Loss is a share, and a second holds too few segments to take a
     // share of: it is taken over the last lossWindow seconds.
-    for (const hop of ['link', 'client'] as const) {
+    for (const hop of hops) {
       const w = sent[hop]
       w.push(sec === now ? [counted[hop + 'Retransmits'] ?? 0, counted[hop + 'Segments'] ?? 0] : [0, 0])
       while (w.length > lossWindow) w.shift()
       const segments = w.reduce((n, s) => n + s[1], 0)
-      if (segments > 0) put(hop === 'link' ? 'lossLink' : 'lossClient', w.reduce((n, s) => n + s[0], 0) / segments)
+      if (segments > 0) put(lossKey[hop], w.reduce((n, s) => n + s[0], 0) / segments)
     }
   }
   counted = {}
@@ -152,6 +155,10 @@ function noteHops(info: FetchInfo | null, connection: string) {
     }
     totals.ooo = now
     totals.oooConn = connection
+    // The requests to the origin are sent from the vantage point, and it
+    // counts how many of their packets it had to send again.
+    counted.originRetransmits = (counted.originRetransmits ?? 0) + (info.origin.retransmits ?? 0)
+    counted.originSegments = (counted.originSegments ?? 0) + (info.origin.segments ?? 0)
   }
   if (info.link?.measured) {
     latest.rttLink = info.link.rtt_ms / 1000
@@ -261,6 +268,7 @@ const chartDefs = computed<ChartDef[]>(() => [
   {
     id: 'loss-share', title: t('watch.chartLossShare'), hint: t('watch.chartLossShareHint'), unit: 'pct', whenMeasured: true,
     lines: [
+      { key: 'lossOrigin', label: vantage.value !== 1 ? t('watch.lineLossOriginAgent') : t('watch.lineLossOriginServer') },
       { key: 'lossLink', label: t('watch.lineLossLink'), agent: true },
       { key: 'lossClient', label: t('watch.lineLossClient') },
     ],
