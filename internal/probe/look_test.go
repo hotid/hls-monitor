@@ -261,3 +261,40 @@ func TestKnownSlate(t *testing.T) {
 		t.Errorf("five minutes of a slate: told as the slate in %d of %d cycles, as frozen in %d", slate, cycles, frozen)
 	}
 }
+
+func TestSlateWithSomethingBlinkingOnIt(t *testing.T) {
+	// A test card: bright and dark in turns, something to tell it by.
+	card := make([]byte, picture.CellCols*picture.CellRows)
+	for i := range card {
+		card[i] = byte(40 + 120*(i/8%2))
+	}
+	slates := []Slate{{ID: 1, Name: "card", Frames: [][]byte{card}}, {ID: 2, Name: "dark", Frames: [][]byte{flat(8)}}}
+
+	// The same card with a clock in a corner showing another time.
+	clock := append([]byte(nil), card...)
+	for i := 0; i < 30; i++ {
+		clock[i] = 250
+	}
+	if s := slateOf(slates, clock); s == nil || s.Name != "card" {
+		t.Errorf("a card with another time on its clock: %+v", s)
+	}
+	// Half of it changed: another picture.
+	other := append([]byte(nil), card...)
+	for i := 0; i < len(other)/2; i++ {
+		other[i] = 250
+	}
+	if s := slateOf(slates, other); s != nil {
+		t.Errorf("a picture half unlike the card was taken for %q", s.Name)
+	}
+	// A dark slate is itself, and a dark scene with a lamp in it is not.
+	if s := slateOf(slates, flat(10)); s == nil || s.Name != "dark" {
+		t.Errorf("the dark slate coded anew: %+v", s)
+	}
+	scene := flat(9)
+	for i := 100; i < 130; i++ {
+		scene[i] = 90
+	}
+	if s := slateOf(slates, scene); s != nil {
+		t.Errorf("a dark scene with a lamp in it was taken for %q", s.Name)
+	}
+}

@@ -48,11 +48,22 @@ type Slate struct {
 // alone, for every channel codes it anew, at its own size and rate.
 const slateMoves = 14
 
+// A slate with something to it — a test card, a notice in large letters —
+// is also known when a small part of it differs as it likes: a clock on
+// it, a sign that blinks. Apart from that part it may differ by
+// slateMostlyMoves. A flat slate, dark all over, is not given that
+// leave: any dark scene is flat and dark apart from a small part.
+const (
+	slateMostlyMoves = 8
+	slateContrast    = 10.0
+)
+
 // slateOf returns the slate a picture is, if it is one.
 func slateOf(slates []Slate, cells []byte) *Slate {
 	for i := range slates {
 		for _, frame := range slates[i].Frames {
-			if picture.Moved(cells, frame) <= slateMoves {
+			if picture.Moved(cells, frame) <= slateMoves ||
+				(picture.Contrast(frame) >= slateContrast && picture.MostlyMoved(cells, frame) <= slateMostlyMoves) {
 				return &slates[i]
 			}
 		}

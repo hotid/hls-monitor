@@ -103,6 +103,46 @@ func Moved(a, b []byte) int {
 	return most
 }
 
+// MostlyMoved is Moved without the tenth of the cells that changed most:
+// how much two pictures differ apart from a small part of them — a clock,
+// something blinking — that may differ as it likes.
+func MostlyMoved(a, b []byte) int {
+	if len(a) != CellCols*CellRows || len(b) != len(a) {
+		return 255
+	}
+	var hist [256]int
+	for i := range a {
+		d := int(a[i]) - int(b[i])
+		if d < 0 {
+			d = -d
+		}
+		hist[d]++
+	}
+	left := len(a) / 10
+	for d := 255; d > 0; d-- {
+		if left -= hist[d]; left < 0 {
+			return d
+		}
+	}
+	return 0
+}
+
+// Contrast tells how much there is to a picture: the spread of the
+// brightness of its cells. A flat picture, all dark or all one colour, has
+// next to none, and nothing to be told from another flat one by.
+func Contrast(cells []byte) float64 {
+	if len(cells) == 0 {
+		return 0
+	}
+	var sum, sq float64
+	for _, v := range cells {
+		sum += float64(v)
+		sq += float64(v) * float64(v)
+	}
+	n := float64(len(cells))
+	return math.Sqrt(max(sq/n-(sum/n)*(sum/n), 0))
+}
+
 // Distance is in how many bits two hashes differ: 0 for the same picture,
 // a few for one that barely changed, about 32 for unrelated ones.
 func Distance(a, b uint64) int { return bits.OnesCount64(a ^ b) }
