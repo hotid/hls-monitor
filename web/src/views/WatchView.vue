@@ -297,8 +297,10 @@ const charts = computed(() => {
       to: Math.max(to, from + 60),
       lines: c.lines.filter((l) => viaAgent || !l.agent).map((l): ChartLine => ({ label: l.label, points: series[l.key] ?? [] })),
     }))
-    // A chart that can have nothing to show here is not shown at all.
-    .filter((c) => !c.whenMeasured || c.lines.some((l) => l.points.length))
+    // What cannot be measured here is not shown at all: neither a line
+    // without a single point, nor a chart without lines.
+    .map((c) => (c.whenMeasured ? { ...c, lines: c.lines.filter((l) => l.points.length) } : c))
+    .filter((c) => !c.whenMeasured || c.lines.length)
 })
 
 const source = computed(() => sources.value[sourceIndex.value])
