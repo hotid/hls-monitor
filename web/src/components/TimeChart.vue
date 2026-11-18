@@ -75,6 +75,15 @@ const legend = computed(() =>
   }),
 )
 
+// The line pointed at in the legend stands out, the others fade.
+const focused = ref<string | null>(null)
+function focus(label: string | null) {
+  if (label !== null && hidden.value.has(label)) label = null
+  focused.value = label
+  const i = label === null ? -1 : props.lines.findIndex((l) => l.label === label)
+  plot.value?.setSeries(i < 0 ? null : i + 1, { focus: true })
+}
+
 // Which lines are switched off, by label. A click on a label leaves that
 // line alone on the chart, and a click on the only one left brings all
 // back; with Ctrl, Cmd or Shift a click adds or removes one line. This is
@@ -93,6 +102,7 @@ function pick(label: string, e: MouseEvent | KeyboardEvent) {
   if (!next.length) next = all
   hidden.value = new Set(all.filter((l) => !next.includes(l)))
   props.lines.forEach((l, i) => plot.value?.setSeries(i + 1, { show: !hidden.value.has(l.label) }))
+  focus(hidden.value.has(label) ? null : label)
 }
 
 const hoverTime = computed(() => (hoverIdx.value === null ? null : fmtWhen((aligned.value.xs[hoverIdx.value] ?? 0) * 1000)))
@@ -123,6 +133,8 @@ function build() {
     padding: [8, 8, 0, 0],
     cursor: { sync: { key: 'hls-monitor' }, points: { size: 6 }, drag: { x: true, y: false, setScale: false } },
     legend: { show: false },
+    // How much the other lines fade while one is pointed at in the legend.
+    focus: { alpha: 0.15 },
     scales: {
       x: { time: true, range: () => [props.from, props.to] },
       y: {
@@ -233,10 +245,11 @@ onBeforeUnmount(() => {
       <div ref="host" class="chart-host" @mouseleave="hoverIdx = null" />
       <div v-if="!hasData" class="chart-empty muted">{{ loading ? t('common.loading') : (emptyHint ?? t('chart.noDataForThisPeriod')) }}</div>
     </div>
-    <ul class="chart-legend">
+    <ul class="chart-legend" :class="{ focusing: focused !== null }" @mouseleave="focus(null)">
       <li
-        v-for="l in legend" :key="l.label" :class="{ off: l.off }" :title="l.label + ' — ' + t('chart.legendHint')"
+        v-for="l in legend" :key="l.label" :class="{ off: l.off, focused: focused === l.label }" :title="l.label + ' — ' + t('chart.legendHint')"
         role="button" tabindex="0" :aria-pressed="!l.off"
+        @mouseenter="focus(l.label)" @focus="focus(l.label)" @blur="focus(null)"
         @click="pick(l.label, $event)" @keydown.enter.prevent="pick(l.label, $event)" @keydown.space.prevent="pick(l.label, $event)"
       >
         <i :style="{ background: l.color }" />
@@ -315,7 +328,17 @@ onBeforeUnmount(() => {
 .chart-legend li:hover span {
   color: var(--text);
 }
-.chart-legend li.off {
+.chart-legend li {
+  transition: opacity 0.1s;
+}
+.chart-legend.focusing li:not(.focused) {
+  opacity: 0.45;
+}
+.chart-legend li.focused span {
+  color: var(--text-strong);
+}
+.chart-legend li.off,
+.chart-legend.focusing li.off {
   opacity: 0.4;
 }
 .chart-legend li.off span {
