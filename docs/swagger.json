@@ -910,6 +910,28 @@
                 }
             }
         },
+        "/api/v1/ping": {
+            "get": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "description": "The player's page asks this while a stream is watched: how long the answer takes is the round trip time between the browser and the server, whatever stands in between.",
+                "tags": [
+                    "watch"
+                ],
+                "summary": "An empty answer, to time the way to the server by",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
         "/api/v1/play/{token}": {
             "get": {
                 "description": "Serves what the token names, requested by the server itself. In a playlist every address is replaced by such a path. The X-Upstream header names the server that answered.",
@@ -2226,6 +2248,10 @@
                 "rtt_ms": {
                     "description": "RTTMs is the round trip time to the server, by the kernel's count on\nthe latest request; zero where the agent cannot read it.",
                     "type": "number"
+                },
+                "segments": {
+                    "description": "Segments counts the TCP segments with data the agent sent since it\nstarted: what Retransmits is a share of. Zero from agents that do\nnot tell it.",
+                    "type": "integer"
                 }
             }
         },

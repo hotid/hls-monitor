@@ -42,6 +42,8 @@ export interface FetchInfo {
   /** The way through the agent; absent when the server fetched itself. */
   relay?: { wait_ms: number; upload_ms: number; bytes: number; total_ms: number }
   link?: AgentLink
+  /** The way from the server to this browser, by the kernel's count; absent behind a proxy. */
+  client?: { rtt_ms: number; retransmits: number; segments: number }
 }
 
 /** The way from an agent to the server, as the agent sees it. */
@@ -52,6 +54,8 @@ export interface AgentLink {
   requests: number
   failures: number
   measured: boolean
+  /** TCP segments with data sent since the agent started; absent from older agents. */
+  segments?: number
 }
 
 /** A place a stream can be watched from. */

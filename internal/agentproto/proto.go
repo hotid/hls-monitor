@@ -55,6 +55,10 @@ type Link struct {
 	// Retransmits counts the TCP segments the agent had to send again
 	// since it started: loss on the way to the server.
 	Retransmits int64 `json:"retransmits"`
+	// Segments counts the TCP segments with data the agent sent since it
+	// started: what Retransmits is a share of. Zero from agents that do
+	// not tell it.
+	Segments int64 `json:"segments,omitempty"`
 	// RequestMs is how long the latest delivery of results took.
 	RequestMs float64 `json:"request_ms"`
 	// Requests and Failures count the requests to the server since the

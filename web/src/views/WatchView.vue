@@ -66,7 +66,14 @@ let latest: Record<string, number> = {}
 /** Counted since the last sample: losses, failures, stalls. */
 let counted: Record<string, number> = {}
 /** Running totals the counts are differences of. */
-let totals: { link?: number; ooo?: number; oooConn?: string; frames?: number } = {}
+let totals: { link?: number; linkSegments?: number; ooo?: number; oooConn?: string; frames?: number } = {}
+/** Retransmissions and segments sent, second by second, per hop: loss is their share over lossWindow seconds. */
+let sent: Record<'link' | 'client', [number, number][]> = { link: [], client: [] }
+const lossWindow = 30
+/** Round trips of the latest pings from this browser to the server. */
+let pings: number[] = []
+/** Set when the server reads the way to this browser from its own connection. */
+let kernelClient = false
 const sampled = ref(0)
 const startedAt = ref(0)
 
@@ -75,6 +82,9 @@ function resetHistory() {
   latest = {}
   counted = {}
   totals = {}
+  sent = { link: [], client: [] }
+  pings = []
+  kernelClient = false
   startedAt.value = Math.floor(Date.now() / 1000)
   sampledSecond = 0
   sampled.value++
@@ -102,6 +112,15 @@ function sample() {
     // Counts are per second; a second in which nothing went wrong is a
     // zero, and what was counted belongs to the latest one.
     for (const k of ['retransmits', 'outOfOrder', 'failed', 'stalls', 'dropped']) put(k, sec === now ? (counted[k] ?? 0) : 0)
+    // Loss is a share, and a second holds too few segments to take a
+    // share of: it is taken over the last lossWindow seconds.
+    for (const hop of ['link', 'client'] as const) {
+      const w = sent[hop]
+      w.push(sec === now ? [counted[hop + 'Retransmits'] ?? 0, counted[hop + 'Segments'] ?? 0] : [0, 0])
+      while (w.length > lossWindow) w.shift()
+      const segments = w.reduce((n, s) => n + s[1], 0)
+      if (segments > 0) put(hop === 'link' ? 'lossLink' : 'lossClient', w.reduce((n, s) => n + s[0], 0) / segments)
+    }
   }
   counted = {}
   sampledSecond = now
@@ -138,8 +157,49 @@ function noteHops(info: FetchInfo | null, connection: string) {
     latest.rttLink = info.link.rtt_ms / 1000
     if (totals.link !== undefined && info.link.retransmits >= totals.link) {
       counted.retransmits = (counted.retransmits ?? 0) + (info.link.retransmits - totals.link)
+      counted.linkRetransmits = (counted.linkRetransmits ?? 0) + (info.link.retransmits - totals.link)
     }
     totals.link = info.link.retransmits
+    const segments = info.link.segments ?? 0
+    if (totals.linkSegments !== undefined && segments >= totals.linkSegments) {
+      counted.linkSegments = (counted.linkSegments ?? 0) + (segments - totals.linkSegments)
+    }
+    totals.linkSegments = segments
+  }
+  if (info.client) {
+    // The server sends to this browser, so its kernel knows the way here.
+    kernelClient = true
+    latest.rttBrowser = info.client.rtt_ms / 1000
+    counted.clientRetransmits = (counted.clientRetransmits ?? 0) + info.client.retransmits
+    counted.clientSegments = (counted.clientSegments ?? 0) + info.client.segments
+  }
+}
+
+// Behind a proxy the server cannot see the way to this browser, so the
+// browser times it itself: an empty request, and how long its answer took.
+// The smallest of the last few is the round trip, with the least of the
+// server's own time in it.
+let pinging = false
+async function ping() {
+  if (pinging || kernelClient) return
+  pinging = true
+  const url = basePath + '/api/v1/ping'
+  try {
+    const began = performance.now()
+    const resp = await fetch(url, { cache: 'no-store', credentials: 'same-origin' })
+    let took = performance.now() - began
+    // The browser's own record leaves out the wait for a free connection.
+    const entry = performance.getEntriesByName(new URL(url, location.href).href).at(-1) as PerformanceResourceTiming | undefined
+    if (entry && entry.requestStart > 0 && entry.responseStart >= entry.requestStart) took = entry.responseStart - entry.requestStart
+    performance.clearResourceTimings()
+    if (resp.ok && !kernelClient) {
+      pings = [...pings, took].slice(-5)
+      latest.rttBrowser = Math.min(...pings) / 1000
+    }
+  } catch {
+    // No answer: nothing to say this time.
+  } finally {
+    pinging = false
   }
 }
 
@@ -150,8 +210,10 @@ interface ChartDef {
   id: string
   title: string
   hint: string
-  unit: 's' | 'bps' | 'count'
+  unit: 's' | 'bps' | 'count' | 'pct'
   steps?: boolean
+  /** Why the chart may have nothing to show. */
+  emptyHint?: string
   lines: { key: string; label: string; agent?: boolean }[]
 }
 const chartDefs = computed<ChartDef[]>(() => [
@@ -193,6 +255,14 @@ const chartDefs = computed<ChartDef[]>(() => [
     lines: [
       { key: 'rttOrigin', label: t('watch.lineRTTOrigin') },
       { key: 'rttLink', label: t('watch.lineRTTLink'), agent: true },
+      { key: 'rttBrowser', label: t('watch.lineRTTBrowser') },
+    ],
+  },
+  {
+    id: 'loss-share', title: t('watch.chartLossShare'), hint: t('watch.chartLossShareHint'), unit: 'pct', emptyHint: t('watch.chartLossShareEmpty'),
+    lines: [
+      { key: 'lossLink', label: t('watch.lineLossLink'), agent: true },
+      { key: 'lossClient', label: t('watch.lineLossClient') },
     ],
   },
   {
@@ -273,6 +343,10 @@ function note(text: string, fatal: boolean, detail = '') {
   }
   troubles.value = [{ at: Date.now(), text, fatal, n: 1, detail }, ...troubles.value].slice(0, 8)
 }
+
+/** Ticks of the timer, and how many of them pass between pings. */
+let ticks = 0
+const pingEvery = 8
 
 function stop() {
   window.clearInterval(timer)
@@ -454,6 +528,7 @@ async function start() {
     if (Number.isFinite(hls.bandwidthEstimate) && hls.bandwidthEstimate > 0) latest.estimate = hls.bandwidthEstimate
     if (totals.frames !== undefined && dropped.value >= totals.frames) counted.dropped = (counted.dropped ?? 0) + (dropped.value - totals.frames)
     totals.frames = dropped.value
+    if (++ticks % pingEvery === 0) void ping()
     sample()
     if (state.value !== 'failed') {
       state.value = el.readyState >= 3 && !el.paused ? 'playing' : el.readyState < 3 && el.currentTime > 0 ? 'stalled' : state.value === 'playing' ? 'stalled' : 'loading'
@@ -536,6 +611,7 @@ onBeforeUnmount(stop)
               :to="c.to"
               :step="1"
               :steps="c.steps"
+            :empty-hint="c.emptyHint"
             />
           </div>
         </div>

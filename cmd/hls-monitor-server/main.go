@@ -197,6 +197,7 @@ func run(cfg config, log *slog.Logger) error {
 	httpSrv := &http.Server{
 		Addr:              cfg.listen,
 		Handler:           srv.Handler(),
+		ConnContext:       api.ConnContext,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}

@@ -22,6 +22,9 @@ type TCPInfo struct {
 	// receiving side the only sign of loss on the way here, and not a
 	// certain one — the network may also just reorder.
 	OutOfOrder uint32
+	// SegsOut counts the segments with data this side sent: what the
+	// retransmissions are a share of.
+	SegsOut uint32
 	// NewRetransmits and NewOutOfOrder are how much the two counters grew
 	// since the previous request this client made on the same connection;
 	// on a new connection, all of it. Connections are shared by whatever

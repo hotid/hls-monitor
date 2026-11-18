@@ -134,6 +134,7 @@ func (s *Server) routes(ui http.Handler) {
 	user.GET("/auth/me", s.me)
 	user.PUT("/auth/password", s.changePassword)
 	user.GET("/overview", s.overview)
+	user.GET("/ping", s.ping)
 	user.GET("/system", s.system)
 	user.GET("/timeline", s.timeline)
 	user.GET("/aggregate", s.aggregate)

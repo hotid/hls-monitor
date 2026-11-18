@@ -19,7 +19,7 @@ type linkWatch struct {
 	// seen is, per connection, the retransmissions already counted: the
 	// kernel counts them for the life of a connection, and one connection
 	// serves many requests.
-	seen map[string]uint32
+	seen map[string][2]uint32
 	// rtts are the round trip times read in the last rttWindow. Most of
 	// the agent's requests wait long for their answer, and on those the
 	// kernel's figure includes the time the server put off acknowledging
@@ -27,6 +27,8 @@ type linkWatch struct {
 	rtts        []rttSample
 	rtt         time.Duration
 	retransmits int64
+	// segments counts the segments with data sent, the same way.
+	segments    int64
 	lastRequest time.Duration
 	requests    int64
 	failures    int64
@@ -90,18 +92,21 @@ func (l *linkWatch) watch(req *http.Request, timed bool) (*http.Request, func(ok
 		}
 		l.measured, l.rtt = true, l.noteRTT(time.Now(), info.RTT)
 		if l.seen == nil {
-			l.seen = map[string]uint32{}
+			l.seen = map[string][2]uint32{}
 		}
 		key := conn.LocalAddr().String()
-		if before, known := l.seen[key]; known && info.Retransmits >= before {
-			l.retransmits += int64(info.Retransmits - before)
+		now := [2]uint32{info.Retransmits, info.SegsOut}
+		if before, known := l.seen[key]; known && now[0] >= before[0] && now[1] >= before[1] {
+			l.retransmits += int64(now[0] - before[0])
+			l.segments += int64(now[1] - before[1])
 		} else {
-			l.retransmits += int64(info.Retransmits) // a new connection
+			l.retransmits += int64(now[0]) // a new connection
+			l.segments += int64(now[1])
 		}
-		l.seen[key] = info.Retransmits
+		l.seen[key] = now
 		// Connections come and go; the map must not grow for ever.
 		if len(l.seen) > 64 {
-			l.seen = map[string]uint32{key: info.Retransmits}
+			l.seen = map[string][2]uint32{key: now}
 		}
 	}
 }
@@ -111,5 +116,5 @@ func (l *linkWatch) report() *agentproto.Link {
 	defer l.mu.Unlock()
 	ms := func(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 	return &agentproto.Link{RTTMs: ms(l.rtt), Retransmits: l.retransmits, RequestMs: ms(l.lastRequest),
-		Requests: l.requests, Failures: l.failures, Measured: l.measured}
+		Requests: l.requests, Failures: l.failures, Measured: l.measured, Segments: l.segments}
 }

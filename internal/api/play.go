@@ -8,12 +8,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -327,6 +329,7 @@ func (s *Server) play(c *gin.Context) {
 		s.reportsMu.Unlock()
 	}
 	info.Origin = res.Timing
+	info.Client = s.clientHop(c)
 	s.describeFetch(c, info)
 	if errors.Is(c.Request.Context().Err(), context.Canceled) {
 		c.Abort() // the viewer went away
@@ -388,6 +391,62 @@ type fetchInfo struct {
 	// connection to the server; both absent when the server fetched itself.
 	Relay *relayTiming     `json:"relay,omitempty"`
 	Link  *agentproto.Link `json:"link,omitempty"`
+	// Client is the way from the server to the viewer's browser, by the
+	// kernel's count on the connection the request came over; absent when
+	// that connection is not the browser's (a proxy stands in between) or
+	// cannot be read.
+	Client *clientHop `json:"client,omitempty"`
+}
+
+// clientHop is what the server, who sends, knows of the way to a viewer.
+type clientHop struct {
+	RTTMs float64 `json:"rtt_ms"`
+	// Retransmits and Segments are how many TCP segments had to be sent
+	// again and how many were sent since the previous answer on the same
+	// connection.
+	Retransmits int64 `json:"retransmits"`
+	Segments    int64 `json:"segments"`
+}
+
+type clientConnKey struct{}
+
+// clientConn is a connection a request came over, with the counters last
+// read from it.
+type clientConn struct {
+	conn net.Conn
+	mu   sync.Mutex
+	seen [2]uint32
+}
+
+// ConnContext is to be the ConnContext of the HTTP server: it lets a
+// handler find the connection its request came over.
+func ConnContext(ctx context.Context, conn net.Conn) context.Context {
+	return context.WithValue(ctx, clientConnKey{}, &clientConn{conn: conn})
+}
+
+// clientHop reads the way to the viewer from the request's connection.
+func (s *Server) clientHop(c *gin.Context) *clientHop {
+	// Behind a proxy the connection is the proxy's, and says nothing of
+	// the viewer's.
+	for _, h := range []string{"X-Forwarded-For", "Forwarded", "Via", "X-Real-Ip"} {
+		if c.GetHeader(h) != "" {
+			return nil
+		}
+	}
+	cc, _ := c.Request.Context().Value(clientConnKey{}).(*clientConn)
+	if cc == nil {
+		return nil
+	}
+	info, ok := httpx.ConnInfo(cc.conn)
+	if !ok {
+		return nil
+	}
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+	hop := &clientHop{RTTMs: float64(info.RTT.Microseconds()) / 1000,
+		Retransmits: int64(info.Retransmits - cc.seen[0]), Segments: int64(info.SegsOut - cc.seen[1])}
+	cc.seen = [2]uint32{info.Retransmits, info.SegsOut}
+	return hop
 }
 
 // describeFetch tells the viewer's browser how the fetch went: in the

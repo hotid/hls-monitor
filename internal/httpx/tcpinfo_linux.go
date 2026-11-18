@@ -26,5 +26,6 @@ func tcpInfo(conn *net.TCPConn) (TCPInfo, bool) {
 		RTTVar:      time.Duration(info.Rttvar) * time.Microsecond,
 		Retransmits: info.Total_retrans,
 		OutOfOrder:  info.Rcv_ooopack,
+		SegsOut:     info.Data_segs_out,
 	}, true
 }

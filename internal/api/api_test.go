@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -1061,5 +1062,59 @@ func TestServerIncidents(t *testing.T) {
 	got = list("")
 	if len(got) != 1 || got[0].ID != first.ID || got[0].EndedAt != nil || got[0].Episodes != 2 || got[0].IdleSeconds != 60 {
 		t.Fatalf("after the problem came back: %+v", got)
+	}
+}
+
+func TestWayToTheViewer(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("read on Linux only")
+	}
+	e := newEnv(t)
+	// The server as it runs: handlers can find the connection of a request.
+	srv := httptest.NewUnstartedServer(e.srv.Handler())
+	srv.Config.ConnContext = ConnContext
+	srv.Start()
+	t.Cleanup(srv.Close)
+	e.http = srv
+
+	admin := e.login("admin")
+	var st streamView
+	admin.want(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{"name": "s", "url": e.origin.URL + "/master.m3u8", "level": "playlist"}, &st)
+	var info watchResponse
+	admin.want(http.StatusOK, "GET", fmt.Sprintf("/api/v1/streams/%d/watch", st.ID), nil, &info)
+	admin.want(http.StatusNoContent, "GET", "/api/v1/ping", nil, nil)
+
+	get := func(headers map[string]string) *fetchInfo {
+		t.Helper()
+		req, _ := http.NewRequest("GET", srv.URL+info.Sources[0].URL, nil)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := admin.hc.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+		raw, err := base64.StdEncoding.DecodeString(resp.Header.Get("X-Fetch-Info"))
+		var fi fetchInfo
+		if err != nil || json.Unmarshal(raw, &fi) != nil {
+			t.Fatalf("X-Fetch-Info = %q (%v)", resp.Header.Get("X-Fetch-Info"), err)
+		}
+		return &fi
+	}
+	first := get(nil)
+	if first.Client == nil || first.Client.RTTMs <= 0 || first.Client.RTTMs > 1000 {
+		t.Fatalf("the way to the viewer = %+v", first.Client)
+	}
+	// The counters are those of the connection; an answer tells how much
+	// they grew since the one before, not the whole again.
+	second := get(nil)
+	if second.Client == nil || second.Client.Segments <= 0 || second.Client.Segments > first.Client.Segments+8 {
+		t.Errorf("segments sent: %d at first, then %d more", first.Client.Segments, second.Client.Segments)
+	}
+	// Behind a proxy the connection is not the viewer's.
+	if via := get(map[string]string{"X-Forwarded-For": "203.0.113.7"}); via.Client != nil {
+		t.Errorf("a request that came through a proxy was told the way to the proxy: %+v", via.Client)
 	}
 }
