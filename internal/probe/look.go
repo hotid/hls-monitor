@@ -79,8 +79,10 @@ func ValidPicture(p string) bool {
 const (
 	// lookBytes is how much of a segment is fetched for a look where the
 	// check reads only the beginning of segments: enough for the first
-	// keyframe and a moment of sound.
-	lookBytes = 512 << 10
+	// keyframe and a moment of sound. A whole number of MPEG-TS packets,
+	// as headerBytes is: a packet cut in two reads as a loss of
+	// synchronisation.
+	lookBytes = 188 * 2800
 	// lookAgain is how soon a look is repeated after one that found
 	// something: a dark scene and a pause are over in a moment, a fault
 	// is not. lookRuns such looks in a row, over at least lookSpan, make

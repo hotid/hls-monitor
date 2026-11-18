@@ -298,3 +298,22 @@ func TestSlateWithSomethingBlinkingOnIt(t *testing.T) {
 		t.Errorf("a dark scene with a lamp in it was taken for %q", s.Name)
 	}
 }
+
+func TestLookFetchesWholePackets(t *testing.T) {
+	if lookBytes%188 != 0 || headerBytes%188 != 0 {
+		t.Fatalf("lookBytes = %d, headerBytes = %d: not whole MPEG-TS packets", lookBytes, headerBytes)
+	}
+	// At the level that reads the beginning of segments, a cycle that
+	// looks reads more of one of them, and finds nothing wrong for it.
+	f, s := lookFixture(t, LevelHeader)
+	for i := 0; i < 5; i++ {
+		r := f.step(1)
+		if p := hasProblem(r, ProbTSSync); p != nil {
+			t.Fatalf("cycle %d: %+v", i, p)
+		}
+		wantClean(t, r)
+	}
+	if s.looks == 0 {
+		t.Fatal("the stream was not looked at")
+	}
+}
