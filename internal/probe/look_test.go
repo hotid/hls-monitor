@@ -133,7 +133,7 @@ func TestFrozenPictureAndSilence(t *testing.T) {
 	var silent, frozen int
 	for i := 0; i < 120; i++ {
 		s.frame.Cells = flat(120)
-		s.frame.Cells[200] = byte(60 + 20*(s.looks%5))
+		s.frame.Cells[200] = byte(60 + 10*(s.looks%5)) // never the 120 of the rest
 		r := f.step(1)
 		if hasProblem(r, ProbAudioSilent) != nil {
 			silent++
