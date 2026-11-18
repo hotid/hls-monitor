@@ -1,8 +1,11 @@
 {
   "aPlayerWouldStallForBuffering": "Плеер остановился бы на буферизацию",
   "above1TheSegmentDownloadsSlower": "Больше 1 — сегмент качается медленнее, чем играет",
+  "audioChannelSilent": "Один канал звука молчит",
   "audioLoop": "Звук по кругу",
+  "audioQuiet": "Звук слишком тихий",
   "audioSilent": "Тишина",
+  "audioUndecodable": "Звук не декодируется",
   "audioVideoDesync": "Рассинхрон аудио и видео",
   "availability": "Доступность",
   "averageOverTheSelectedVariantsAnd": "Среднее по выбранным вариантам и агентам",

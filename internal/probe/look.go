@@ -32,7 +32,12 @@ const (
 // PictureProblem reports whether a problem is found by looking at the
 // picture or listening to the sound.
 func PictureProblem(kind string) bool {
-	return kind == ProbPictureBlack || kind == ProbPictureFrozen || kind == ProbAudioSilent || kind == ProbPictureSlate || kind == ProbPictureLoop || kind == ProbAudioLoop
+	switch kind {
+	case ProbPictureBlack, ProbPictureFrozen, ProbAudioSilent, ProbPictureSlate, ProbPictureLoop, ProbAudioLoop,
+		ProbAudioChannelSilent, ProbAudioQuiet, ProbAudioUndecodable:
+		return true
+	}
+	return false
 }
 
 // Slate is a picture put on air in place of a channel — "the broadcast is
@@ -110,6 +115,22 @@ const (
 	blackLuma   = 20.0
 	blackShare  = 0.98
 	silentBelow = -70.0
+	// One channel is silent when it is below silentBelow and the other
+	// is at least as loud as soundAbove: sound for certain, not a pause.
+	soundAbove = -50.0
+	// Sound is too quiet when every look for quietSpan, and quietRuns of
+	// them at the least, found it below quietBelow. Two seconds of a film
+	// are often as quiet as that, and twenty minutes of looks sometimes:
+	// of 373 real streams 56 had such twenty minutes within twelve hours,
+	// and one had two hours.
+	quietBelow = -45.0
+	quietSpan  = 2 * time.Hour
+	quietRuns  = 6
+	// heardFrames is how many frames of sound the container must have in
+	// what the decoder was given for its silence about them to mean they
+	// do not decode: half a second. The beginning of a segment of a
+	// stream of many megabits has less.
+	heardFrames = 25
 	// A picture stands still when no part of it changed by more than
 	// this between two looks: the noise of coding and no more. Live
 	// television that looks the same from one look to the next — a studio,
@@ -167,6 +188,12 @@ type looks struct {
 	cells       []byte // the picture of the look before, shrunk
 	black, same run
 	silent      run
+	// oneSided counts looks that found the channel side silent and the
+	// other one not; quiet those that found the sound too quiet; deaf
+	// those that got no sound out of a segment that has it.
+	oneSided    run
+	side        int
+	quiet, deaf run
 	// nothing counts looks that got neither a picture nor sound out of
 	// the segment.
 	nothing run
@@ -269,10 +296,11 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 		HasAudio: f.HasAudio, AudioDB: round1(f.AudioDB)})
 
 	l.problems = nil
-	stand := func(kind, message string, details ...any) {
-		l.problems = append(l.problems, standingProblem{kind: kind, severity: SevCrit, variant: v.Key, message: message,
+	tell := func(severity, kind, message string, details ...any) {
+		l.problems = append(l.problems, standingProblem{kind: kind, severity: severity, variant: v.Key, message: message,
 			details: append(details, "looked_at", at.UTC().Format(time.RFC3339))})
 	}
+	stand := func(kind, message string, details ...any) { tell(SevCrit, kind, message, details...) }
 	suspect := false
 	if f.HasPicture {
 		black := f.Luma < blackLuma && f.Dark >= blackShare
@@ -323,6 +351,48 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 			stand(ProbAudioSilent, "the sound is silence", "audio_level_db", round1(f.AudioDB),
 				"looks_in_a_row", l.silent.n, "since", l.silent.since.UTC().Format(time.RFC3339))
 		}
+		// Left and right are the first two channels, whatever others
+		// there are: those are often silent with nothing wrong.
+		side := -1
+		if len(f.ChannelDB) >= 2 {
+			switch left, right := f.ChannelDB[0], f.ChannelDB[1]; {
+			case left < silentBelow && right >= soundAbove:
+				side = 0
+			case right < silentBelow && left >= soundAbove:
+				side = 1
+			}
+		}
+		if side != l.side {
+			l.oneSided = run{}
+		}
+		l.side = side
+		l.oneSided.note(side >= 0, at)
+		suspect = suspect || l.oneSided.n > 0
+		if l.oneSided.standing(at) {
+			name := []string{"left", "right"}[side]
+			tell(SevWarn, ProbAudioChannelSilent, "the "+name+" channel of the sound is silent", "silent_channel", name,
+				"left_level_db", round1(f.ChannelDB[0]), "right_level_db", round1(f.ChannelDB[1]),
+				"looks_in_a_row", l.oneSided.n, "since", l.oneSided.since.UTC().Format(time.RFC3339))
+		}
+		// Too quiet is told of sound that is there: silence is told as silence.
+		l.quiet.note(f.AudioDB < quietBelow, at)
+		if l.quiet.n >= quietRuns && at.Sub(l.quiet.since) >= quietSpan && !l.silent.standing(at) {
+			tell(SevWarn, ProbAudioQuiet, "the sound is far too quiet", "audio_level_db", round1(f.AudioDB), "quiet_below_db", quietBelow,
+				"looks_in_a_row", l.quiet.n, "since", l.quiet.since.UTC().Format(time.RFC3339))
+		}
+	}
+	// Sound the container has, and the decoder made nothing of while it
+	// made a picture of the same data.
+	audio := audioOf(info)
+	deaf := f.HasPicture && !f.HasAudio && audio != nil && audio.Frames >= heardFrames
+	l.deaf.note(deaf, at)
+	suspect = suspect || l.deaf.n > 0
+	if l.deaf.standing(at) {
+		details := []any{"audio_frames", audio.Frames, "looks_in_a_row", l.deaf.n, "since", l.deaf.since.UTC().Format(time.RFC3339)}
+		if f.AudioError != "" {
+			details = append(details, "decoder_says", f.AudioError)
+		}
+		tell(SevCrit, ProbAudioUndecodable, "the sound cannot be decoded", details...)
 	}
 	switch {
 	case len(l.problems) > 0:
@@ -331,6 +401,13 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 		// Look again soon: what it is shows in a minute, not in five.
 		l.at = at.Add(min(lookAgain, c.PictureEvery) - c.PictureEvery)
 	}
+}
+
+func audioOf(info *media.Info) *media.Track {
+	if info == nil {
+		return nil
+	}
+	return info.Audio()
 }
 
 func videoOf(info *media.Info) *media.Track {

@@ -1,8 +1,11 @@
 {
   "aPlayerWouldStallForBuffering": "A player would stall for buffering",
   "above1TheSegmentDownloadsSlower": "Above 1 the segment downloads slower than it plays",
+  "audioChannelSilent": "One channel of the sound is silent",
   "audioLoop": "Sound going round",
+  "audioQuiet": "Sound far too quiet",
   "audioSilent": "Silence",
+  "audioUndecodable": "Sound cannot be decoded",
   "audioVideoDesync": "Audio/video desync",
   "availability": "Availability",
   "averageOverTheSelectedVariantsAnd": "Average over the selected variants and agents",

@@ -11,7 +11,7 @@ import type { Incident, IncidentScope } from '@/types'
 const props = defineProps<{ incident: Incident }>()
 const details = computed<Details>(() => props.incident.details ?? {})
 // Incidents found by looking at the picture keep the picture they were last seen on.
-const pictured = computed(() => ['picture_black', 'picture_frozen', 'audio_silent', 'picture_slate', 'picture_loop', 'audio_loop'].includes(props.incident.kind) && props.incident.id > 0)
+const pictured = computed(() => ['picture_black', 'picture_frozen', 'audio_silent', 'picture_slate', 'picture_loop', 'audio_loop', 'audio_channel_silent', 'audio_quiet', 'audio_undecodable'].includes(props.incident.kind) && props.incident.id > 0)
 const pictureSrc = computed(() => `${basePath}/api/v1/incidents/${props.incident.id}/picture?t=${new Date(props.incident.last_seen).getTime()}`)
 const noPicture = ref(false)
 // A clip going round carries what it is known by, and can be marked with no picture at all.

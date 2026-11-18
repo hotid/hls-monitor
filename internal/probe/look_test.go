@@ -380,3 +380,80 @@ func TestNothingCanBeDecoded(t *testing.T) {
 		t.Errorf("one bad look was reported in %d cycles", n)
 	}
 }
+
+func TestOneChannelOfTheSoundIsSilent(t *testing.T) {
+	f, s := lookFixture(t, LevelSegments)
+	s.frame = liveFrame
+	s.frame.ChannelDB = []float64{-20, picture.Silent}
+	if n, _ := watch(f, 50*time.Second, ProbAudioChannelSilent); n != 0 {
+		t.Fatalf("told after %d looks, in under a minute", s.looks)
+	}
+	watch(f, time.Minute, ProbAudioChannelSilent)
+	p := hasProblem(f.step(1), ProbAudioChannelSilent)
+	if p == nil || p.Severity != SevWarn || p.Details["silent_channel"] != "right" || p.Details["left_level_db"] != -20.0 {
+		t.Fatalf("problem = %+v", p)
+	}
+	// Both quiet is a pause, not a channel that is missing; and channels
+	// behind the first two may be silent as they like.
+	s.frame.ChannelDB = []float64{-60, picture.Silent}
+	watch(f, 2*time.Minute, ProbAudioChannelSilent)
+	if hasProblem(f.step(1), ProbAudioChannelSilent) != nil {
+		t.Error("a pause was told as a silent channel")
+	}
+	s.frame.ChannelDB = []float64{-20, -22, -25, picture.Silent, picture.Silent, picture.Silent}
+	if n, _ := watch(f, 3*time.Minute, ProbAudioChannelSilent); n != 0 {
+		t.Errorf("silent channels behind the first two were told %d times", n)
+	}
+}
+
+func TestSoundFarTooQuiet(t *testing.T) {
+	f, s := lookFixture(t, LevelSegments)
+	s.frame = liveFrame
+	s.frame.AudioDB = -52
+	// A quiet hour is a quiet film.
+	for end := f.clock.Add(time.Hour); f.clock.Before(end); {
+		if hasProblem(f.step(1), ProbAudioQuiet) != nil {
+			t.Fatal("an hour of quiet sound was told")
+		}
+	}
+	// One loud look and the count begins anew.
+	s.frame.AudioDB = -20
+	watch(f, 6*time.Minute, ProbAudioQuiet)
+	s.frame.AudioDB = -52
+	if n, _ := watch(f, 90*time.Minute, ProbAudioQuiet); n != 0 {
+		t.Fatalf("told %d times within ninety minutes of a loud look", n)
+	}
+	watch(f, 40*time.Minute, ProbAudioQuiet)
+	p := hasProblem(f.step(1), ProbAudioQuiet)
+	if p == nil || p.Severity != SevWarn || p.Details["audio_level_db"] != -52.0 {
+		t.Fatalf("problem = %+v", p)
+	}
+	// Silence is told as silence, not as sound too quiet.
+	s.frame.AudioDB = picture.Silent
+	watch(f, 3*time.Minute, ProbAudioSilent)
+	r := f.step(1)
+	if hasProblem(r, ProbAudioSilent) == nil || hasProblem(r, ProbAudioQuiet) != nil {
+		t.Errorf("silence: %+v", r.Problems)
+	}
+}
+
+func TestSoundThatDoesNotDecode(t *testing.T) {
+	// The container has sound, the decoder shows the picture and makes
+	// nothing of the sound.
+	f, s := lookFixture(t, LevelContainer)
+	s.frame = liveFrame
+	s.frame.HasAudio, s.frame.AudioError = false, "channel element 1.0 is not allocated"
+	if n, _ := watch(f, 50*time.Second, ProbAudioUndecodable); n != 0 {
+		t.Fatalf("told after %d looks, in under a minute", s.looks)
+	}
+	watch(f, time.Minute, ProbAudioUndecodable)
+	p := hasProblem(f.step(1), ProbAudioUndecodable)
+	if p == nil || p.Severity != SevCrit || p.Details["decoder_says"] != "channel element 1.0 is not allocated" {
+		t.Fatalf("problem = %+v", p)
+	}
+	s.frame = liveFrame
+	watch(f, 2*time.Minute, ProbAudioUndecodable)
+	if hasProblem(f.step(1), ProbAudioUndecodable) != nil {
+		t.Error("still told after the sound was heard")
+	}
+}

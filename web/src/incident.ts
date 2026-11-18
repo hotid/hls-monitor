@@ -59,6 +59,9 @@ export const problemAbout = perLocale((): Record<string, { what: string; how: st
   picture_slate: { what: t('incident.pictureSlateWhat'), how: t('incident.pictureSlateHow') },
   picture_loop: { what: t('incident.pictureLoopWhat'), how: t('incident.pictureLoopHow') },
   audio_loop: { what: t('incident.audioLoopWhat'), how: t('incident.audioLoopHow') },
+  audio_channel_silent: { what: t('incident.audioChannelSilentWhat'), how: t('incident.audioChannelSilentHow') },
+  audio_quiet: { what: t('incident.audioQuietWhat'), how: t('incident.audioQuietHow') },
+  audio_undecodable: { what: t('incident.audioUndecodableWhat'), how: t('incident.audioUndecodableHow') },
   media_undecodable: { what: t('incident.mediaUndecodableWhat'), how: t('incident.mediaUndecodableHow') },
   no_keyframe_start: {
     what: t('incident.theSegmentDoesNotStartWith'),
@@ -129,6 +132,10 @@ const calculation = perLocale((): Field[] => [
   { key: 'picture_luma', label: t('incident.pictureLuma'), unit: 'count' },
   { key: 'picture_dark_share', label: t('incident.pictureDarkShare'), unit: 'pct' },
   { key: 'audio_level_db', label: t('incident.audioLevel'), unit: 'count' },
+  { key: 'quiet_below_db', label: t('incident.quietBelow'), unit: 'count' },
+  { key: 'left_level_db', label: t('incident.leftLevel'), unit: 'count' },
+  { key: 'right_level_db', label: t('incident.rightLevel'), unit: 'count' },
+  { key: 'audio_frames', label: t('incident.audioFrames'), unit: 'count' },
   { key: 'looks_in_a_row', label: t('incident.looksInARow'), unit: 'count' },
   { key: 'since', label: t('incident.firstSeenSo'), unit: 'text' },
   { key: 'looked_at', label: t('incident.lastLookedAt'), unit: 'text' },
@@ -215,7 +222,7 @@ function rows(d: Details, fields: Field[]): Row[] {
 }
 
 /** Details that are for the monitor, not for the reader: what a clip is known by. */
-const unshown = ['clip_signature', 'known_by', 'judged_by']
+const unshown = ['clip_signature', 'known_by', 'judged_by', 'silent_channel']
 
 export function calculationRows(d: Details): Row[] {
   const known = new Set([...calculation(), ...circumstances()].map((f) => f.key).concat(unshown))

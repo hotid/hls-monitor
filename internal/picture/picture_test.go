@@ -146,7 +146,8 @@ func TestRealSegments(t *testing.T) {
 	d := decoder(t)
 	files, _ := filepath.Glob(filepath.Join(dir, "*.ts"))
 	sort.Strings(files)
-	var pictures, sounds, fromHead, black, silent int
+	var pictures, sounds, fromHead, black, silent, oneSided, deaf int
+	byChannels := map[int]int{}
 	for _, name := range files {
 		data, err := os.ReadFile(name)
 		if err != nil {
@@ -171,10 +172,22 @@ func TestRealSegments(t *testing.T) {
 				t.Logf("%s: silent, %.1f dB", filepath.Base(name), f.AudioDB)
 			}
 		}
+		// One channel of the two silent and the other not, and a picture
+		// with no sound to it: what would be told of the sound.
+		byChannels[len(f.ChannelDB)]++
+		if c := f.ChannelDB; len(c) >= 2 && ((c[0] < -70 && c[1] >= -50) || (c[1] < -70 && c[0] >= -50)) {
+			oneSided++
+			t.Logf("%s: one channel is silent: %.1f", filepath.Base(name), c)
+		}
+		if f.HasPicture && !f.HasAudio {
+			deaf++
+			t.Logf("%s: a picture and no sound: %s", filepath.Base(name), f.AudioError)
+		}
 		if head, err := d.Sample(context.Background(), data[:min(len(data), 131600)]); err == nil && head.HasPicture {
 			fromHead++
 		}
 	}
+	t.Logf("sound by the number of channels: %v; one channel silent in %d; a picture and no sound in %d", byChannels, oneSided, deaf)
 	t.Logf("%d segments: a picture from %d (from the first 131600 bytes of %d), sound from %d; black %d, silent %d",
 		len(files), pictures, fromHead, sounds, black, silent)
 }
@@ -285,5 +298,29 @@ func TestPictureWithoutKeyframes(t *testing.T) {
 	f, err := d.Sample(context.Background(), whole[from:])
 	if err != nil || !f.HasPicture || f.Luma < 40 {
 		t.Errorf("a segment with no keyframe in it: %+v, %v", f, err)
+	}
+}
+
+func TestEveryChannelIsHeard(t *testing.T) {
+	d := decoder(t)
+	ctx := context.Background()
+	// A tone on the left and nothing on the right.
+	f, err := d.Sample(ctx, clip(t, moving, tone, "-af", "pan=stereo|c0=c0|c1=0*c0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.ChannelDB) != 2 || f.ChannelDB[0] < -40 || f.ChannelDB[1] > -90 || f.AudioDB != f.ChannelDB[0] {
+		t.Fatalf("a tone on the left alone: channels %v, level %v", f.ChannelDB, f.AudioDB)
+	}
+	// One channel is one level.
+	if f, err = d.Sample(ctx, clip(t, moving, tone, "-ac", "1")); err != nil || len(f.ChannelDB) != 1 || f.ChannelDB[0] < -40 {
+		t.Fatalf("mono: %v, %v", f, err)
+	}
+	// Six channels are six.
+	if f, err = d.Sample(ctx, clip(t, moving, tone, "-ac", "6")); err != nil || len(f.ChannelDB) != 6 {
+		t.Fatalf("six channels: %+v, %v", f, err)
+	}
+	if pcm, n := readWAV([]byte("RIFF\xff\xff\xff\xffWAVEdata")); n != 0 || pcm != nil {
+		t.Error("a sound file without a format was read")
 	}
 }

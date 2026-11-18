@@ -39,8 +39,8 @@ var ErrNothing = errors.New("nothing could be decoded")
 const (
 	// thumbWidth is how wide the picture is made; its height follows.
 	thumbWidth = 160
-	// audioRate and audioSeconds are how the sound is taken: mono, this
-	// many samples a second, for this long.
+	// audioRate and audioSeconds are how the sound is taken: every
+	// channel it has, this many samples a second, for this long.
 	audioRate    = 8000
 	audioSeconds = 2
 	// maxOutput bounds what is read from the decoder, picture or sound.
@@ -75,6 +75,11 @@ type Frame struct {
 	// decibels below full scale, Silent when there was none at all.
 	HasAudio bool    `json:"has_audio"`
 	AudioDB  float64 `json:"audio_db"`
+	// ChannelDB is the level of every channel of the sound, in the order
+	// the stream has them: left and right first. AudioDB is the loudest.
+	ChannelDB []float64 `json:"channel_db,omitempty"`
+	// AudioError is what the decoder said when no sound came out.
+	AudioError string `json:"-"`
 }
 
 // CellCols and CellRows are the size of Frame.Cells.
@@ -224,8 +229,9 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 	// other way round, makes the decoder refuse the output it has nothing
 	// for and the other with it: then each is asked for by itself.
 	shot, sound, errText, runErr := d.decode(ctx, data, true, true, true)
-	noVideo := false
+	noVideo, apart := false, false
 	if len(shot) == 0 && len(sound) == 0 && refusedOutput(errText) {
+		apart = true
 		if shot, _, errText, runErr = d.decode(ctx, data, true, false, true); len(shot) == 0 {
 			noVideo = refusedOutput(errText)
 			_, sound, errText, runErr = d.decode(ctx, data, false, true, true)
@@ -240,6 +246,18 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 		}
 	}
 
+	// The decoder stops at the first thing it cannot decode, and a picture
+	// that would not decode takes the sound of the same run with it. Sound
+	// that did not come out with the picture is asked for by itself, so
+	// that what is said of it is said of the sound.
+	pcm, channels := readWAV(sound)
+	heard := func() bool { return channels > 0 && len(pcm)/2/channels >= audioRate/10 }
+	audioErr := errText
+	if !heard() && len(shot) > 0 && !apart && ctx.Err() == nil {
+		_, sound, audioErr, _ = d.decode(ctx, data, false, true, true)
+		pcm, channels = readWAV(sound)
+	}
+
 	f := &Frame{}
 	if img := readPPM(shot); img != nil {
 		f.HasPicture = true
@@ -251,9 +269,16 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 			f.JPEG = out.Bytes()
 		}
 	}
-	if n := len(sound) / 2; n >= audioRate/10 {
+	if heard() {
 		f.HasAudio = true
-		f.AudioDB = level(sound)
+		f.AudioDB = Silent
+		for ch := range channels {
+			db := level(pcm, ch, channels)
+			f.ChannelDB = append(f.ChannelDB, db)
+			f.AudioDB = max(f.AudioDB, db)
+		}
+	} else if msg := strings.TrimSpace(audioErr); msg != "" && !refusedOutput(msg) {
+		f.AudioError = firstLine(msg)
 	}
 	if !f.HasPicture && !f.HasAudio {
 		if ctx.Err() != nil {
@@ -271,8 +296,8 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 }
 
 // decode runs the decoder once, for the picture, the sound or both, and
-// returns what came out of it: the picture as PPM, the sound as signed
-// 16-bit samples, what it had to say and how it ended.
+// returns what came out of it: the picture as PPM, the sound as a WAV
+// file of signed 16-bit samples, what it had to say and how it ended.
 func (d *Decoder) decode(ctx context.Context, data []byte, picture, audio, keyOnly bool) (shot, sound []byte, errText string, runErr error) {
 	args := []string{
 		"-nostdin", "-v", "error", "-threads", "1",
@@ -296,8 +321,10 @@ func (d *Decoder) decode(ctx context.Context, data []byte, picture, audio, keyOn
 			"-pix_fmt", "rgb24", "-f", "image2pipe", "-c:v", "ppm", "pipe:1")
 	}
 	if audio {
-		args = append(args, "-map", "0:a:0?", "-t", strconv.Itoa(audioSeconds), "-vn", "-ac", "1", "-ar", strconv.Itoa(audioRate),
-			"-f", "s16le", "pipe:3")
+		// With the header of a sound file before the samples: it says
+		// how many channels there are.
+		args = append(args, "-map", "0:a:0?", "-t", strconv.Itoa(audioSeconds), "-vn", "-ar", strconv.Itoa(audioRate),
+			"-c:a", "pcm_s16le", "-f", "wav", "pipe:3")
 	}
 	// The sound comes back over a pipe of its own, the picture over the
 	// standard output.
@@ -470,13 +497,49 @@ func cells(img *image.RGBA) []byte {
 	return out
 }
 
-// level is the loudness of signed 16-bit samples in decibels below full
-// scale, by their root mean square.
-func level(pcm []byte) float64 {
-	n := len(pcm) / 2
+// readWAV finds the samples in a sound file written to a pipe — signed,
+// 16 bits, the channels interleaved — and how many channels they are of.
+// No channels when the data is not that. The sizes in the header of a
+// file written to a pipe are not to be believed: the samples run to the
+// end of the data.
+func readWAV(b []byte) (pcm []byte, channels int) {
+	if len(b) < 12 || string(b[:4]) != "RIFF" || string(b[8:12]) != "WAVE" {
+		return nil, 0
+	}
+	for b = b[12:]; len(b) >= 8; {
+		id, size := string(b[:4]), int(uint32(b[4])|uint32(b[5])<<8|uint32(b[6])<<16|uint32(b[7])<<24)
+		b = b[8:]
+		switch {
+		case id == "data":
+			if channels < 1 || channels > 16 {
+				return nil, 0
+			}
+			return b[:len(b)-len(b)%(2*channels)], channels
+		case size < 0 || size > len(b):
+			return nil, 0
+		case id == "fmt " && size >= 16:
+			// 1 is plain samples, 0xFFFE the same said at greater length.
+			if format := int(b[0]) | int(b[1])<<8; (format != 1 && format != 0xFFFE) || int(b[14])|int(b[15])<<8 != 16 {
+				return nil, 0
+			}
+			channels = int(b[2]) | int(b[3])<<8
+		}
+		b = b[size+size%2:]
+	}
+	return nil, 0
+}
+
+// level is the loudness of one channel of signed 16-bit samples in
+// decibels below full scale, by their root mean square.
+func level(pcm []byte, ch, channels int) float64 {
+	n := len(pcm) / 2 / channels
+	if n == 0 {
+		return Silent
+	}
 	var sum float64
 	for i := range n {
-		v := float64(int16(uint16(pcm[2*i]) | uint16(pcm[2*i+1])<<8))
+		o := 2 * (i*channels + ch)
+		v := float64(int16(uint16(pcm[o]) | uint16(pcm[o+1])<<8))
 		sum += v * v
 	}
 	rms := math.Sqrt(sum / float64(n))

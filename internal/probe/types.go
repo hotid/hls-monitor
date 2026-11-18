@@ -145,6 +145,13 @@ const (
 	ProbPictureLoop   = "picture_loop"
 	// ProbAudioLoop: the same sound goes round, the picture does not.
 	ProbAudioLoop = "audio_loop"
+	// ProbAudioChannelSilent: one of the two channels of the sound is
+	// silent and the other is not. ProbAudioQuiet: the sound is there and
+	// far too quiet, for hours. ProbAudioUndecodable: the container has
+	// sound in it and a decoder makes nothing of it.
+	ProbAudioChannelSilent = "audio_channel_silent"
+	ProbAudioQuiet         = "audio_quiet"
+	ProbAudioUndecodable   = "audio_undecodable"
 	// ProbMediaUndecodable: a decoder makes nothing of the segments.
 	ProbMediaUndecodable = "media_undecodable"
 )
