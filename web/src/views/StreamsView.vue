@@ -139,7 +139,7 @@ async function remove() {
           <tbody>
             <tr v-for="s in streams" :key="s.id" class="clickable" @click="router.push({ name: 'stream', params: { id: s.id } })">
               <td class="hide-narrow thumb"><img v-if="thumb(s)" :src="thumb(s)" alt="" loading="lazy" /></td>
-              <td style="max-width: 300px" :title="levelLabel()[s.level]">
+              <td style="max-width: 250px" :title="levelLabel()[s.level]">
                 <RouterLink :to="{ name: 'stream', params: { id: s.id } }" class="strong" @click.stop>{{ s.name }}</RouterLink>
                 <div class="mono muted truncate" :title="s.url">{{ s.url }}</div>
               </td>
@@ -191,7 +191,7 @@ async function remove() {
   background: #000;
 }
 .why {
-  max-width: 300px;
+  max-width: 270px;
   font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
