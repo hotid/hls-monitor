@@ -127,6 +127,8 @@ A stream whose playlists and segments are all in order may still show a black sc
 
 The decoding is done by ffmpeg, which is in the images and is run as a program of its own: it is given the segment on its input and nothing else, no files and no network, with a limit of time and memory. A segment it cannot decode is not a finding. Looks are put off while the monitor cannot keep up.
 
+**Slates.** What an operator puts on air in place of a channel — "the broadcast is interrupted for technical reasons" — is neither black nor, when it moves, a picture that stopped. An administrator who sees one marks the picture with "This is a slate", on the stream's page or in an incident, and gives it a name; from then on a stream showing it gets the failure "A slate instead of the programme" at the first look, by that name, and agents learn the slates with their configuration. A slate with a clock or a blinking sign on it is still known. One that is a whole clip going round needs a frame from each place it is caught at: mark it again under the same name. The list of slates, with the way to delete one, is on the Access page.
+
 What this does not do: the picture is not seen between looks, so a black screen shorter than the period may be missed; encrypted streams are not looked at, nor those checked at the "playlists only" level. A stream that shows a still picture by design — radio, a test card — can be told so in its settings, or not looked at at all. One look costs about a tenth of a second of processor time; at the "beginning of every segment" level it also fetches up to 512 KB of one segment instead of 130.
 
 ## Agents
