@@ -27,6 +27,9 @@ type pictureScan struct {
 	sps []byte
 	// width and height come from an MPEG-2 sequence header.
 	width, height int
+	// filler counts the bytes of filler data: what an encoder pads its
+	// stream with to keep the rate, and no part of any picture.
+	filler int
 }
 
 // videoScanner reads the pictures of one video track, PES packet by PES
@@ -115,6 +118,8 @@ func (v *videoScanner) scanH264(data []byte, wantSPS bool, out *pictureScan) {
 			if wantSPS && out.sps == nil {
 				out.sps = bytes.TrimRight(data[nal:unitEnd(data, nal)], "\x00")
 			}
+		case typ == 12:
+			out.filler += unitEnd(data, nal) - nal
 		case typ >= 1 && typ <= 5:
 			// first_mb_in_slice is 0, coded as a single 1 bit, in the
 			// slice that begins a picture.
@@ -151,6 +156,8 @@ func (v *videoScanner) scanHEVC(data []byte, wantSPS bool, out *pictureScan) {
 			if wantSPS && out.sps == nil {
 				out.sps = bytes.TrimRight(data[nal:unitEnd(data, nal)], "\x00")
 			}
+		case typ == 38:
+			out.filler += unitEnd(data, nal) - nal
 		case typ <= 31:
 			// first_slice_segment_in_pic_flag follows the two header bytes.
 			if nal+2 < len(data) && data[nal+2]&0x80 != 0 {

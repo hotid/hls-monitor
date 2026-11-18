@@ -57,6 +57,14 @@ type Track struct {
 	// the first maxKeyHashes of them. A live encoder never codes two
 	// pictures into the same bytes; a clip that goes round does every time.
 	KeyHashes []uint64 `json:"-"`
+	// PlainBytes are the bytes of the pictures that are not keyframes,
+	// without filler, and PlainFrames how many such pictures there are:
+	// what tells how much the picture changes from one frame to the next.
+	PlainBytes  int64 `json:"-"`
+	PlainFrames int   `json:"-"`
+	// SoundHashes are the same for the coded frames of sound, the first
+	// maxSoundHashes of them.
+	SoundHashes []uint64 `json:"-"`
 }
 
 // Duration is the presentation duration of the track in the segment.

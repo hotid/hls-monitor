@@ -56,6 +56,12 @@ type Checker struct {
 	looks  looks
 	// loops are the playlists that show the same pictures over and over.
 	loops map[string]standingProblem
+	// signs is what the sizes of coded frames tell: a picture that does
+	// not seem to change, sound that seems to be silence.
+	signs map[string]standingProblem
+	// ownAt is when a playlist was last found to play a clip known to be
+	// the channel's own.
+	ownAt time.Time
 
 	// plSource is the server that last answered for each playlist.
 	mu       sync.Mutex

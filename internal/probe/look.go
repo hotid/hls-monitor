@@ -6,6 +6,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/hotid/hls-monitor/internal/media"
 	"github.com/hotid/hls-monitor/internal/picture"
 )
 
@@ -31,7 +32,7 @@ const (
 // PictureProblem reports whether a problem is found by looking at the
 // picture or listening to the sound.
 func PictureProblem(kind string) bool {
-	return kind == ProbPictureBlack || kind == ProbPictureFrozen || kind == ProbAudioSilent || kind == ProbPictureSlate || kind == ProbPictureLoop
+	return kind == ProbPictureBlack || kind == ProbPictureFrozen || kind == ProbAudioSilent || kind == ProbPictureSlate || kind == ProbPictureLoop || kind == ProbAudioLoop
 }
 
 // Slate is a picture put on air in place of a channel — "the broadcast is
@@ -41,6 +42,12 @@ type Slate struct {
 	ID     int64    `json:"id"`
 	Name   string   `json:"name"`
 	Frames [][]byte `json:"frames"`
+	// Keys are the coded frames of a clip, sorted: what it is known by
+	// without decoding anything.
+	Keys []uint64 `json:"keys,omitempty"`
+	// Own tells that it is no slate but something a channel itself plays
+	// over and over: known in order to be left alone.
+	Own bool `json:"own,omitempty"`
 }
 
 // slateMoves is how much a picture may differ from a slate's frame, where
@@ -61,6 +68,9 @@ const (
 // slateOf returns the slate a picture is, if it is one.
 func slateOf(slates []Slate, cells []byte) *Slate {
 	for i := range slates {
+		if slates[i].Own {
+			continue
+		}
 		for _, frame := range slates[i].Frames {
 			if picture.Moved(cells, frame) <= slateMoves ||
 				(picture.Contrast(frame) >= slateContrast && picture.MostlyMoved(cells, frame) <= slateMostlyMoves) {
@@ -210,7 +220,9 @@ func (c *Checker) wantsLook(v Variant) bool {
 }
 
 // look has a segment decoded and judges what it shows.
-func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []byte, at time.Time) {
+// info is what reading the container of the same segment found, when it
+// was read.
+func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []byte, info *media.Info, at time.Time) {
 	if len(init) > 0 {
 		data = append(append(make([]byte, 0, len(init)+len(data)), init...), data...)
 	}
@@ -233,10 +245,19 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 			l.at = at.Add(min(lookAgain, c.PictureEvery) - c.PictureEvery)
 			if l.nothing.standing(at) {
 				l.at = at.Add(min(lookStanding, c.PictureEvery) - c.PictureEvery)
+				details := []any{"decoder_says", err.Error(), "looks_in_a_row", l.nothing.n,
+					"since", l.nothing.since.UTC().Format(time.RFC3339), "looked_at", at.UTC().Format(time.RFC3339)}
+				// What the container says of the video narrows it down: a
+				// track with packets in it and not one picture among them
+				// is not video that failed to decode, it is not video.
+				if video := videoOf(info); video != nil && video.Bytes > 0 {
+					details = append(details, "video_pictures", video.Frames)
+					if d := video.Duration(); d > 0 {
+						details = append(details, "video_kbit_s", math.Round(float64(video.Bytes)*8/d/1000))
+					}
+				}
 				l.problems = []standingProblem{{kind: ProbMediaUndecodable, severity: SevCrit, variant: v.Key,
-					message: "neither the picture nor the sound can be decoded",
-					details: []any{"decoder_says", err.Error(), "looks_in_a_row", l.nothing.n,
-						"since", l.nothing.since.UTC().Format(time.RFC3339), "looked_at", at.UTC().Format(time.RFC3339)}}}
+					message: "neither the picture nor the sound can be decoded", details: details}}
 			}
 		}
 		return
@@ -304,6 +325,13 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 	}
 }
 
+func videoOf(info *media.Info) *media.Track {
+	if info == nil {
+		return nil
+	}
+	return info.Video()
+}
+
 // reportLooks tells, at the end of every cycle, what the latest look found
 // and still stands.
 func (c *Checker) reportLooks(cy *cycle) {
@@ -313,25 +341,48 @@ func (c *Checker) reportLooks(cy *cycle) {
 	for _, p := range standing {
 		slate = slate || p.kind == ProbPictureSlate
 	}
-	// A clip going round is told once: by the name of the slate when it
-	// is a known one, and otherwise as what it is, not as a picture that
-	// does not change as well.
-	if len(c.loops) > 0 && !slate {
+	// What the coded frames tell. A playlist whose segments are no
+	// longer read says nothing.
+	var clips, sounds []standingProblem
+	for key, p := range c.loops {
+		switch {
+		case c.now().Sub(p.at) > knownFor:
+			delete(c.loops, key)
+		case p.kind == ProbAudioLoop:
+			sounds = append(sounds, p)
+		default:
+			clips = append(clips, p)
+		}
+	}
+	// What the sizes of coded frames tell is a sign; where a decoder looks
+	// at the stream it is the decoder that tells, and for certain.
+	var signs []standingProblem
+	for key, p := range c.signs {
+		switch {
+		case c.now().Sub(p.at) > knownFor:
+			delete(c.signs, key)
+		case c.Looker == nil || c.PictureEvery <= 0:
+			signs = append(signs, p)
+		}
+	}
+	if !slate && len(clips) == 0 {
+		standing = append(standing, signs...)
+	}
+	// A clip going round is told once: by the name of the slate when a
+	// look knew it, and otherwise as what it is — not as a picture that
+	// does not change as well, nor as sound that goes round with it.
+	switch {
+	case slate:
+	case len(clips) > 0:
 		kept := standing[:0]
 		for _, p := range standing {
 			if p.kind != ProbPictureFrozen {
 				kept = append(kept, p)
 			}
 		}
-		standing = kept
-		for key, p := range c.loops {
-			// A playlist whose segments are no longer read says nothing.
-			if c.now().Sub(p.at) > 2*time.Minute {
-				delete(c.loops, key)
-				continue
-			}
-			standing = append(standing, p)
-		}
+		standing = append(kept, clips...)
+	case c.now().Sub(c.ownAt) >= knownFor:
+		standing = append(standing, sounds...)
 	}
 	c.mu.Unlock()
 	for _, p := range standing {

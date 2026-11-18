@@ -1,6 +1,7 @@
 {
   "aPlayerWouldStallForBuffering": "Плеер остановился бы на буферизацию",
   "above1TheSegmentDownloadsSlower": "Больше 1 — сегмент качается медленнее, чем играет",
+  "audioLoop": "Звук по кругу",
   "audioSilent": "Тишина",
   "audioVideoDesync": "Рассинхрон аудио и видео",
   "availability": "Доступность",

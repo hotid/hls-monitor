@@ -11,9 +11,11 @@ import type { Incident, IncidentScope } from '@/types'
 const props = defineProps<{ incident: Incident }>()
 const details = computed<Details>(() => props.incident.details ?? {})
 // Incidents found by looking at the picture keep the picture they were last seen on.
-const pictured = computed(() => ['picture_black', 'picture_frozen', 'audio_silent', 'picture_slate', 'picture_loop'].includes(props.incident.kind) && props.incident.id > 0)
+const pictured = computed(() => ['picture_black', 'picture_frozen', 'audio_silent', 'picture_slate', 'picture_loop', 'audio_loop'].includes(props.incident.kind) && props.incident.id > 0)
 const pictureSrc = computed(() => `${basePath}/api/v1/incidents/${props.incident.id}/picture?t=${new Date(props.incident.last_seen).getTime()}`)
 const noPicture = ref(false)
+// A clip going round carries what it is known by, and can be marked with no picture at all.
+const clip = computed(() => typeof details.value.clip_signature === 'string' && details.value.clip_signature !== '')
 const session = useSession()
 const about = computed(() => problemAbout()[props.incident.kind])
 const verdict = computed(() => conclusion(props.incident.kind, details.value))
@@ -71,7 +73,10 @@ const scopeLines = computed(() => {
     </div>
     <div class="col">
       <img v-if="pictured && !noPicture" class="evidence" :src="pictureSrc" :alt="t('stream.pictureOfTheStream')" @error="noPicture = true" />
-      <MarkSlate v-if="pictured && !noPicture && session.isAdmin && incident.kind !== 'picture_slate'" :incident-id="incident.id" style="margin-bottom: 10px" />
+      <MarkSlate
+        v-if="pictured && (!noPicture || clip) && session.isAdmin && incident.kind !== 'picture_slate'"
+        :incident-id="incident.id" :picture="!noPicture" :clip="clip" :stream-name="incident.stream_name" style="margin-bottom: 10px"
+      />
       <template v-if="verdict.length">
         <h3>{{ t('incidents.conclusion') }}</h3>
         <p v-for="(line, i) in verdict" :key="i">{{ line }}</p>

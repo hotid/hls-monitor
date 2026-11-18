@@ -1,6 +1,7 @@
 {
   "aPlayerWouldStallForBuffering": "A player would stall for buffering",
   "above1TheSegmentDownloadsSlower": "Above 1 the segment downloads slower than it plays",
+  "audioLoop": "Sound going round",
   "audioSilent": "Silence",
   "audioVideoDesync": "Audio/video desync",
   "availability": "Availability",

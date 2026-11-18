@@ -41,7 +41,7 @@ func (s *Server) LoadSlates(ctx context.Context) {
 	}
 	out := make([]probe.Slate, 0, len(rows))
 	for _, sl := range rows {
-		p := probe.Slate{ID: sl.ID, Name: sl.Name}
+		p := probe.Slate{ID: sl.ID, Name: sl.Name, Keys: sl.Keys, Own: sl.Own}
 		for _, f := range sl.Frames {
 			p.Frames = append(p.Frames, f.Cells)
 		}
@@ -88,11 +88,17 @@ type slateRequest struct {
 	StreamID   int64 `json:"stream_id"`
 	AgentID    int64 `json:"agent_id"`
 	IncidentID int64 `json:"incident_id"`
+	// Own marks not a slate but a clip the channel itself plays over and
+	// over: a stream playing it is left alone from then on. It takes an
+	// incident of a clip going round (picture_loop, audio_loop), whose
+	// coded frames the clip is known by.
+	Own bool `json:"own"`
 }
 
 // markSlate godoc
 //
-//	@Summary	Mark a picture as a slate
+//	@Summary	Mark a picture or a clip as a slate, or a clip as the channel's own
+//	@Description	A picture is known by what it looks like, to a decoder. A clip going round (an incident picture_loop or audio_loop) is known by its coded frames as well: a stream playing it again gets picture_slate at the first segment, with no decoding — or, marked with own, nothing at all.
 //	@Tags		slates
 //	@Security	SessionCookie
 //	@Security	BearerToken
@@ -102,6 +108,7 @@ type slateRequest struct {
 //	@Success	200		{object}	store.Slate
 //	@Failure	400		{object}	apiError
 //	@Failure	404		{object}	apiError
+//	@Failure	409		{object}	apiError
 //	@Router		/api/v1/slates [post]
 func (s *Server) markSlate(c *gin.Context) {
 	var req slateRequest
@@ -122,16 +129,23 @@ func (s *Server) markSlate(c *gin.Context) {
 		req.AgentID = store.LocalAgentID
 	}
 	ctx := c.Request.Context()
-	sl, err := s.st.MarkSlate(ctx, req.Name, req.StreamID, req.AgentID, req.IncidentID, s.now())
-	if errors.Is(err, store.ErrNoPicture) {
+	sl, err := s.st.MarkSlate(ctx, req.Name, req.StreamID, req.AgentID, req.IncidentID, req.Own, s.now())
+	switch {
+	case errors.Is(err, store.ErrNoPicture) && req.Own:
+		fail(c, http.StatusNotFound, "no_clip", "there is nothing to know the clip by: only an incident of a clip going round can be marked so")
+		return
+	case errors.Is(err, store.ErrNoPicture):
 		fail(c, http.StatusNotFound, "no_picture", "there is no picture to mark: the stream was not looked at yet")
+		return
+	case errors.Is(err, store.ErrConflict):
+		fail(c, http.StatusConflict, "conflict", "the name is taken: a slate and a channel's own clip cannot share one")
 		return
 	}
 	if s.storeError(c, err) {
 		return
 	}
 	s.LoadSlates(ctx)
-	s.log.Info("a picture was marked as a slate", "slate", sl.Name, "frames", len(sl.Frames), "by", currentUser(c).Username)
+	s.log.Info("a picture was marked as a slate", "slate", sl.Name, "own", sl.Own, "frames", len(sl.Frames), "coded_frames", sl.CodedFrames, "by", currentUser(c).Username)
 	c.JSON(http.StatusOK, sl)
 }
 

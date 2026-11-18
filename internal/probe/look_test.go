@@ -330,6 +330,10 @@ func TestNothingCanBeDecoded(t *testing.T) {
 	if n < cycles-8 || s.looks < 4 || s.looks > 9 {
 		t.Fatalf("reported in %d of %d cycles, after %d looks", n, cycles, s.looks)
 	}
+	// What the container said of the video goes with it.
+	if p := hasProblem(f.step(1), ProbMediaUndecodable); p == nil || p.Details["video_pictures"] == nil || p.Details["video_kbit_s"] == nil {
+		t.Errorf("what the container says is missing: %+v", p)
+	}
 	// It decodes again: over at the next look.
 	s.err = nil
 	if n, _ := watch(f, 3*time.Minute, ProbMediaUndecodable); n > 12 {

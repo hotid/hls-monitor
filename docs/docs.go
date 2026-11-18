@@ -1165,6 +1165,7 @@ const docTemplate = `{
                         "BearerToken": []
                     }
                 ],
+                "description": "A picture is known by what it looks like, to a decoder. A clip going round (an incident picture_loop or audio_loop) is known by its coded frames as well: a stream playing it again gets picture_slate at the first segment, with no decoding — or, marked with own, nothing at all.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1174,7 +1175,7 @@ const docTemplate = `{
                 "tags": [
                     "slates"
                 ],
-                "summary": "Mark a picture as a slate",
+                "summary": "Mark a picture or a clip as a slate, or a clip as the channel's own",
                 "parameters": [
                     {
                         "description": "Which picture, and the name of the slate",
@@ -1201,6 +1202,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/internal_api.apiError"
                         }
@@ -3165,8 +3172,19 @@ const docTemplate = `{
                 "id": {
                     "type": "integer"
                 },
+                "keys": {
+                    "description": "Keys are the coded frames of a clip, sorted: what it is known by\nwithout decoding anything.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "name": {
                     "type": "string"
+                },
+                "own": {
+                    "description": "Own tells that it is no slate but something a channel itself plays\nover and over: known in order to be left alone.",
+                    "type": "boolean"
                 }
             }
         },
@@ -3614,6 +3632,10 @@ const docTemplate = `{
         "github_com_hotid_hls-monitor_internal_store.Slate": {
             "type": "object",
             "properties": {
+                "coded_frames": {
+                    "description": "CodedFrames is how many coded frames of a clip it is known by; Keys\nare those frames, sorted.",
+                    "type": "integer"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -3628,6 +3650,10 @@ const docTemplate = `{
                 },
                 "name": {
                     "type": "string"
+                },
+                "own": {
+                    "description": "Own tells that it is no slate but a clip a channel itself plays over\nand over: a stream playing it is left alone.",
+                    "type": "boolean"
                 }
             }
         },
@@ -4493,6 +4519,10 @@ const docTemplate = `{
                 "name": {
                     "description": "Name of the slate; a picture marked under a name that exists is\nadded to that slate, which is how one that moves gets its frames.",
                     "type": "string"
+                },
+                "own": {
+                    "description": "Own marks not a slate but a clip the channel itself plays over and\nover: a stream playing it is left alone from then on. It takes an\nincident of a clip going round (picture_loop, audio_loop), whose\ncoded frames the clip is known by.",
+                    "type": "boolean"
                 },
                 "stream_id": {
                     "description": "The picture: the latest look at a stream from a vantage point (the\nserver's own by default), or the one kept with an incident.",

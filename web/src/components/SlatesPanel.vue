@@ -45,7 +45,11 @@ async function remove() {
       <table v-else class="table">
         <tbody>
           <tr v-for="s in slates" :key="s.id">
-            <td class="strong name">{{ s.name }}<div class="muted when">{{ fmtWhen(s.created_at) }}</div></td>
+            <td class="strong name">
+              {{ s.name }}
+              <div class="muted when">{{ fmtWhen(s.created_at) }}</div>
+              <div v-if="s.own" class="own">{{ t('access.ownClip') }}</div>
+            </td>
             <td>
               <div class="frames">
                 <figure v-for="f in s.frames" :key="f.id">
@@ -53,18 +57,27 @@ async function remove() {
                   <button class="drop" type="button" :title="t('access.deleteThisPicture')" :aria-label="t('access.deleteThisPicture')" @click="deleting = { slate: s, frame: f.id }">×</button>
                 </figure>
               </div>
+              <div v-if="s.coded_frames" class="muted coded">{{ t('access.codedFrames', { n: s.coded_frames }) }}</div>
             </td>
-            <td class="right"><button class="btn danger" type="button" @click="deleting = { slate: s }">{{ t('access.deleteSlate') }}</button></td>
+            <td class="right"><button class="btn danger" type="button" @click="deleting = { slate: s }">{{ s.own ? t('access.deleteClip') : t('access.deleteSlate') }}</button></td>
           </tr>
         </tbody>
       </table>
     </div>
     <ConfirmDialog
-      v-if="deleting" :title="deleting.frame ? t('access.deletePictureQuestion') : t('access.deleteSlateQuestion')"
+      v-if="deleting" :title="deleting.frame ? t('access.deletePictureQuestion') : deleting.slate.own ? t('access.deleteClipQuestion') : t('access.deleteSlateQuestion')"
       :action="t('common.delete')" :busy="busy" @close="deleting = null" @confirm="remove"
     >
-      <p v-if="deleting.frame">{{ deleting.slate.frames.length > 1 ? t('access.pictureWillBeForgotten', { name: deleting.slate.name }) : t('access.lastPictureTakesTheSlate', { name: deleting.slate.name }) }}</p>
-      <p v-else>{{ t('access.forgetSlate', { name: deleting.slate.name }) }}</p>
+      <p v-if="deleting.frame">
+        {{
+          deleting.slate.frames.length > 1
+            ? t('access.pictureWillBeForgotten', { name: deleting.slate.name })
+            : deleting.slate.coded_frames
+              ? t('access.lastPictureKeepsTheClip', { name: deleting.slate.name })
+              : t('access.lastPictureTakesTheSlate', { name: deleting.slate.name })
+        }}
+      </p>
+      <p v-else>{{ deleting.slate.own ? t('access.forgetOwnClip', { name: deleting.slate.name }) : t('access.forgetSlate', { name: deleting.slate.name }) }}</p>
       <img v-if="deleting.frame" class="preview" :src="`${basePath}/api/v1/slates/frames/${deleting.frame}`" :alt="deleting.slate.name" />
     </ConfirmDialog>
   </section>
@@ -85,6 +98,18 @@ async function remove() {
 .when {
   font-weight: 400;
   font-size: 12px;
+}
+.own {
+  margin-top: 4px;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--success);
+}
+.coded {
+  font-size: 12px;
+}
+.frames:not(:empty) + .coded {
+  margin-top: 6px;
 }
 .frames {
   display: flex;

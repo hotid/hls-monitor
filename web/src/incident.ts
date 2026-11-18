@@ -58,6 +58,7 @@ export const problemAbout = perLocale((): Record<string, { what: string; how: st
   audio_silent: { what: t('incident.audioSilentWhat'), how: t('incident.pictureLookHow') },
   picture_slate: { what: t('incident.pictureSlateWhat'), how: t('incident.pictureSlateHow') },
   picture_loop: { what: t('incident.pictureLoopWhat'), how: t('incident.pictureLoopHow') },
+  audio_loop: { what: t('incident.audioLoopWhat'), how: t('incident.audioLoopHow') },
   media_undecodable: { what: t('incident.mediaUndecodableWhat'), how: t('incident.mediaUndecodableHow') },
   no_keyframe_start: {
     what: t('incident.theSegmentDoesNotStartWith'),
@@ -117,8 +118,13 @@ const calculation = perLocale((): Field[] => [
   { key: 'missed_segments', label: t('incident.segmentsMissed'), unit: 'count' },
   { key: 'slate', label: t('incident.slateName'), unit: 'text' },
   { key: 'decoder_says', label: t('incident.decoderSays'), unit: 'text' },
+  { key: 'video_pictures', label: t('incident.videoPictures'), unit: 'count' },
+  { key: 'video_kbit_s', label: t('incident.videoKbitS'), unit: 'count' },
   { key: 'segments_in_a_row', label: t('incident.segmentsInARow'), unit: 'count' },
   { key: 'distinct_keyframes', label: t('incident.distinctKeyframes'), unit: 'count' },
+  { key: 'distinct_frames', label: t('incident.distinctFrames'), unit: 'count' },
+  { key: 'bits_per_pixel', label: t('incident.bitsPerPixel'), unit: 'text' },
+  { key: 'audio_frame_bytes', label: t('incident.audioFrameBytes'), unit: 'count' },
   { key: 'picture_luma', label: t('incident.pictureLuma'), unit: 'count' },
   { key: 'picture_dark_share', label: t('incident.pictureDarkShare'), unit: 'pct' },
   { key: 'audio_level_db', label: t('incident.audioLevel'), unit: 'count' },
@@ -207,8 +213,11 @@ function rows(d: Details, fields: Field[]): Row[] {
   return out
 }
 
+/** Details that are for the monitor, not for the reader: what a clip is known by. */
+const unshown = ['clip_signature', 'known_by', 'judged_by']
+
 export function calculationRows(d: Details): Row[] {
-  const known = new Set([...calculation(), ...circumstances()].map((f) => f.key))
+  const known = new Set([...calculation(), ...circumstances()].map((f) => f.key).concat(unshown))
   const extra = Object.keys(d)
     .filter((k) => !known.has(k))
     .sort()
@@ -229,6 +238,10 @@ function num(d: Details, key: string): number | undefined {
 export function conclusion(kind: string, d: Details): string[] {
   const out: string[] = []
   const s = (v: number) => fmtSeconds(v)
+  if (d.judged_by) out.push(t('incident.judgedBySizes'))
+  if (kind === 'media_undecodable' && num(d, 'video_pictures') === 0) {
+    out.push(t('incident.noPicturesInTheVideoTrack', { rate: num(d, 'video_kbit_s') ?? '?' }))
+  }
   if (kind === 'playback_stall') {
     const wall = num(d, 'played_for')
     const media = num(d, 'media_received')

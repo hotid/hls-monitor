@@ -32,7 +32,7 @@ const silent = (p: StreamPicture) => p.has_audio && p.audio_db < -70
         <div v-if="p.has_picture" :class="{ bad: black(p) }">{{ t('stream.brightness') }} <span class="mono">{{ fmtNumber(p.luma, 0) }}</span><span class="muted"> / 255</span></div>
         <div v-if="p.has_audio" :class="{ bad: silent(p) }">{{ t('stream.soundLevel') }} <span class="mono">{{ fmtNumber(p.audio_db, 0) }} {{ t('stream.dB') }}</span></div>
         <div v-else class="muted">{{ t('stream.noSound') }}</div>
-        <MarkSlate v-if="session.isAdmin && p.has_picture" :stream-id="p.stream_id" :agent-id="p.agent_id" />
+        <MarkSlate v-if="session.isAdmin && p.has_picture" picture :stream-id="p.stream_id" :agent-id="p.agent_id" />
       </figcaption>
     </figure>
   </div>

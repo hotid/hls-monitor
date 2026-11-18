@@ -151,6 +151,7 @@ type tsTrack struct {
 	keyPTS        []int64
 	spsDone       bool
 	adtsFrames    int
+	plainHalves   int
 	lastPESPTS    int64
 	lastPESFrames int
 }
@@ -238,8 +239,18 @@ func tsStreamKind(st astits.StreamType) (kind, codec string) {
 	return KindOther, fmt.Sprintf("0x%02x", uint8(st))
 }
 
-// maxKeyHashes bounds Track.KeyHashes.
-const maxKeyHashes = 64
+// maxKeyHashes bounds Track.KeyHashes, maxSoundHashes Track.SoundHashes.
+const (
+	maxKeyHashes   = 64
+	maxSoundHashes = 32
+)
+
+// hashOf is the hash coded bytes are told apart by.
+func hashOf(b []byte) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write(b)
+	return h.Sum64()
+}
 
 func handlePES(t *tsTrack, d *astits.DemuxerData) {
 	t.pesCount++
@@ -299,9 +310,11 @@ func handlePES(t *tsTrack, d *astits.DemuxerData) {
 			t.FirstKeyframe = sc.firstKey
 		}
 		if sc.keys > 0 && len(t.KeyHashes) < maxKeyHashes {
-			h := fnv.New64a()
-			_, _ = h.Write(d.PES.Data)
-			t.KeyHashes = append(t.KeyHashes, h.Sum64())
+			t.KeyHashes = append(t.KeyHashes, hashOf(d.PES.Data))
+		}
+		if sc.known && sc.keys == 0 && sc.halves > 0 {
+			t.PlainBytes += int64(len(d.PES.Data) - sc.filler)
+			t.plainHalves += sc.halves
 		}
 		t.halves += sc.halves
 		t.Keyframes += sc.keys
@@ -319,6 +332,7 @@ func handlePES(t *tsTrack, d *astits.DemuxerData) {
 	case KindAudio:
 		if t.Codec == "aac" {
 			n, sr, ch := countADTS(d.PES.Data)
+			t.SoundHashes = hashADTS(t.SoundHashes, d.PES.Data)
 			if sr > 0 && t.SampleRate == 0 {
 				t.SampleRate, t.Channels = sr, ch
 			}
@@ -326,6 +340,10 @@ func handlePES(t *tsTrack, d *astits.DemuxerData) {
 			if hasPTS {
 				t.lastPESPTS, t.lastPESFrames = pts, n
 			}
+		} else if len(t.SoundHashes) < maxSoundHashes && len(d.PES.Data) > 0 {
+			// Other sound is told by the packet: a file played again is
+			// cut into packets the same way.
+			t.SoundHashes = append(t.SoundHashes, hashOf(d.PES.Data))
 		}
 	}
 }
@@ -384,6 +402,7 @@ func finalizeTSTrack(t *tsTrack) {
 		end = max(end, t.maxPTS)
 	case t.Kind == KindVideo:
 		t.Frames = (t.halves + 1) / 2
+		t.PlainFrames = (t.plainHalves + 1) / 2
 		frameDur, last := videoFrameDuration(t.timed)
 		if frameDur == 0 && t.Frames > 1 {
 			frameDur = float64(span) / float64(t.Frames-1)
@@ -467,6 +486,24 @@ func countADTS(data []byte) (frames, sampleRate, channels int) {
 	return frames, sampleRate, channels
 }
 
+// hashADTS adds the hashes of the ADTS frames in data to hashes, up to
+// maxSoundHashes of them: of what is coded, without the header.
+func hashADTS(hashes []uint64, data []byte) []uint64 {
+	pos := 0
+	for pos+7 <= len(data) && len(hashes) < maxSoundHashes {
+		if data[pos] != 0xff || data[pos+1]&0xf6 != 0xf0 {
+			break
+		}
+		size := int(data[pos+3]&3)<<11 | int(data[pos+4])<<3 | int(data[pos+5]>>5)
+		if size < 7 || pos+size > len(data) {
+			break
+		}
+		hashes = append(hashes, hashOf(data[pos+7:pos+size]))
+		pos += size
+	}
+	return hashes
+}
+
 // analyzePackedAAC handles HLS "packed audio": an optional ID3 tag carrying
 // the transport timestamp followed by raw ADTS frames.
 func analyzePackedAAC(data []byte, info *Info) {
@@ -495,7 +532,7 @@ func analyzePackedAAC(data []byte, info *Info) {
 		info.Error = "no ADTS frames found"
 		return
 	}
-	t := Track{Kind: KindAudio, Codec: "aac", SampleRate: sr, Channels: ch, Frames: frames, Bytes: int64(len(data))}
+	t := Track{Kind: KindAudio, Codec: "aac", SampleRate: sr, Channels: ch, Frames: frames, Bytes: int64(len(data)), SoundHashes: hashADTS(nil, data)}
 	if sr > 0 {
 		t.HasTiming = hasStart
 		t.StartPTS = start

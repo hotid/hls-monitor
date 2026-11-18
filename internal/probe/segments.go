@@ -244,16 +244,18 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 			cy.metric("hls_startup_seconds", v.Key, startup)
 		}
 
+		var info *media.Info
 		if (c.t.Level == LevelContainer || header) && !s.encrypted && v.Kind != KindSubtitles {
-			info := media.Analyze(resp.Body, init)
+			info = media.Analyze(resp.Body, init)
 			rec.Media = info
 			c.judgeMedia(v, s, info, st, agg, flag, !header || (rec.Size > 0 && rec.Fetched >= rec.Size))
-			c.noteKeyframes(v, st, info, c.now())
+			c.noteCoded(v, st, info, c.now())
+			c.noteSizes(v, st, info, c.now())
 		} else {
 			st.prev = prevSegment{}
 		}
 		if look && err == nil && resp != nil && resp.OK() {
-			c.look(ctx, cy, v, resp.Body, st.initRaw, c.now())
+			c.look(ctx, cy, v, resp.Body, st.initRaw, info, c.now())
 		}
 		emit()
 	}

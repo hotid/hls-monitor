@@ -1194,3 +1194,50 @@ func TestSlates(t *testing.T) {
 		t.Errorf("after the slate was forgotten the checks know %+v", e.srv.Slates())
 	}
 }
+
+func TestClipsKnownByTheirFrames(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Now().Truncate(time.Second)
+	st, err := e.st.CreateStream(ctx, store.StreamInput{Name: "tv", URL: "http://x/tv.m3u8", Enabled: true, Level: "segments",
+		AgentIDs: []int64{store.LocalAgentID}}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A clip going round, found without a decoder: no picture, only the
+	// coded frames it is made of.
+	keys := []uint64{0xfedcba9876543210, 3, 17}
+	ing := ingest.New(e.st, metrics.New("", nil), nil)
+	if err := ing.Apply(ctx, store.LocalAgentID, &probe.Result{TargetID: st.ID, Time: now, Status: probe.StatusFail,
+		Problems: []probe.Problem{{Kind: probe.ProbPictureLoop, Severity: probe.SevCrit, Variant: probe.VariantMedia, Message: "round",
+			Details: map[string]any{"clip_signature": probe.Signature(keys)}}}}); err != nil {
+		t.Fatal(err)
+	}
+	incs, err := e.st.ListIncidents(ctx, store.IncidentFilter{Kind: probe.ProbPictureLoop})
+	if err != nil || len(incs) != 1 {
+		t.Fatalf("incidents = %v, %v", incs, err)
+	}
+	admin := e.login("admin")
+	// A stream that was never looked at has nothing to be the channel's own clip by.
+	admin.want(http.StatusNotFound, "POST", "/api/v1/slates", map[string]any{"name": "x", "stream_id": st.ID, "own": true}, nil)
+
+	var sl store.Slate
+	admin.want(http.StatusOK, "POST", "/api/v1/slates", map[string]any{"name": "tv: promo", "incident_id": incs[0].ID, "own": true}, &sl)
+	if !sl.Own || sl.CodedFrames != 3 || len(sl.Frames) != 0 {
+		t.Fatalf("the channel's own clip = %+v", sl)
+	}
+	known := e.srv.Slates()
+	if len(known) != 1 || !known[0].Own || len(known[0].Keys) != 3 || known[0].Keys[2] != keys[0] {
+		t.Fatalf("the checks know %+v", known)
+	}
+	// The same name cannot be a slate as well.
+	admin.want(http.StatusConflict, "POST", "/api/v1/slates", map[string]any{"name": "tv: promo", "incident_id": incs[0].ID}, nil)
+	admin.want(http.StatusOK, "POST", "/api/v1/slates", map[string]any{"name": "no signal", "incident_id": incs[0].ID}, &sl)
+	if sl.Own || sl.CodedFrames != 3 {
+		t.Fatalf("the slate = %+v", sl)
+	}
+	admin.want(http.StatusNoContent, "DELETE", fmt.Sprintf("/api/v1/slates/%d", sl.ID), nil, nil)
+	if known := e.srv.Slates(); len(known) != 1 || known[0].Name != "tv: promo" {
+		t.Fatalf("after the slate was forgotten the checks know %+v", known)
+	}
+}

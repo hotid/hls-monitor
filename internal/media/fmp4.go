@@ -184,10 +184,34 @@ func analyzeFMP4(data []byte, init *Init, info *Info) {
 				if trex == nil {
 					trex = &mp4.TrexBox{}
 				}
+				// Where the samples lie: from the start of the fragment
+				// unless the track says otherwise, one run after another.
+				base := int64(frag.Moof.StartPos)
+				if traf.Tfhd.HasBaseDataOffset() {
+					base = int64(traf.Tfhd.BaseDataOffset)
+				}
+				at := int64(-1)
 				for _, trun := range traf.Truns {
 					trun.AddSampleDefaultValues(traf.Tfhd, trex)
+					if trun.HasDataOffset() {
+						at = base + int64(trun.DataOffset)
+					}
 					for i := range trun.Samples {
 						s := &trun.Samples[i]
+						var coded []byte
+						if at >= 0 {
+							if end := at + int64(s.Size); s.Size > 0 && end <= int64(len(data)) {
+								coded = data[at:end]
+							}
+							at += int64(s.Size)
+						}
+						switch {
+						case coded == nil:
+						case t.Kind == KindVideo && s.IsSync() && len(t.KeyHashes) < maxKeyHashes:
+							t.KeyHashes = append(t.KeyHashes, hashOf(coded))
+						case t.Kind == KindAudio && len(t.SoundHashes) < maxSoundHashes:
+							t.SoundHashes = append(t.SoundHashes, hashOf(coded))
+						}
 						pts := dts + int64(s.CompositionTimeOffset)
 						end := pts + int64(s.Dur)
 						if !t.have {
@@ -203,6 +227,10 @@ func analyzeFMP4(data []byte, init *Init, info *Info) {
 							if t.seen == 0 {
 								t.FirstKeyframe = true
 							}
+						}
+						if t.Kind == KindVideo && !s.IsSync() {
+							t.PlainBytes += int64(s.Size)
+							t.PlainFrames++
 						}
 						t.seen++
 						t.Frames++

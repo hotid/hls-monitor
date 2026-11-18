@@ -143,6 +143,8 @@ const (
 	ProbAudioSilent   = "audio_silent"
 	ProbPictureSlate  = "picture_slate"
 	ProbPictureLoop   = "picture_loop"
+	// ProbAudioLoop: the same sound goes round, the picture does not.
+	ProbAudioLoop = "audio_loop"
 	// ProbMediaUndecodable: a decoder makes nothing of the segments.
 	ProbMediaUndecodable = "media_undecodable"
 )

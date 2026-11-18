@@ -235,6 +235,10 @@ export interface Slate {
   name: string
   created_at: string
   frames: { id: number; created_at: string }[]
+  /** Not a slate but a clip the channel itself plays over and over: left alone. */
+  own: boolean
+  /** How many coded frames of a clip it is known by. */
+  coded_frames: number
 }
 
 /** The latest look at a stream's picture and sound from one vantage point. */
