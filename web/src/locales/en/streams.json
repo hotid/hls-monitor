@@ -6,7 +6,7 @@
   "findByNameOrURL": "Find by name or URL",
   "lastCheck": "Last check",
   "mbit": "Mbit/s",
-  "picture": "Picture",
   "streamWillBeDeletedTogetherWith": "Stream “{name}” will be deleted together with its history: metrics, incidents and the segment journal. This cannot be undone.",
+  "video": "Video",
   "why": "What is wrong"
 }

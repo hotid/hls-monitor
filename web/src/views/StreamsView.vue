@@ -73,7 +73,6 @@ const sort = useSort(() => found.value, {
   status: { value: (s) => severity[s.status], filter: 'choice', label: (s) => statusLabel()[s.status] },
   why: { value: (s) => why(s).map((i) => problemName(i.kind)).join(', '), filter: 'text' },
   bitrate: { value: (s) => figure(s, 'bitrate_bps') ?? 0, filter: 'range', unit: t('streams.mbit'), scale: 1e6 },
-  height: { value: (s) => figure(s, 'height') ?? 0, filter: 'range' },
   level: { value: (s) => levelLabel()[s.level], filter: 'choice' },
   agents: { value: (s) => s.agents.map((a) => a.agent_name).join(', '), filter: 'choice', label: (s) => s.agents.map((a) => a.agent_name).join(', ') || t('common.notAssigned') },
   checked: (s) => timeValue(lastChecked(s)),
@@ -131,8 +130,7 @@ async function remove() {
               <SortTh :sort="sort" by="name">{{ t('common.stream') }}</SortTh>
               <SortTh :sort="sort" by="status">{{ t('common.status') }}</SortTh>
               <SortTh :sort="sort" by="why">{{ t('streams.why') }}</SortTh>
-              <SortTh :sort="sort" by="bitrate" class="right hide-narrow">{{ t('common.bitrate') }}</SortTh>
-              <SortTh :sort="sort" by="height" class="right hide-narrow">{{ t('streams.picture') }}</SortTh>
+              <SortTh :sort="sort" by="bitrate" class="right hide-narrow">{{ t('streams.video') }}</SortTh>
               <SortTh v-if="severalAgents" :sort="sort" by="agents" class="hide-narrow">{{ t('common.agents') }}</SortTh>
               <SortTh :sort="sort" by="checked" class="hide-narrow">{{ t('streams.lastCheck') }}</SortTh>
               <th v-if="session.isAdmin" />
@@ -141,7 +139,7 @@ async function remove() {
           <tbody>
             <tr v-for="s in streams" :key="s.id" class="clickable" @click="router.push({ name: 'stream', params: { id: s.id } })">
               <td class="hide-narrow thumb"><img v-if="thumb(s)" :src="thumb(s)" alt="" loading="lazy" /></td>
-              <td style="max-width: 360px" :title="levelLabel()[s.level]">
+              <td style="max-width: 300px" :title="levelLabel()[s.level]">
                 <RouterLink :to="{ name: 'stream', params: { id: s.id } }" class="strong" @click.stop>{{ s.name }}</RouterLink>
                 <div class="mono muted truncate" :title="s.url">{{ s.url }}</div>
               </td>
@@ -150,8 +148,10 @@ async function remove() {
                 <template v-for="(i, n) in why(s).slice(0, 2)" :key="i.id"><template v-if="n">, </template><span :class="i.severity" :title="i.message">{{ problemName(i.kind) }}</span></template>
                 <span v-if="why(s).length > 2" class="muted more" :title="why(s).slice(2).map((i) => problemName(i.kind)).join(', ')">{{ t('streams.andMore', { n: why(s).length - 2 }) }}</span>
               </td>
-              <td class="mono right hide-narrow nowrap">{{ figure(s, 'bitrate_bps') ? fmtBits(figure(s, 'bitrate_bps')) : '—' }}</td>
-              <td class="mono right hide-narrow nowrap">{{ figure(s, 'height') ? figure(s, 'height') + 'p' : '—' }}</td>
+              <td class="mono right hide-narrow nowrap">
+                <template v-if="figure(s, 'bitrate_bps')"><span v-if="figure(s, 'height')" class="muted">{{ figure(s, 'height') }}p · </span>{{ fmtBits(figure(s, 'bitrate_bps')) }}</template>
+                <template v-else>—</template>
+              </td>
               <td v-if="severalAgents" class="hide-narrow">
                 <template v-if="s.agents.length">{{ s.agents.map((a) => a.agent_name).join(', ') }}</template>
                 <span v-else class="muted">{{ t('common.notAssigned') }}</span>
@@ -191,7 +191,7 @@ async function remove() {
   background: #000;
 }
 .why {
-  max-width: 340px;
+  max-width: 300px;
   font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
