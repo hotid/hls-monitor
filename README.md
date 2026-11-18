@@ -18,6 +18,7 @@ The interface is available in English and Russian: the switch is in the top bar,
 - **Where to look for the cause:** whether other vantage points saw the same, and whether other streams of the same server have it. The same problem on several streams of one server at once is one incident of the server, not one per stream; a problem that comes back within minutes continues its incident.
 - **The network by server:** round trip time, loss and the share of requests for every server that answers, the time of the balancer's redirects, and connection setup measured on a connection made for it.
 - **Watching through the monitor:** a player in the stream's page, fed by the server or by an agent — browser → server → agent → origin — with the choice of one particular server behind a balancer, and charts of every hop: speed, delay, round trip time and the share of packets lost.
+- **Looks at the picture, on request:** a black screen, a picture that stopped and silence are found by decoding one frame and a little sound of every stream every few minutes; the latest picture is on the stream's page.
 - **Live diagnosis:** a separate check once a second with the result shown at once.
 - **Agents in other networks:** they make outgoing connections only, queue results on disk while the server is away, and report the state of their own link to the server.
 - **Knows when it cannot keep up itself:** an overloaded monitor does not report its own delay as a failure of the streams, and catches up instead of falling further behind.
@@ -120,7 +121,13 @@ The browser is given only addresses signed by the server, valid for twelve hours
 
 A separate check, run once per second at the chosen depth (for one to ten minutes), is started from the stream page. Every check is visible in the browser immediately: the response and server of each playlist, the player model buffer, the video arrival rate as a percentage of real time, every new segment, and everything that was found, with the calculation. The check is performed by the monitor server itself, not by agents. Live diagnosis saves nothing and does not affect regular checks, incidents or charts; no more than three run at the same time.
 
-Decoding (black frame, frozen frame, silence) is not implemented yet.
+### Picture and sound
+
+A stream whose playlists and segments are all in order may still show a black screen, a picture that stopped, or play silence. With `HLSMON_PICTURE_CHECK` set (to `5m`, say), every stream is looked at once in that period: one keyframe of a segment and a couple of seconds of its sound are decoded, and the monitor notes how bright the picture is, whether it is the same as at the look before, and how loud the sound is. One dark frame or one pause means nothing, so after a look that found something the monitor looks again in 20 seconds, and reports a black screen, a picture that does not change or silence when three looks in a row, over a minute at least, found the same. The latest picture is shown on the stream's page, and an incident keeps the picture it was last seen on.
+
+The decoding is done by ffmpeg, which is in the images and is run as a program of its own: it is given the segment on its input and nothing else, no files and no network, with a limit of time and memory. A segment it cannot decode is not a finding. Looks are put off while the monitor cannot keep up.
+
+What this does not do: the picture is not seen between looks, so a black screen shorter than the period may be missed; encrypted streams are not looked at, nor those checked at the "playlists only" level. A stream that shows a still picture by design — radio, a test card — can be told so in its settings, or not looked at at all. One look costs about a tenth of a second of processor time; at the "beginning of every segment" level it also fetches up to 512 KB of one segment instead of 130.
 
 ## Agents
 
@@ -174,6 +181,8 @@ Every setting is given as a flag or an environment variable.
 | `HLSMON_SNAPSHOT_RETENTION` | `-snapshot-retention` | `168h` | Retention of playlist snapshots |
 | `HLSMON_INCIDENT_RETENTION` | `-incident-retention` | `2160h` | Retention of closed incidents |
 | `HLSMON_EVENT_RETENTION` | `-event-retention` | `168h` | Retention of closed events (informational incidents) |
+| `HLSMON_PICTURE_CHECK` | `-picture-check` | — | How often the picture and the sound of every stream are looked at, e.g. `5m`; empty does not look. The agent has the same setting |
+| `HLSMON_FFMPEG` | `-ffmpeg` | `ffmpeg` | The ffmpeg program the looks decode with |
 | `HLSMON_LOG_LEVEL` | `-log-level` | `info` | `debug`, `info`, `warn`, `error` |
 
 Retention of time series is set in VictoriaMetrics (`HLSMON_METRICS_RETENTION` in compose, 7 days by default, the same as the longest chart range).
