@@ -223,10 +223,20 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 	// the picture alone, its sound being a rendition of its own, or the
 	// other way round, makes the decoder refuse the output it has nothing
 	// for and the other with it: then each is asked for by itself.
-	shot, sound, errText, runErr := d.decode(ctx, data, true, true)
-	if len(shot) == 0 && len(sound) == 0 && (strings.Contains(errText, "does not contain any stream") || strings.Contains(errText, "not a decoding option")) {
-		if shot, _, errText, runErr = d.decode(ctx, data, true, false); len(shot) == 0 {
-			_, sound, errText, runErr = d.decode(ctx, data, false, true)
+	shot, sound, errText, runErr := d.decode(ctx, data, true, true, true)
+	noVideo := false
+	if len(shot) == 0 && len(sound) == 0 && refusedOutput(errText) {
+		if shot, _, errText, runErr = d.decode(ctx, data, true, false, true); len(shot) == 0 {
+			noVideo = refusedOutput(errText)
+			_, sound, errText, runErr = d.decode(ctx, data, false, true, true)
+		}
+	}
+	// Some encoders never send a frame the decoder calls a keyframe: every
+	// group of pictures opens with a recovery point instead. Then the
+	// first picture that decodes at all is taken.
+	if len(shot) == 0 && !noVideo && ctx.Err() == nil {
+		if any, _, _, _ := d.decode(ctx, data, true, false, false); len(any) > 0 {
+			shot = any
 		}
 	}
 
@@ -263,7 +273,7 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 // decode runs the decoder once, for the picture, the sound or both, and
 // returns what came out of it: the picture as PPM, the sound as signed
 // 16-bit samples, what it had to say and how it ended.
-func (d *Decoder) decode(ctx context.Context, data []byte, picture, audio bool) (shot, sound []byte, errText string, runErr error) {
+func (d *Decoder) decode(ctx context.Context, data []byte, picture, audio, keyOnly bool) (shot, sound []byte, errText string, runErr error) {
 	args := []string{
 		"-nostdin", "-v", "error", "-threads", "1",
 		// Nothing but what it is handed: no files, no network.
@@ -273,7 +283,7 @@ func (d *Decoder) decode(ctx context.Context, data []byte, picture, audio bool) 
 		// and that would pass for a picture.
 		"-xerror",
 	}
-	if picture {
+	if picture && keyOnly {
 		// Keyframes only; an option the decoder refuses when there is
 		// no video to apply it to.
 		args = append(args, "-skip_frame", "nokey")
@@ -281,7 +291,9 @@ func (d *Decoder) decode(ctx context.Context, data []byte, picture, audio bool) 
 	args = append(args, "-i", "pipe:0")
 	if picture {
 		args = append(args, "-map", "0:v:0?", "-frames:v", "1", "-vf", "scale="+strconv.Itoa(thumbWidth)+":-2",
-			"-f", "image2pipe", "-c:v", "ppm", "pipe:1")
+			// Eight bits a colour, whatever the video has: ten-bit video
+			// would otherwise come out as a picture of sixteen.
+			"-pix_fmt", "rgb24", "-f", "image2pipe", "-c:v", "ppm", "pipe:1")
 	}
 	if audio {
 		args = append(args, "-map", "0:a:0?", "-t", strconv.Itoa(audioSeconds), "-vn", "-ac", "1", "-ar", strconv.Itoa(audioRate),
@@ -313,6 +325,12 @@ func (d *Decoder) decode(ctx context.Context, data []byte, picture, audio bool) 
 	sound, _ = io.ReadAll(io.LimitReader(audioR, maxOutput))
 	runErr = cmd.Wait()
 	return pictureOut.buf.Bytes(), sound, errOut.buf.String(), runErr
+}
+
+// refusedOutput tells that the decoder refused to start because one of the
+// outputs asked for had no track to be made from.
+func refusedOutput(errText string) bool {
+	return strings.Contains(errText, "does not contain any stream") || strings.Contains(errText, "not a decoding option")
 }
 
 // limited keeps the first bytes written to it and drops the rest.

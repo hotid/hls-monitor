@@ -266,3 +266,24 @@ func TestTrackWithThePictureAloneOrTheSoundAlone(t *testing.T) {
 		t.Errorf("a segment with the sound alone: %+v, %v", blind, err)
 	}
 }
+
+func TestTenBitPicture(t *testing.T) {
+	d := decoder(t)
+	// Ten-bit video must come out as an ordinary picture all the same.
+	f, err := d.Sample(context.Background(), clip(t, moving, tone, "-pix_fmt", "yuv420p10le"))
+	if err != nil || !f.HasPicture || f.Height != 90 || f.Luma < 40 {
+		t.Errorf("ten-bit video: %+v, %v", f, err)
+	}
+}
+
+func TestPictureWithoutKeyframes(t *testing.T) {
+	d := decoder(t)
+	// With intra refresh only the very first frame is a keyframe; past it
+	// there are recovery points and nothing the decoder calls a key.
+	whole := clip(t, moving, tone, "-t", "6", "-x264-params", "intra-refresh=1:keyint=25")
+	from := len(whole) / 3 / 188 * 188
+	f, err := d.Sample(context.Background(), whole[from:])
+	if err != nil || !f.HasPicture || f.Luma < 40 {
+		t.Errorf("a segment with no keyframe in it: %+v, %v", f, err)
+	}
+}
