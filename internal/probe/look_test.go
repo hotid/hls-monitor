@@ -194,6 +194,30 @@ func TestLookIsPutOff(t *testing.T) {
 	}
 }
 
+func TestDarkSceneIsNotABlackScreen(t *testing.T) {
+	// A night scene, the credits: as dark as a black screen, look after
+	// look, with something moving in it.
+	f, s := lookFixture(t, LevelSegments)
+	var frozen, black int
+	for i := 0; i < 300; i++ {
+		cells := flat(3)
+		for j := 0; j < 40; j++ {
+			cells[(s.looks*37+j)%len(cells)] = 30
+		}
+		s.frame = picture.Frame{HasPicture: true, Luma: 4, Dark: 0.99, Cells: cells, HasAudio: true, AudioDB: -20}
+		r := f.step(1)
+		if hasProblem(r, ProbPictureFrozen) != nil {
+			frozen++
+		}
+		if hasProblem(r, ProbPictureBlack) != nil {
+			black++
+		}
+	}
+	if frozen != 0 || black != 0 || s.looks < 10 {
+		t.Errorf("ten minutes of a dark scene, %d looks: frozen reported %d times, black %d times", s.looks, frozen, black)
+	}
+}
+
 func TestDarkNoticeIsAPictureThatStays(t *testing.T) {
 	// A dark slate with something blinking: all but black one look, not
 	// quite the next, the same picture all along.
@@ -326,8 +350,10 @@ func TestNothingCanBeDecoded(t *testing.T) {
 	if n, _ := watch(f, 50*time.Second, ProbMediaUndecodable); n != 0 {
 		t.Fatalf("told after %d looks, in under a minute", s.looks)
 	}
+	// The segments of the fixture go round, which is found on the way
+	// and brings one look forward: a minute of looks may end a look later.
 	n, cycles := watch(f, 3*time.Minute, ProbMediaUndecodable)
-	if n < cycles-8 || s.looks < 4 || s.looks > 9 {
+	if n < cycles-15 || s.looks < 4 || s.looks > 9 {
 		t.Fatalf("reported in %d of %d cycles, after %d looks", n, cycles, s.looks)
 	}
 	// What the container said of the video goes with it.
@@ -336,7 +362,7 @@ func TestNothingCanBeDecoded(t *testing.T) {
 	}
 	// It decodes again: over at the next look.
 	s.err = nil
-	if n, _ := watch(f, 3*time.Minute, ProbMediaUndecodable); n > 12 {
+	if n, _ := watch(f, 3*time.Minute, ProbMediaUndecodable); n > 15 {
 		t.Errorf("still reported in %d cycles after it decoded", n)
 	}
 	if hasProblem(f.step(1), ProbMediaUndecodable) != nil {

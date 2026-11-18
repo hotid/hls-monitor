@@ -105,7 +105,8 @@ const (
 	lookStanding = time.Minute
 
 	// A picture is black when it is this dark and has this share of
-	// points that are all but black; sound is silence below this level.
+	// points that are all but black, and stays as it is from one look to
+	// the next; sound is silence below this level.
 	blackLuma   = 20.0
 	blackShare  = 0.98
 	silentBelow = -70.0
@@ -276,6 +277,13 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 	if f.HasPicture {
 		black := f.Luma < blackLuma && f.Dark >= blackShare
 		same := picture.Moved(l.cells, f.Cells) <= stillMoves
+		// A film is dark for minutes at a time: a night scene, the
+		// credits. Something moves in it all the same, and nothing does
+		// on a screen that went black: a dark picture that differs from
+		// the one before begins the count anew.
+		if black && !same {
+			l.black = run{}
+		}
 		l.black.note(black, at)
 		l.same.note(same && c.t.Picture != PictureStatic, at)
 		l.cells = f.Cells

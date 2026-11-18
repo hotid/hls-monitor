@@ -170,6 +170,11 @@ func (c *Checker) noteLoop(key, variant string, k *coded, hashes []uint64, sound
 	if c.loops == nil {
 		c.loops = map[string]standingProblem{}
 	}
+	// A clip is found by its coded frames, between two looks: the stream
+	// is looked at now, once, for the incident to have a picture to show.
+	if _, told := c.loops[key]; !told && c.PictureEvery > 0 && ((known && !k.own) || (!quiet && k.repeated.n >= loopSegments && at.Sub(k.repeated.since) >= loopSpan)) {
+		c.looks.at = at.Add(-c.PictureEvery)
+	}
 	switch {
 	case known && k.own:
 		// What the channel itself plays over and over is not a fault.
