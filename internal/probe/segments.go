@@ -248,6 +248,7 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 			info := media.Analyze(resp.Body, init)
 			rec.Media = info
 			c.judgeMedia(v, s, info, st, agg, flag, !header || (rec.Size > 0 && rec.Fetched >= rec.Size))
+			c.noteKeyframes(v, st, info, c.now())
 		} else {
 			st.prev = prevSegment{}
 		}

@@ -65,6 +65,7 @@
   "pictureBrightness": "Brightness of the picture",
   "pictureBrightnessHint": "Mean brightness of the frame the monitor decodes every few minutes: from 0 (black) to 255. Below 20 with a frame all but dark it is a black screen.",
   "pictureFrozen": "The picture does not change",
+  "pictureLoop": "A clip going round instead of the programme",
   "pictureNotChecked": "The picture is not checked: the check is off, or there is nothing to look at for this stream",
   "pictureSlate": "A slate instead of the programme",
   "playback": "Playback",

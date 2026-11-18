@@ -142,6 +142,7 @@ const (
 	ProbPictureFrozen = "picture_frozen"
 	ProbAudioSilent   = "audio_silent"
 	ProbPictureSlate  = "picture_slate"
+	ProbPictureLoop   = "picture_loop"
 )
 
 // Problem is one kind of trouble found for one variant in a cycle.

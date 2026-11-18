@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"sort"
 
 	"github.com/Eyevinn/mp4ff/avc"
@@ -237,6 +238,9 @@ func tsStreamKind(st astits.StreamType) (kind, codec string) {
 	return KindOther, fmt.Sprintf("0x%02x", uint8(st))
 }
 
+// maxKeyHashes bounds Track.KeyHashes.
+const maxKeyHashes = 64
+
 func handlePES(t *tsTrack, d *astits.DemuxerData) {
 	t.pesCount++
 	t.Bytes += int64(len(d.PES.Data))
@@ -293,6 +297,11 @@ func handlePES(t *tsTrack, d *astits.DemuxerData) {
 		}
 		if t.halves == 0 && sc.halves > 0 {
 			t.FirstKeyframe = sc.firstKey
+		}
+		if sc.keys > 0 && len(t.KeyHashes) < maxKeyHashes {
+			h := fnv.New64a()
+			_, _ = h.Write(d.PES.Data)
+			t.KeyHashes = append(t.KeyHashes, h.Sum64())
 		}
 		t.halves += sc.halves
 		t.Keyframes += sc.keys

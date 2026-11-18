@@ -54,6 +54,8 @@ type Checker struct {
 	// Slates, when set, returns the pictures known to be slates.
 	Slates func() []Slate
 	looks  looks
+	// loops are the playlists that show the same pictures over and over.
+	loops map[string]standingProblem
 
 	// plSource is the server that last answered for each playlist.
 	mu       sync.Mutex

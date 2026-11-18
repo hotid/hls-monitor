@@ -39,7 +39,9 @@ type variantState struct {
 	// initRaw is the section as it was received: a decoder needs it in
 	// front of a segment.
 	initRaw []byte
-	keyOK   map[string]bool
+	// keys remembers the keyframes of the segments read.
+	keys  keyframes
+	keyOK map[string]bool
 
 	bufInit bool
 	stalled bool

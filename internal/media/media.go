@@ -53,6 +53,10 @@ type Track struct {
 	// MaxGOP is the longest distance between keyframes in seconds, counting
 	// the tail after the last keyframe.
 	MaxGOP float64 `json:"max_gop,omitempty"`
+	// KeyHashes are hashes of the coded bytes of the keyframes, in order,
+	// the first maxKeyHashes of them. A live encoder never codes two
+	// pictures into the same bytes; a clip that goes round does every time.
+	KeyHashes []uint64 `json:"-"`
 }
 
 // Duration is the presentation duration of the track in the segment.

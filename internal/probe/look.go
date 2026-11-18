@@ -31,7 +31,7 @@ const (
 // PictureProblem reports whether a problem is found by looking at the
 // picture or listening to the sound.
 func PictureProblem(kind string) bool {
-	return kind == ProbPictureBlack || kind == ProbPictureFrozen || kind == ProbAudioSilent || kind == ProbPictureSlate
+	return kind == ProbPictureBlack || kind == ProbPictureFrozen || kind == ProbAudioSilent || kind == ProbPictureSlate || kind == ProbPictureLoop
 }
 
 // Slate is a picture put on air in place of a channel — "the broadcast is
@@ -162,6 +162,9 @@ type looks struct {
 }
 
 type standingProblem struct {
+	// at is when it was last found to stand, for what is found by other
+	// means than looks.
+	at                               time.Time
 	kind, severity, variant, message string
 	details                          []any
 }
@@ -288,6 +291,30 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 func (c *Checker) reportLooks(cy *cycle) {
 	c.mu.Lock()
 	standing := append([]standingProblem(nil), c.looks.problems...)
+	slate := false
+	for _, p := range standing {
+		slate = slate || p.kind == ProbPictureSlate
+	}
+	// A clip going round is told once: by the name of the slate when it
+	// is a known one, and otherwise as what it is, not as a picture that
+	// does not change as well.
+	if len(c.loops) > 0 && !slate {
+		kept := standing[:0]
+		for _, p := range standing {
+			if p.kind != ProbPictureFrozen {
+				kept = append(kept, p)
+			}
+		}
+		standing = kept
+		for key, p := range c.loops {
+			// A playlist whose segments are no longer read says nothing.
+			if c.now().Sub(p.at) > 2*time.Minute {
+				delete(c.loops, key)
+				continue
+			}
+			standing = append(standing, p)
+		}
+	}
 	c.mu.Unlock()
 	for _, p := range standing {
 		cy.problem(p.kind, p.severity, p.variant, "%s", p.message)
