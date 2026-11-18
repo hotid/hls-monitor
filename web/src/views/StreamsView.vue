@@ -131,7 +131,6 @@ async function remove() {
               <SortTh :sort="sort" by="why">{{ t('streams.why') }}</SortTh>
               <SortTh :sort="sort" by="bitrate" class="right hide-narrow">{{ t('common.bitrate') }}</SortTh>
               <SortTh :sort="sort" by="height" class="right hide-narrow">{{ t('streams.picture') }}</SortTh>
-              <SortTh :sort="sort" by="level" class="hide-narrow">{{ t('common.checkLevel') }}</SortTh>
               <SortTh :sort="sort" by="agents" class="hide-narrow">{{ t('common.agents') }}</SortTh>
               <SortTh :sort="sort" by="checked" class="hide-narrow">{{ t('streams.lastCheck') }}</SortTh>
               <th v-if="session.isAdmin" />
@@ -140,7 +139,7 @@ async function remove() {
           <tbody>
             <tr v-for="s in streams" :key="s.id" class="clickable" @click="router.push({ name: 'stream', params: { id: s.id } })">
               <td class="hide-narrow thumb"><img v-if="thumb(s)" :src="thumb(s)" alt="" loading="lazy" /></td>
-              <td style="max-width: 360px">
+              <td style="max-width: 360px" :title="levelLabel()[s.level]">
                 <RouterLink :to="{ name: 'stream', params: { id: s.id } }" class="strong" @click.stop>{{ s.name }}</RouterLink>
                 <div class="mono muted truncate" :title="s.url">{{ s.url }}</div>
               </td>
@@ -151,7 +150,6 @@ async function remove() {
               </td>
               <td class="mono right hide-narrow nowrap">{{ figure(s, 'bitrate_bps') ? fmtBits(figure(s, 'bitrate_bps')) : '—' }}</td>
               <td class="mono right hide-narrow nowrap">{{ figure(s, 'height') ? figure(s, 'height') + 'p' : '—' }}</td>
-              <td class="hide-narrow">{{ levelLabel()[s.level] }}</td>
               <td class="hide-narrow">
                 <template v-if="s.agents.length">{{ s.agents.map((a) => a.agent_name).join(', ') }}</template>
                 <span v-else class="muted">{{ t('common.notAssigned') }}</span>

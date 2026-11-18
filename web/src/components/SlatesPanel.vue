@@ -35,7 +35,7 @@ async function remove() {
 </script>
 
 <template>
-  <section>
+  <section class="slates">
     <div class="section-title">
       <h2>{{ t('access.slates') }}</h2>
     </div>
@@ -71,6 +71,9 @@ async function remove() {
 </template>
 
 <style scoped>
+.slates {
+  margin-top: 28px;
+}
 .lead {
   max-width: 78ch;
   margin: -2px 0 12px;
