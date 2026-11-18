@@ -91,7 +91,13 @@ func TestBlackPicture(t *testing.T) {
 
 	// The picture is back: the next look ends it.
 	s.frame = liveFrame
-	watch(f, 30*time.Second, ProbPictureBlack)
+	before := s.looks
+	watch(f, 70*time.Second, ProbPictureBlack)
+	// With a finding standing the stream is looked at once a minute, not
+	// every twenty seconds for ever.
+	if n := s.looks - before; n < 1 || n > 2 {
+		t.Errorf("%d looks in seventy seconds with a finding standing", n)
+	}
 	if n, _ := watch(f, time.Minute, ProbPictureBlack); n != 0 {
 		t.Errorf("still reported in %d cycles after the picture came back", n)
 	}
@@ -113,7 +119,7 @@ func TestFrozenPictureAndSilence(t *testing.T) {
 	}
 	// The picture moves again, in silence.
 	s.frame = quietFrame
-	watch(f, 30*time.Second, ProbPictureFrozen)
+	watch(f, 70*time.Second, ProbPictureFrozen)
 	hashes := []uint64{0x1111, 0x2222, 0x4444, 0x8888, 0xAAAA, 0x5555, 0x3333, 0xCCCC}
 	var silent, frozen int
 	for i := 0; i < 120; i++ {
@@ -175,5 +181,31 @@ func TestLookIsPutOff(t *testing.T) {
 	watch(p, time.Minute, ProbPictureBlack)
 	if sp.looks != 0 {
 		t.Errorf("looked %d times at a stream whose segments are not fetched", sp.looks)
+	}
+}
+
+func TestDarkNoticeIsAPictureThatStays(t *testing.T) {
+	// A dark slate with something blinking: all but black one look, not
+	// quite the next, the same picture all along.
+	f, s := lookFixture(t, LevelSegments)
+	dark := picture.Frame{HasPicture: true, Luma: 8, Dark: 0.984, Hash: 0x18, HasAudio: true, AudioDB: -20}
+	lighter := dark
+	lighter.Dark, lighter.Luma = 0.975, 8.6
+	var frozen, black int
+	for i := 0; i < 300; i++ {
+		s.frame = dark
+		if s.looks%2 == 1 {
+			s.frame = lighter
+		}
+		r := f.step(1)
+		if hasProblem(r, ProbPictureFrozen) != nil {
+			frozen++
+		}
+		if hasProblem(r, ProbPictureBlack) != nil {
+			black++
+		}
+	}
+	if frozen == 0 || black != 0 {
+		t.Errorf("ten minutes of a dark notice: frozen reported %d times, black %d times", frozen, black)
 	}
 }

@@ -51,6 +51,9 @@ const (
 	lookAgain = 20 * time.Second
 	lookRuns  = 3
 	lookSpan  = time.Minute
+	// lookStanding is how often a stream with a finding is looked at:
+	// often enough to tell soon that it is over, and no oftener.
+	lookStanding = time.Minute
 
 	// A picture is black when it is this dark and has this share of
 	// points that are all but black; sound is silence below this level.
@@ -192,8 +195,7 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 		black := f.Luma < blackLuma && f.Dark >= blackShare
 		same := l.have && picture.Distance(l.hash, f.Hash) <= sameBits && math.Abs(l.luma-f.Luma) <= sameLuma
 		l.black.note(black, at)
-		// A black screen does not change either; it is told as black.
-		l.same.note(same && !black && c.t.Picture != PictureStatic, at)
+		l.same.note(same && c.t.Picture != PictureStatic, at)
 		l.have, l.hash, l.luma = true, f.Hash, f.Luma
 		cy.metric("hls_picture_luma", v.Key, f.Luma)
 		changed := 1.0
@@ -206,7 +208,10 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 			stand(ProbPictureBlack, "the picture is black", "picture_luma", round1(f.Luma), "picture_dark_share", round3(f.Dark),
 				"looks_in_a_row", l.black.n, "since", l.black.since.UTC().Format(time.RFC3339))
 		}
-		if l.same.standing(at) {
+		// A black screen does not change either; it is told as black. A
+		// dark notice with something blinking on it is black one look and
+		// not the next, and is told as what it is: a picture that stays.
+		if l.same.standing(at) && !l.black.standing(at) {
 			stand(ProbPictureFrozen, "the picture does not change", "looks_in_a_row", l.same.n+1,
 				"since", l.same.since.UTC().Format(time.RFC3339))
 		}
@@ -220,9 +225,12 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 				"looks_in_a_row", l.silent.n, "since", l.silent.since.UTC().Format(time.RFC3339))
 		}
 	}
-	if suspect {
+	switch {
+	case len(l.problems) > 0:
+		l.at = at.Add(min(lookStanding, c.PictureEvery) - c.PictureEvery)
+	case suspect:
 		// Look again soon: what it is shows in a minute, not in five.
-		l.at = at.Add(lookAgain - c.PictureEvery)
+		l.at = at.Add(min(lookAgain, c.PictureEvery) - c.PictureEvery)
 	}
 }
 
