@@ -65,12 +65,42 @@ type Frame struct {
 	// Hash describes what the picture looks like: pictures that look the
 	// same have hashes that differ in a few bits at most (see Distance).
 	Hash uint64 `json:"hash"`
+	// Cells is the picture shrunk to CellCols by CellRows points of
+	// brightness: what two looks are compared by to tell a picture that
+	// stands still from one that merely looks alike (see Moved).
+	Cells []byte `json:"-"`
 	// JPEG is the picture, small.
 	JPEG []byte `json:"jpeg,omitempty"`
 	// HasAudio tells that sound was decoded; AudioDB is its level in
 	// decibels below full scale, Silent when there was none at all.
 	HasAudio bool    `json:"has_audio"`
 	AudioDB  float64 `json:"audio_db"`
+}
+
+// CellCols and CellRows are the size of Frame.Cells.
+const (
+	CellCols = 32
+	CellRows = 18
+)
+
+// Moved tells how much two pictures differ where they differ most: the
+// largest change of brightness of any one cell, 0 to 255. A picture that
+// stands still changes by the noise of coding, a point or two; a studio
+// with someone talking in it looks the same as a whole and moves by tens
+// where the head is. It is 255 for pictures that cannot be compared.
+func Moved(a, b []byte) int {
+	if len(a) != CellCols*CellRows || len(b) != len(a) {
+		return 255
+	}
+	most := 0
+	for i := range a {
+		d := int(a[i]) - int(b[i])
+		if d < 0 {
+			d = -d
+		}
+		most = max(most, d)
+	}
+	return most
 }
 
 // Distance is in how many bits two hashes differ: 0 for the same picture,
@@ -196,6 +226,7 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 		f.HasPicture = true
 		f.Width, f.Height = img.Bounds().Dx(), img.Bounds().Dy()
 		f.Luma, f.Dark, f.Hash = look(img)
+		f.Cells = cells(img)
 		var out bytes.Buffer
 		if err := jpeg.Encode(&out, img, &jpeg.Options{Quality: 70}); err == nil {
 			f.JPEG = out.Bytes()
@@ -329,6 +360,32 @@ func look(img *image.RGBA) (luma, dark float64, hash uint64) {
 		}
 	}
 	return sum / n, float64(darks) / n, hash
+}
+
+// cells shrinks a picture to CellCols by CellRows points of brightness,
+// each the mean of the points it covers.
+func cells(img *image.RGBA) []byte {
+	w, h := img.Bounds().Dx(), img.Bounds().Dy()
+	out := make([]byte, CellCols*CellRows)
+	for r := range CellRows {
+		for c := range CellCols {
+			x0, x1 := c*w/CellCols, max((c+1)*w/CellCols, c*w/CellCols+1)
+			y0, y1 := r*h/CellRows, max((r+1)*h/CellRows, r*h/CellRows+1)
+			var sum float64
+			n := 0
+			for y := y0; y < min(y1, h); y++ {
+				for x := x0; x < min(x1, w); x++ {
+					p := img.Pix[4*(y*w+x):]
+					sum += 0.299*float64(p[0]) + 0.587*float64(p[1]) + 0.114*float64(p[2])
+					n++
+				}
+			}
+			if n > 0 {
+				out[r*CellCols+c] = byte(sum/float64(n) + 0.5)
+			}
+		}
+	}
+	return out
 }
 
 // level is the loudness of signed 16-bit samples in decibels below full

@@ -178,3 +178,76 @@ func TestRealSegments(t *testing.T) {
 	t.Logf("%d segments: a picture from %d (from the first 131600 bytes of %d), sound from %d; black %d, silent %d",
 		len(files), pictures, fromHead, sounds, black, silent)
 }
+
+// TestRealNeighbours compares the first pictures of consecutive segments
+// of real streams, when a directory of them is given (N_0.ts and N_1.ts
+// are six seconds apart): how often live television looks the same from
+// one look to the next, and by how much it moves when it does.
+func TestRealNeighbours(t *testing.T) {
+	dir := os.Getenv("HLSMON_FFPROBE_SAMPLES")
+	if dir == "" {
+		t.Skip("HLSMON_FFPROBE_SAMPLES is not set")
+	}
+	d := decoder(t)
+	firsts, _ := filepath.Glob(filepath.Join(dir, "*_0.ts"))
+	sort.Strings(firsts)
+	var pairs, alike int
+	var moved []int
+	for _, name := range firsts {
+		a, errA := os.ReadFile(name)
+		b, errB := os.ReadFile(strings.TrimSuffix(name, "_0.ts") + "_1.ts")
+		if errA != nil || errB != nil {
+			continue
+		}
+		fa, errA := d.Sample(context.Background(), a)
+		fb, errB := d.Sample(context.Background(), b)
+		if errA != nil || errB != nil || !fa.HasPicture || !fb.HasPicture {
+			continue
+		}
+		pairs++
+		m := Moved(fa.Cells, fb.Cells)
+		moved = append(moved, m)
+		if Distance(fa.Hash, fb.Hash) <= 2 && fa.Luma-fb.Luma < 2 && fb.Luma-fa.Luma < 2 {
+			alike++
+			t.Logf("%s: alike by the hash, moved by %d", filepath.Base(name), m)
+		}
+	}
+	sort.Ints(moved)
+	if pairs == 0 {
+		t.Skip("no pairs of segments")
+	}
+	t.Logf("%d pairs: alike by the hash %d; moved by: least %d, tenth %d, median %d; by 4 or less %d, by 8 or less %d",
+		pairs, alike, moved[0], moved[len(moved)/10], moved[len(moved)/2], count(moved, 4), count(moved, 8))
+}
+
+func count(sorted []int, atMost int) int { return sort.SearchInts(sorted, atMost+1) }
+
+func TestStillPictureDoesNotMove(t *testing.T) {
+	d := decoder(t)
+	ctx := context.Background()
+	// The same still picture coded twice, at different rates: it moves by
+	// the noise of coding and no more. A test card with a counter on it
+	// looks alike and moves where the counter is.
+	a, err := d.Sample(ctx, clip(t, bars, tone))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := d.Sample(ctx, clip(t, bars, tone, "-b:v", "150k"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := Moved(a.Cells, b.Cells); m > 4 {
+		t.Errorf("a still picture coded twice moved by %d", m)
+	}
+	early, err := d.Sample(ctx, clip(t, moving, tone))
+	if err != nil {
+		t.Fatal(err)
+	}
+	late, err := d.Sample(ctx, clip(t, moving, tone, "-ss", "7"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := Moved(early.Cells, late.Cells); m < 12 {
+		t.Errorf("a test card seven seconds on moved by %d only", m)
+	}
+}

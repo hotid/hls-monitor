@@ -29,10 +29,19 @@ func (s *stubLooker) Sample(_ context.Context, data []byte) (*picture.Frame, err
 }
 func (s *stubLooker) Busy() bool { return s.busy }
 
+// flat is a picture of one brightness all over, shrunk the way a look shrinks it.
+func flat(v byte) []byte {
+	c := make([]byte, picture.CellCols*picture.CellRows)
+	for i := range c {
+		c[i] = v
+	}
+	return c
+}
+
 var (
-	liveFrame  = picture.Frame{HasPicture: true, Luma: 120, Dark: 0.1, Hash: 0xF0F0, JPEG: []byte{0xFF, 0xD8}, HasAudio: true, AudioDB: -20}
-	blackFrame = picture.Frame{HasPicture: true, Luma: 16, Dark: 1, HasAudio: true, AudioDB: -20}
-	quietFrame = picture.Frame{HasPicture: true, Luma: 120, Dark: 0.1, Hash: 0x0FF0, HasAudio: true, AudioDB: picture.Silent}
+	liveFrame  = picture.Frame{HasPicture: true, Luma: 120, Dark: 0.1, Cells: flat(120), JPEG: []byte{0xFF, 0xD8}, HasAudio: true, AudioDB: -20}
+	blackFrame = picture.Frame{HasPicture: true, Luma: 16, Dark: 1, Cells: flat(16), HasAudio: true, AudioDB: -20}
+	quietFrame = picture.Frame{HasPicture: true, Luma: 120, Dark: 0.1, Cells: flat(120), HasAudio: true, AudioDB: picture.Silent}
 )
 
 func lookFixture(t *testing.T, level Level) (*fixture, *stubLooker) {
@@ -120,15 +129,16 @@ func TestFrozenPictureAndSilence(t *testing.T) {
 	// The picture moves again, in silence.
 	s.frame = quietFrame
 	watch(f, 70*time.Second, ProbPictureFrozen)
-	hashes := []uint64{0x1111, 0x2222, 0x4444, 0x8888, 0xAAAA, 0x5555, 0x3333, 0xCCCC}
+	// It looks much the same as a whole, and moves in one place: someone talking.
 	var silent, frozen int
 	for i := 0; i < 120; i++ {
-		s.frame.Hash = hashes[s.looks%len(hashes)] << 16
+		s.frame.Cells = flat(120)
+		s.frame.Cells[200] = byte(60 + 20*(s.looks%5))
 		r := f.step(1)
 		if hasProblem(r, ProbAudioSilent) != nil {
 			silent++
 		}
-		if i > 20 && hasProblem(r, ProbPictureFrozen) != nil {
+		if i > 45 && hasProblem(r, ProbPictureFrozen) != nil {
 			frozen++
 		}
 	}
@@ -188,7 +198,7 @@ func TestDarkNoticeIsAPictureThatStays(t *testing.T) {
 	// A dark slate with something blinking: all but black one look, not
 	// quite the next, the same picture all along.
 	f, s := lookFixture(t, LevelSegments)
-	dark := picture.Frame{HasPicture: true, Luma: 8, Dark: 0.984, Hash: 0x18, HasAudio: true, AudioDB: -20}
+	dark := picture.Frame{HasPicture: true, Luma: 8, Dark: 0.984, Cells: flat(8), HasAudio: true, AudioDB: -20}
 	lighter := dark
 	lighter.Dark, lighter.Luma = 0.975, 8.6
 	var frozen, black int

@@ -60,10 +60,11 @@ const (
 	blackLuma   = 20.0
 	blackShare  = 0.98
 	silentBelow = -70.0
-	// Two pictures are the same when their hashes differ in this many
-	// bits at most and their brightness by this much.
-	sameBits = 2
-	sameLuma = 2.0
+	// A picture stands still when no part of it changed by more than
+	// this between two looks: the noise of coding and no more. Live
+	// television that looks the same from one look to the next — a studio,
+	// someone talking — moves by tens where the face is.
+	stillMoves = 6
 )
 
 // Picture is what a look at a stream found: carried in the result to be
@@ -111,9 +112,7 @@ type looks struct {
 	// taken is set once a segment was picked for the look of this cycle.
 	due, taken bool
 
-	have        bool // a picture was seen before
-	hash        uint64
-	luma        float64
+	cells       []byte // the picture of the look before, shrunk
 	black, same run
 	silent      run
 	// problems stand from one look to the next: a look is rare, and an
@@ -193,10 +192,10 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 	suspect := false
 	if f.HasPicture {
 		black := f.Luma < blackLuma && f.Dark >= blackShare
-		same := l.have && picture.Distance(l.hash, f.Hash) <= sameBits && math.Abs(l.luma-f.Luma) <= sameLuma
+		same := picture.Moved(l.cells, f.Cells) <= stillMoves
 		l.black.note(black, at)
 		l.same.note(same && c.t.Picture != PictureStatic, at)
-		l.have, l.hash, l.luma = true, f.Hash, f.Luma
+		l.cells = f.Cells
 		cy.metric("hls_picture_luma", v.Key, f.Luma)
 		changed := 1.0
 		if same {
