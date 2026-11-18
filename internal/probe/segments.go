@@ -110,13 +110,21 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 
 		timeout := max(c.timeout(), time.Duration(3*s.seg.Duration*float64(time.Second)))
 		rq := httpx.Request{URL: u, MaxBody: segmentMaxBody, RangeOffset: s.seg.Offset, RangeLength: s.seg.Limit}
+		// One segment of a cycle that is due is also looked at.
+		look := !s.encrypted && c.wantsLook(v)
 		if header {
 			// A server that ignores Range answers with the whole segment;
-			// MaxBody then stops the download at the same point.
-			rq.MaxBody = headerBytes
-			rq.RangeLength = headerBytes
+			// MaxBody then stops the download at the same point. A look
+			// needs a little more than the beginning: the whole of the
+			// first keyframe and a moment of sound.
+			head := int64(headerBytes)
+			if look {
+				head = lookBytes
+			}
+			rq.MaxBody = head
+			rq.RangeLength = head
 			if s.seg.Limit > 0 {
-				rq.RangeLength = min(s.seg.Limit, headerBytes)
+				rq.RangeLength = min(s.seg.Limit, head)
 			}
 		}
 		if !header {
@@ -243,6 +251,9 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 		} else {
 			st.prev = prevSegment{}
 		}
+		if look && err == nil && resp != nil && resp.OK() {
+			c.look(ctx, cy, v, resp.Body, st.initRaw, c.now())
+		}
 		emit()
 	}
 
@@ -275,6 +286,7 @@ func (c *Checker) initSection(ctx context.Context, cy *cycle, v Variant, plURL s
 	}
 	st.initURL = cacheKey
 	st.init = nil
+	st.initRaw = resp.Body
 	if c.t.Level == LevelContainer || c.t.Level == LevelHeader {
 		in, err := media.ParseInit(resp.Body)
 		if err != nil {

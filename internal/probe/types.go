@@ -44,6 +44,10 @@ type Target struct {
 	MaxSegments int               `json:"max_segments"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Insecure    bool              `json:"insecure,omitempty"`
+	// Picture says what the picture and the sound are checked for: all of
+	// it by default, PictureStatic when a picture that does not change is
+	// what the stream shows, PictureOff not to look at all.
+	Picture string `json:"picture,omitempty"`
 	// Revision changes whenever the configuration changes.
 	Revision int64 `json:"revision"`
 }
@@ -133,6 +137,10 @@ const (
 	ProbMediaParamsChanged  = "media_params_changed"
 	ProbPlaylistSource      = "playlist_source_changed"
 	ProbSegmentSource       = "segment_source_changed"
+	// Found by looking at the picture and listening to the sound.
+	ProbPictureBlack  = "picture_black"
+	ProbPictureFrozen = "picture_frozen"
+	ProbAudioSilent   = "audio_silent"
 )
 
 // Problem is one kind of trouble found for one variant in a cycle.
@@ -248,6 +256,8 @@ type Result struct {
 	Segments  []Segment  `json:"segments,omitempty"`
 	Problems  []Problem  `json:"problems,omitempty"`
 	Snapshots []Snapshot `json:"snapshots,omitempty"`
+	// Picture is what a look at the stream found, in the cycles that looked.
+	Picture *Picture `json:"picture,omitempty"`
 	// Overloaded names what the checking process itself was short of during
 	// the cycle; empty when it kept up. Findings that rest on timing alone
 	// are left out of such a result: a monitor that cannot keep up measures

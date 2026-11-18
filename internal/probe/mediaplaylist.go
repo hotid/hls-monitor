@@ -36,6 +36,9 @@ type variantState struct {
 
 	initURL string
 	init    *media.Init
+	// initRaw is the section as it was received: a decoder needs it in
+	// front of a segment.
+	initRaw []byte
 	keyOK   map[string]bool
 
 	bufInit bool

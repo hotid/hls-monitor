@@ -47,6 +47,12 @@ type Checker struct {
 	// since the given moment, or "" when it kept up. Set it before Run.
 	Overloaded func(since time.Time) string
 
+	// Looker, when set, is what looks at the picture and listens to the
+	// sound, every PictureEvery. Set both before Run.
+	Looker       Looker
+	PictureEvery time.Duration
+	looks        looks
+
 	// plSource is the server that last answered for each playlist.
 	mu       sync.Mutex
 	plSource map[string]*Endpoint
@@ -143,6 +149,7 @@ func (c *Checker) Run(ctx context.Context) *Result {
 	// Connections are kept between checks, so the time it takes to make
 	// one shows only when one is made on purpose: every few minutes the
 	// stream's own address is asked on a fresh connection.
+	c.beginLook(start)
 	fresh := c.freshAt.IsZero() || start.Sub(c.freshAt) >= freshEvery
 	switch {
 	case c.freshAt.IsZero():
@@ -238,6 +245,7 @@ func (c *Checker) Run(ctx context.Context) *Result {
 func (c *Checker) finish(cy *cycle, start time.Time) *Result {
 	// What the check itself cost the network: playlists, and as much of
 	// the segments as its level downloads.
+	c.reportLooks(cy)
 	cy.metric("hls_check_bytes", "", float64(c.received.Swap(0)))
 	if c.Overloaded != nil {
 		if reason := c.Overloaded(start); reason != "" {

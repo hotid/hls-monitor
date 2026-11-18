@@ -300,6 +300,13 @@ func (cy *cycle) source(variant string, e *Endpoint, segment bool) {
 	}
 }
 
+// picture records what a look at the stream found.
+func (cy *cycle) picture(p *Picture) {
+	cy.mu.Lock()
+	cy.res.Picture = p
+	cy.mu.Unlock()
+}
+
 func (cy *cycle) segment(s Segment) {
 	cy.mu.Lock()
 	cy.res.Segments = append(cy.res.Segments, s)
