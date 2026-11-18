@@ -251,3 +251,18 @@ func TestStillPictureDoesNotMove(t *testing.T) {
 		t.Errorf("a test card seven seconds on moved by %d only", m)
 	}
 }
+
+func TestTrackWithThePictureAloneOrTheSoundAlone(t *testing.T) {
+	d := decoder(t)
+	ctx := context.Background()
+	// Where the sound is a rendition of its own, the video playlist has
+	// segments with no sound in them, and the audio one none with a picture.
+	silent, err := d.Sample(ctx, clip(t, moving, tone, "-an"))
+	if err != nil || !silent.HasPicture || silent.HasAudio {
+		t.Errorf("a segment with the picture alone: %+v, %v", silent, err)
+	}
+	blind, err := d.Sample(ctx, clip(t, moving, tone, "-vn"))
+	if err != nil || blind.HasPicture || !blind.HasAudio || blind.AudioDB < -40 {
+		t.Errorf("a segment with the sound alone: %+v, %v", blind, err)
+	}
+}

@@ -219,50 +219,19 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 	ctx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
 
-	// The sound comes back over a pipe of its own, the picture over the
-	// standard output.
-	audioR, audioW, err := os.Pipe()
-	if err != nil {
-		return nil, err
+	// One run for both, which is what most segments have. A track with
+	// the picture alone, its sound being a rendition of its own, or the
+	// other way round, makes the decoder refuse the output it has nothing
+	// for and the other with it: then each is asked for by itself.
+	shot, sound, errText, runErr := d.decode(ctx, data, true, true)
+	if len(shot) == 0 && len(sound) == 0 && (strings.Contains(errText, "does not contain any stream") || strings.Contains(errText, "not a decoding option")) {
+		if shot, _, errText, runErr = d.decode(ctx, data, true, false); len(shot) == 0 {
+			_, sound, errText, runErr = d.decode(ctx, data, false, true)
+		}
 	}
-	defer audioR.Close()
-
-	args := []string{
-		"-nostdin", "-v", "error", "-threads", "1",
-		// Nothing but what it is handed: no files, no network.
-		"-protocol_whitelist", "pipe",
-		// A frame that did not decode cleanly is not shown: a decoder
-		// left to conceal its errors paints grey where it has no data,
-		// and that would pass for a picture.
-		"-xerror",
-		"-skip_frame", "nokey", "-i", "pipe:0",
-		"-map", "0:v:0?", "-frames:v", "1", "-vf", "scale=" + strconv.Itoa(thumbWidth) + ":-2",
-		"-f", "image2pipe", "-c:v", "ppm", "pipe:1",
-		"-map", "0:a:0?", "-t", strconv.Itoa(audioSeconds), "-vn", "-ac", "1", "-ar", strconv.Itoa(audioRate),
-		"-f", "s16le", "pipe:3",
-	}
-	// The shell is there for one thing: to set the limit of memory before
-	// the decoder starts.
-	script := `ulimit -v ` + strconv.Itoa(d.memory*1024) + ` 2>/dev/null; exec "$0" "$@"`
-	cmd := exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", script, d.path}, args...)...)
-	cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin"}
-	cmd.Stdin = bytes.NewReader(data)
-	cmd.ExtraFiles = []*os.File{audioW}
-	var pictureOut, errOut limited
-	pictureOut.left, errOut.left = maxOutput, 4096
-	cmd.Stdout, cmd.Stderr = &pictureOut, &errOut
-	cmd.WaitDelay = time.Second
-
-	if err := cmd.Start(); err != nil {
-		audioW.Close()
-		return nil, err
-	}
-	audioW.Close() // the decoder holds its own end now
-	sound, _ := io.ReadAll(io.LimitReader(audioR, maxOutput))
-	runErr := cmd.Wait()
 
 	f := &Frame{}
-	if img := readPPM(pictureOut.buf.Bytes()); img != nil {
+	if img := readPPM(shot); img != nil {
 		f.HasPicture = true
 		f.Width, f.Height = img.Bounds().Dx(), img.Bounds().Dy()
 		f.Luma, f.Dark, f.Hash = look(img)
@@ -280,7 +249,7 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("the decoder did not finish in %s", d.timeout)
 		}
-		if msg := strings.TrimSpace(errOut.buf.String()); msg != "" {
+		if msg := strings.TrimSpace(errText); msg != "" {
 			return nil, fmt.Errorf("%w: %s", ErrNothing, firstLine(msg))
 		}
 		if runErr != nil {
@@ -289,6 +258,61 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 		return nil, ErrNothing
 	}
 	return f, nil
+}
+
+// decode runs the decoder once, for the picture, the sound or both, and
+// returns what came out of it: the picture as PPM, the sound as signed
+// 16-bit samples, what it had to say and how it ended.
+func (d *Decoder) decode(ctx context.Context, data []byte, picture, audio bool) (shot, sound []byte, errText string, runErr error) {
+	args := []string{
+		"-nostdin", "-v", "error", "-threads", "1",
+		// Nothing but what it is handed: no files, no network.
+		"-protocol_whitelist", "pipe",
+		// A frame that did not decode cleanly is not shown: a decoder
+		// left to conceal its errors paints grey where it has no data,
+		// and that would pass for a picture.
+		"-xerror",
+	}
+	if picture {
+		// Keyframes only; an option the decoder refuses when there is
+		// no video to apply it to.
+		args = append(args, "-skip_frame", "nokey")
+	}
+	args = append(args, "-i", "pipe:0")
+	if picture {
+		args = append(args, "-map", "0:v:0?", "-frames:v", "1", "-vf", "scale="+strconv.Itoa(thumbWidth)+":-2",
+			"-f", "image2pipe", "-c:v", "ppm", "pipe:1")
+	}
+	if audio {
+		args = append(args, "-map", "0:a:0?", "-t", strconv.Itoa(audioSeconds), "-vn", "-ac", "1", "-ar", strconv.Itoa(audioRate),
+			"-f", "s16le", "pipe:3")
+	}
+	// The sound comes back over a pipe of its own, the picture over the
+	// standard output.
+	audioR, audioW, err := os.Pipe()
+	if err != nil {
+		return nil, nil, "", err
+	}
+	defer audioR.Close()
+	// The shell is there for one thing: to set the limit of memory before
+	// the decoder starts.
+	script := `ulimit -v ` + strconv.Itoa(d.memory*1024) + ` 2>/dev/null; exec "$0" "$@"`
+	cmd := exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", script, d.path}, args...)...)
+	cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin"}
+	cmd.Stdin = bytes.NewReader(data)
+	cmd.ExtraFiles = []*os.File{audioW}
+	var pictureOut, errOut limited
+	pictureOut.left, errOut.left = maxOutput, 4096
+	cmd.Stdout, cmd.Stderr = &pictureOut, &errOut
+	cmd.WaitDelay = time.Second
+	if err := cmd.Start(); err != nil {
+		audioW.Close()
+		return nil, nil, "", err
+	}
+	audioW.Close() // the decoder holds its own end now
+	sound, _ = io.ReadAll(io.LimitReader(audioR, maxOutput))
+	runErr = cmd.Wait()
+	return pictureOut.buf.Bytes(), sound, errOut.buf.String(), runErr
 }
 
 // limited keeps the first bytes written to it and drops the rest.
