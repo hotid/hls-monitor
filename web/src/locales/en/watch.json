@@ -16,7 +16,6 @@
   "chartLoss": "Loss and failures, per second",
   "chartLossHint": "Retransmissions are loss on the way from the agent to the server, counted by the agent, who sends. From the origin the monitor only receives, so loss on that way shows as segments arriving out of order — a sign of loss, not a count of it. The rest is what the player ran into.",
   "chartLossShare": "Packet loss by hop",
-  "chartLossShareEmpty": "Nothing to measure by: the stream comes without an agent, and a proxy stands between the server and the browser",
   "chartLossShareHint": "The share of TCP segments that had to be sent again, over the last half a minute. The one who sends counts: the agent on the way to the server, the server on the way to your browser. There is no \"Server → browser\" line when a proxy stands between the server and the browser: the server then sees the proxy's connection, not yours. From the origin the monitor only receives, so there is no share of loss on that hop at all — only the segments out of order on the chart next to this one.",
   "chartRTT": "RTT",
   "chartRTTHint": "To the origin and from the agent to the server: by the kernel's count on the connections in use (the smallest of the last half a minute at the agent), read on Linux only. Between the browser and the server: by the count of the server's kernel, and behind a proxy the browser times it itself — how long an empty request takes to be answered, the smallest of the last five.",

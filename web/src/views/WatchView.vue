@@ -212,8 +212,8 @@ interface ChartDef {
   hint: string
   unit: 's' | 'bps' | 'count' | 'pct'
   steps?: boolean
-  /** Why the chart may have nothing to show. */
-  emptyHint?: string
+  /** Shown only once there is something on it: what it draws cannot be measured everywhere. */
+  whenMeasured?: boolean
   lines: { key: string; label: string; agent?: boolean }[]
 }
 const chartDefs = computed<ChartDef[]>(() => [
@@ -259,7 +259,7 @@ const chartDefs = computed<ChartDef[]>(() => [
     ],
   },
   {
-    id: 'loss-share', title: t('watch.chartLossShare'), hint: t('watch.chartLossShareHint'), unit: 'pct', emptyHint: t('watch.chartLossShareEmpty'),
+    id: 'loss-share', title: t('watch.chartLossShare'), hint: t('watch.chartLossShareHint'), unit: 'pct', whenMeasured: true,
     lines: [
       { key: 'lossLink', label: t('watch.lineLossLink'), agent: true },
       { key: 'lossClient', label: t('watch.lineLossClient') },
@@ -282,12 +282,15 @@ const charts = computed(() => {
   // A window that grows with the session up to its full length.
   const from = Math.max(startedAt.value, to - windowSec)
   const viaAgent = vantage.value !== 1
-  return chartDefs.value.map((c) => ({
-    ...c,
-    from,
-    to: Math.max(to, from + 60),
-    lines: c.lines.filter((l) => viaAgent || !l.agent).map((l): ChartLine => ({ label: l.label, points: series[l.key] ?? [] })),
-  }))
+  return chartDefs.value
+    .map((c) => ({
+      ...c,
+      from,
+      to: Math.max(to, from + 60),
+      lines: c.lines.filter((l) => viaAgent || !l.agent).map((l): ChartLine => ({ label: l.label, points: series[l.key] ?? [] })),
+    }))
+    // A chart that can have nothing to show here is not shown at all.
+    .filter((c) => !c.whenMeasured || c.lines.some((l) => l.points.length))
 })
 
 const source = computed(() => sources.value[sourceIndex.value])
@@ -611,7 +614,6 @@ onBeforeUnmount(stop)
               :to="c.to"
               :step="1"
               :steps="c.steps"
-            :empty-hint="c.emptyHint"
             />
           </div>
         </div>
