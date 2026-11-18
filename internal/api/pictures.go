@@ -30,6 +30,9 @@ func (s *Server) streamPictures(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
+	for i := range rows {
+		rows[i].OwnClip = s.ing.OwnClip(id, rows[i].AgentID)
+	}
 	c.JSON(http.StatusOK, rows)
 }
 

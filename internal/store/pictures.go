@@ -21,7 +21,10 @@ type StreamPicture struct {
 	// AudioDB is the level of the sound in decibels below full scale.
 	HasAudio bool    `json:"has_audio"`
 	AudioDB  float64 `json:"audio_db"`
-	JPEG     []byte  `json:"-"`
+	// OwnClip names the clip the stream plays right now that is known to
+	// be the channel's own; empty when it plays none.
+	OwnClip string `json:"own_clip,omitempty"`
+	JPEG    []byte `json:"-"`
 	// Cells is the picture shrunk, to compare it with others by.
 	Cells []byte `json:"-"`
 }

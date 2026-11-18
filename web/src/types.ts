@@ -253,6 +253,8 @@ export interface StreamPicture {
   dark: number
   has_audio: boolean
   audio_db: number
+  /** The clip the stream plays right now that is known to be the channel's own. */
+  own_clip?: string
 }
 
 /** Something wrong with a server rather than with one stream. */

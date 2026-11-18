@@ -390,7 +390,14 @@ func (c *Checker) reportLooks(cy *cycle) {
 		// segment, and its sound does not.
 		standing = append(standing, sounds...)
 	}
+	own := ""
+	if c.ownName != "" && c.now().Sub(c.ownAt) < knownFor {
+		own = c.ownName
+	}
 	c.mu.Unlock()
+	cy.mu.Lock()
+	cy.res.OwnClip = own
+	cy.mu.Unlock()
 	for _, p := range standing {
 		cy.problem(p.kind, p.severity, p.variant, "%s", p.message)
 		cy.detail(p.kind, p.variant, p.details...)

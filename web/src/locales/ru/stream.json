@@ -59,6 +59,8 @@
   "playerBuffer": "Буфер плеера",
   "playlistSnapshot": "Снимок плейлиста",
   "playlistSnapshots": "Снимки плейлистов",
+  "playsOwnClip": "Крутит свой ролик: «{name}»",
+  "playsOwnClipHint": "Ролик помечен как собственный ролик канала, поэтому инцидентов за него нет. Убрать пометку можно в «Настройках»",
   "pmtMissing": "PMT нет",
   "pmtPresent": "PMT есть",
   "problems": "Проблемы",

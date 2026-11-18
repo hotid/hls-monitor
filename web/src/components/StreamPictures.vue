@@ -41,6 +41,7 @@ const silent = (p: StreamPicture) => p.has_audio && p.audio_db < -70
         <div v-if="p.has_audio" :class="{ bad: silent(p) }">{{ t('stream.soundLevel') }} <span class="mono">{{ fmtNumber(p.audio_db, 0) }} {{ t('stream.dB') }}</span></div>
         <div v-else class="muted">{{ t('stream.noSound') }}</div>
         <MarkSlate v-if="session.isAdmin && clipOf(p)" clip :picture="p.has_picture" :incident-id="clipOf(p)!.id" :stream-name="name" />
+        <div v-else-if="p.own_clip" class="muted own" :title="t('stream.playsOwnClipHint')">{{ t('stream.playsOwnClip', { name: p.own_clip }) }}</div>
         <MarkSlate v-else-if="session.isAdmin && p.has_picture" picture :stream-id="p.stream_id" :agent-id="p.agent_id" />
       </figcaption>
     </figure>

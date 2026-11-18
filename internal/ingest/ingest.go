@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -40,6 +41,34 @@ type Ingester struct {
 	ReopenWithin time.Duration
 
 	stored, repeated, failed atomic.Int64
+
+	// own is the clip of its own each stream was last found to play, by
+	// stream and vantage point. It is learnt again within a segment after
+	// a restart, and so is not stored.
+	ownMu sync.Mutex
+	own   map[[2]int64]string
+}
+
+// OwnClip names the clip of its own a stream plays as an agent sees it;
+// empty when it plays none.
+func (in *Ingester) OwnClip(streamID, agentID int64) string {
+	in.ownMu.Lock()
+	defer in.ownMu.Unlock()
+	return in.own[[2]int64{streamID, agentID}]
+}
+
+func (in *Ingester) noteOwn(agentID int64, r *probe.Result) {
+	in.ownMu.Lock()
+	defer in.ownMu.Unlock()
+	key := [2]int64{r.TargetID, agentID}
+	if r.OwnClip == "" {
+		delete(in.own, key)
+		return
+	}
+	if in.own == nil {
+		in.own = map[[2]int64]string{}
+	}
+	in.own[key] = r.OwnClip
 }
 
 // Stats counts what became of the results given to Apply since the start.
@@ -63,6 +92,7 @@ func (in *Ingester) Apply(ctx context.Context, agentID int64, r *probe.Result) e
 	switch {
 	case err == nil:
 		in.stored.Add(1)
+		in.noteOwn(agentID, r)
 	case errors.Is(err, ErrStale):
 		in.repeated.Add(1)
 	case !errors.Is(err, store.ErrNotFound):

@@ -3019,6 +3019,10 @@ const docTemplate = `{
                     "description": "Overloaded names what the checking process itself was short of during\nthe cycle; empty when it kept up. Findings that rest on timing alone\nare left out of such a result: a monitor that cannot keep up measures\nits own delay, not the stream's.",
                     "type": "string"
                 },
+                "own_clip": {
+                    "description": "OwnClip names the clip the stream is found to play that is known to\nbe the channel's own, and so no fault.",
+                    "type": "string"
+                },
                 "picture": {
                     "description": "Picture is what a look at the stream found, in the cycles that looked.",
                     "allOf": [
@@ -3768,6 +3772,10 @@ const docTemplate = `{
                 },
                 "luma": {
                     "type": "number"
+                },
+                "own_clip": {
+                    "description": "OwnClip names the clip the stream plays right now that is known to\nbe the channel's own; empty when it plays none.",
+                    "type": "string"
                 },
                 "stream_id": {
                     "type": "integer"

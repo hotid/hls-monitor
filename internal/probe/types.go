@@ -264,6 +264,9 @@ type Result struct {
 	Snapshots []Snapshot `json:"snapshots,omitempty"`
 	// Picture is what a look at the stream found, in the cycles that looked.
 	Picture *Picture `json:"picture,omitempty"`
+	// OwnClip names the clip the stream is found to play that is known to
+	// be the channel's own, and so no fault.
+	OwnClip string `json:"own_clip,omitempty"`
 	// Overloaded names what the checking process itself was short of during
 	// the cycle; empty when it kept up. Findings that rest on timing alone
 	// are left out of such a result: a monitor that cannot keep up measures

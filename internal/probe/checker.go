@@ -61,7 +61,8 @@ type Checker struct {
 	signs map[string]standingProblem
 	// ownAt is when a playlist was last found to play a clip known to be
 	// the channel's own.
-	ownAt time.Time
+	ownAt   time.Time
+	ownName string
 	// clipAt is when a clip going round, or a slate, was last told.
 	clipAt time.Time
 

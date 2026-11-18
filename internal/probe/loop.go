@@ -173,7 +173,7 @@ func (c *Checker) noteLoop(key, variant string, k *coded, hashes []uint64, sound
 	switch {
 	case known && k.own:
 		// What the channel itself plays over and over is not a fault.
-		c.ownAt = at
+		c.ownAt, c.ownName = at, k.known
 		delete(c.loops, key)
 	case known:
 		message := "the stream shows the slate \"" + k.known + "\""

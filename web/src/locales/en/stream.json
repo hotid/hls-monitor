@@ -59,6 +59,8 @@
   "playerBuffer": "Player buffer",
   "playlistSnapshot": "Playlist snapshot",
   "playlistSnapshots": "Playlist snapshots",
+  "playsOwnClip": "Plays its own clip: \"{name}\"",
+  "playsOwnClipHint": "The clip is marked as the channel's own, so there are no incidents for it. The mark can be removed in Settings",
   "pmtMissing": "PMT missing",
   "pmtPresent": "PMT present",
   "problems": "Problems",

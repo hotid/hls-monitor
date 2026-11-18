@@ -116,6 +116,9 @@ func TestKnownClip(t *testing.T) {
 				t.Fatalf("the channel's own clip was told as %s", kind)
 			}
 		}
+		if r.OwnClip != "Their own" {
+			t.Fatalf("the stream is said to play %q of its own", r.OwnClip)
+		}
 	}
 }
 

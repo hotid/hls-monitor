@@ -435,6 +435,11 @@ definitions:
           are left out of such a result: a monitor that cannot keep up measures
           its own delay, not the stream's.
         type: string
+      own_clip:
+        description: |-
+          OwnClip names the clip the stream is found to play that is known to
+          be the channel's own, and so no fault.
+        type: string
       picture:
         allOf:
         - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Picture'
@@ -1002,6 +1007,11 @@ definitions:
         type: boolean
       luma:
         type: number
+      own_clip:
+        description: |-
+          OwnClip names the clip the stream plays right now that is known to
+          be the channel's own; empty when it plays none.
+        type: string
       stream_id:
         type: integer
       time:
