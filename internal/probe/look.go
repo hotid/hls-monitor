@@ -156,6 +156,9 @@ type looks struct {
 	cells       []byte // the picture of the look before, shrunk
 	black, same run
 	silent      run
+	// nothing counts looks that got neither a picture nor sound out of
+	// the segment.
+	nothing run
 	// problems stand from one look to the next: a look is rare, and an
 	// incident ends when its problem is not reported.
 	problems []standingProblem
@@ -222,9 +225,24 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 		if errors.Is(err, picture.ErrNothing) || errors.Is(err, picture.ErrNoDecoder) || ctx.Err() != nil {
 			l.at = at
 		}
+		// A segment nothing can be made of, look after look, is a stream
+		// no player shows: scrambled, or garbage in a valid container.
+		// One such look is a segment that happened to be cut short.
+		if errors.Is(err, picture.ErrNothing) && ctx.Err() == nil {
+			l.nothing.note(true, at)
+			l.at = at.Add(min(lookAgain, c.PictureEvery) - c.PictureEvery)
+			if l.nothing.standing(at) {
+				l.at = at.Add(min(lookStanding, c.PictureEvery) - c.PictureEvery)
+				l.problems = []standingProblem{{kind: ProbMediaUndecodable, severity: SevCrit, variant: v.Key,
+					message: "neither the picture nor the sound can be decoded",
+					details: []any{"decoder_says", err.Error(), "looks_in_a_row", l.nothing.n,
+						"since", l.nothing.since.UTC().Format(time.RFC3339), "looked_at", at.UTC().Format(time.RFC3339)}}}
+			}
+		}
 		return
 	}
 	l.at = at
+	l.nothing = run{}
 	cy.picture(&Picture{Variant: v.Key, Time: at, JPEG: f.JPEG, Cells: f.Cells, HasPicture: f.HasPicture, Luma: round1(f.Luma), Dark: round3(f.Dark),
 		HasAudio: f.HasAudio, AudioDB: round1(f.AudioDB)})
 

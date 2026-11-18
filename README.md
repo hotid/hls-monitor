@@ -131,6 +131,8 @@ The decoding is done by ffmpeg, which is in the images and is run as a program o
 
 **A clip going round.** Most slates are a short clip started in place of the channel, and that is found with no marking and no decoding: the monitor remembers a fingerprint of the coded bytes of every keyframe, and a live encoder never codes two pictures into the same bytes. When every keyframe of five segments in a row, over half a minute at least, was seen before, the stream gets the failure "A clip going round instead of the programme". This works wherever segments are parsed — at the "beginning of every segment" and "container" levels, MPEG-TS only for now — and whether or not `HLSMON_PICTURE_CHECK` is set. A stream told to show a still picture is left alone.
 
+**Nothing to decode.** A stream may have playlists, segments and a container all in order and carry garbage inside — left scrambled at the input, for one. When three looks in a row, over a minute at least, get neither a picture nor sound out of the segments, the stream gets the failure "Neither the picture nor the sound can be decoded". This one needs the decoder (`HLSMON_PICTURE_CHECK`).
+
 What this does not do: the picture is not seen between looks, so a black screen shorter than the period may be missed; encrypted streams are not looked at, nor those checked at the "playlists only" level. A stream that shows a still picture by design — radio, a test card — can be told so in its settings, or not looked at at all. One look costs about a tenth of a second of processor time; at the "beginning of every segment" level it also fetches up to 512 KB of one segment instead of 130.
 
 ## Agents

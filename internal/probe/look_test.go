@@ -317,3 +317,36 @@ func TestLookFetchesWholePackets(t *testing.T) {
 		t.Fatal("the stream was not looked at")
 	}
 }
+
+func TestNothingCanBeDecoded(t *testing.T) {
+	// A stream whose container is in order and whose contents are garbage:
+	// the decoder makes nothing of it, look after look.
+	f, s := lookFixture(t, LevelHeader)
+	s.err = picture.ErrNothing
+	if n, _ := watch(f, 50*time.Second, ProbMediaUndecodable); n != 0 {
+		t.Fatalf("told after %d looks, in under a minute", s.looks)
+	}
+	n, cycles := watch(f, 3*time.Minute, ProbMediaUndecodable)
+	if n < cycles-8 || s.looks < 4 || s.looks > 9 {
+		t.Fatalf("reported in %d of %d cycles, after %d looks", n, cycles, s.looks)
+	}
+	// It decodes again: over at the next look.
+	s.err = nil
+	if n, _ := watch(f, 3*time.Minute, ProbMediaUndecodable); n > 12 {
+		t.Errorf("still reported in %d cycles after it decoded", n)
+	}
+	if hasProblem(f.step(1), ProbMediaUndecodable) != nil {
+		t.Error("still reported")
+	}
+
+	// One segment that would not decode among good ones is nothing.
+	f, s = lookFixture(t, LevelHeader)
+	f.step(1)
+	s.err = picture.ErrNothing
+	f.clock = f.clock.Add(5 * time.Minute)
+	f.step(1)
+	s.err = nil
+	if n, _ := watch(f, 6*time.Minute, ProbMediaUndecodable); n != 0 {
+		t.Errorf("one bad look was reported in %d cycles", n)
+	}
+}

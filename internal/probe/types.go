@@ -143,6 +143,8 @@ const (
 	ProbAudioSilent   = "audio_silent"
 	ProbPictureSlate  = "picture_slate"
 	ProbPictureLoop   = "picture_loop"
+	// ProbMediaUndecodable: a decoder makes nothing of the segments.
+	ProbMediaUndecodable = "media_undecodable"
 )
 
 // Problem is one kind of trouble found for one variant in a cycle.

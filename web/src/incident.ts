@@ -58,6 +58,7 @@ export const problemAbout = perLocale((): Record<string, { what: string; how: st
   audio_silent: { what: t('incident.audioSilentWhat'), how: t('incident.pictureLookHow') },
   picture_slate: { what: t('incident.pictureSlateWhat'), how: t('incident.pictureSlateHow') },
   picture_loop: { what: t('incident.pictureLoopWhat'), how: t('incident.pictureLoopHow') },
+  media_undecodable: { what: t('incident.mediaUndecodableWhat'), how: t('incident.mediaUndecodableHow') },
   no_keyframe_start: {
     what: t('incident.theSegmentDoesNotStartWith'),
     how: t('incident.theFirstVideoFrameOfThe'),
@@ -115,6 +116,7 @@ const calculation = perLocale((): Field[] => [
   { key: 'previous_last_sequence', label: t('incident.lastSegmentInThePreviousCheck'), unit: 'count' },
   { key: 'missed_segments', label: t('incident.segmentsMissed'), unit: 'count' },
   { key: 'slate', label: t('incident.slateName'), unit: 'text' },
+  { key: 'decoder_says', label: t('incident.decoderSays'), unit: 'text' },
   { key: 'segments_in_a_row', label: t('incident.segmentsInARow'), unit: 'count' },
   { key: 'distinct_keyframes', label: t('incident.distinctKeyframes'), unit: 'count' },
   { key: 'picture_luma', label: t('incident.pictureLuma'), unit: 'count' },

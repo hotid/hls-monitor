@@ -48,6 +48,7 @@
   "mediaInitializationSectionUnavailable": "Media initialization section unavailable",
   "mediaPlaylist": "Media playlist",
   "mediaSequenceWentBackwards": "Media sequence went backwards",
+  "mediaUndecodable": "Neither the picture nor the sound can be decoded",
   "minimumPerStep": "Minimum per step",
   "missed": "Missed",
   "missedSegments": "Missed segments",

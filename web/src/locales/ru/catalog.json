@@ -48,6 +48,7 @@
   "mediaInitializationSectionUnavailable": "Секция инициализации недоступна",
   "mediaPlaylist": "Медиа-плейлист",
   "mediaSequenceWentBackwards": "Номера сегментов пошли назад",
+  "mediaUndecodable": "Ни картинка, ни звук не декодируются",
   "minimumPerStep": "Минимальная за шаг",
   "missed": "Потеряно",
   "missedSegments": "Потерянные сегменты",
