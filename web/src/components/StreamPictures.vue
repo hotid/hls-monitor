@@ -21,7 +21,7 @@ usePolling(async (signal) => {
 // or the channel's own right here, as in the incident that tells of it.
 function clipOf(p: StreamPicture): Incident | undefined {
   const going = (props.incidents ?? []).filter(
-    (i) => i.active && i.agent_id === p.agent_id && (i.kind === 'picture_loop' || i.kind === 'audio_loop') && typeof i.details?.clip_signature === 'string' && i.details.clip_signature !== '',
+    (i) => !i.ended_at && i.agent_id === p.agent_id && (i.kind === 'picture_loop' || i.kind === 'audio_loop') && typeof i.details?.clip_signature === 'string' && i.details.clip_signature !== '',
   )
   return going.find((i) => i.kind === 'picture_loop') ?? going[0]
 }
