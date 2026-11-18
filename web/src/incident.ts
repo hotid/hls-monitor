@@ -119,6 +119,7 @@ const calculation = perLocale((): Field[] => [
   { key: 'slate', label: t('incident.slateName'), unit: 'text' },
   { key: 'decoder_says', label: t('incident.decoderSays'), unit: 'text' },
   { key: 'video_pictures', label: t('incident.videoPictures'), unit: 'count' },
+  { key: 'video_packets', label: t('incident.videoPackets'), unit: 'count' },
   { key: 'video_kbit_s', label: t('incident.videoKbitS'), unit: 'count' },
   { key: 'segments_in_a_row', label: t('incident.segmentsInARow'), unit: 'count' },
   { key: 'distinct_keyframes', label: t('incident.distinctKeyframes'), unit: 'count' },
@@ -239,8 +240,13 @@ export function conclusion(kind: string, d: Details): string[] {
   const out: string[] = []
   const s = (v: number) => fmtSeconds(v)
   if (d.judged_by) out.push(t('incident.judgedBySizes'))
-  if (kind === 'media_undecodable' && num(d, 'video_pictures') === 0) {
-    out.push(t('incident.noPicturesInTheVideoTrack', { rate: num(d, 'video_kbit_s') ?? '?' }))
+  if (kind === 'media_undecodable') {
+    const pictures = num(d, 'video_pictures')
+    const packets = num(d, 'video_packets')
+    // Video has a picture to a packet, or one to two where fields come apart.
+    if (pictures !== undefined && packets !== undefined && packets >= 20 && pictures * 4 < packets) {
+      out.push(t('incident.noPicturesInTheVideoTrack', { rate: num(d, 'video_kbit_s') ?? '?', pictures, packets }))
+    }
   }
   if (kind === 'playback_stall') {
     const wall = num(d, 'played_for')

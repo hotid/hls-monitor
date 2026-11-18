@@ -57,6 +57,10 @@ type Track struct {
 	// the first maxKeyHashes of them. A live encoder never codes two
 	// pictures into the same bytes; a clip that goes round does every time.
 	KeyHashes []uint64 `json:"-"`
+	// Packets is how many packets (PES packets, or samples of fragmented
+	// MP4) the track came in. Video has a picture to a packet, or one to
+	// two where fields are sent apart.
+	Packets int `json:"-"`
 	// PlainBytes are the bytes of the pictures that are not keyframes,
 	// without filler, and PlainFrames how many such pictures there are:
 	// what tells how much the picture changes from one frame to the next.

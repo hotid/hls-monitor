@@ -45,7 +45,7 @@
   "mediaUndecodableHow": "Once in the period set, the monitor hands the beginning of a segment to a decoder. When three looks in a row, over a minute at least, got neither a picture nor sound, the stream is told to be undecodable. One look that failed means nothing.",
   "mediaUndecodableWhat": "The playlists are served, the segments download, the container is in order — and inside there is neither video nor sound: a decoder gets not one frame and not a second of sound out of the segments. A viewer sees an empty screen or a player error. Usually it is an encoder gone wrong, sending into the tracks something other than what they are declared to be, a stream left encrypted at the input, or garbage from the source.",
   "newSegments": "New segments",
-  "noPicturesInTheVideoTrack": "The video track carries packets ({rate} kbit/s) and not one picture among them: this is not video that failed to decode, it is not video at all. It does not look like encryption — the place to look is the encoder or the source of the channel.",
+  "noPicturesInTheVideoTrack": "The video track carries packets ({rate} kbit/s) with next to no pictures among them: {pictures} in {packets} packets, where video has a picture in every packet. This is not video that failed to decode, it is not video at all. It does not look like encryption — the place to look is the encoder or the source of the channel.",
   "noResponseToThePlaylistRequest": "No response to the playlist request was received: a timeout, a dropped connection or endless redirects.",
   "ofRealTime": "{n} % of real time",
   "ofThemDownloaded": "Of them downloaded",
@@ -132,6 +132,7 @@
   "variantsEdgeSpreadLimit": "Allowed difference",
   "videoArrivalRate": "Video arrival rate",
   "videoKbitS": "Video track, kbit/s",
+  "videoPackets": "Packets in the video track of the segment",
   "videoPictures": "Pictures in the video track of the segment",
   "videoReceivedInStep": "Video received in that time",
   "videoReceivedInThatTime": "Video received in that time"

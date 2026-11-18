@@ -248,10 +248,10 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 				details := []any{"decoder_says", err.Error(), "looks_in_a_row", l.nothing.n,
 					"since", l.nothing.since.UTC().Format(time.RFC3339), "looked_at", at.UTC().Format(time.RFC3339)}
 				// What the container says of the video narrows it down: a
-				// track with packets in it and not one picture among them
-				// is not video that failed to decode, it is not video.
+				// track with packets in it and next to no pictures among
+				// them is not video that failed to decode, it is not video.
 				if video := videoOf(info); video != nil && video.Bytes > 0 {
-					details = append(details, "video_pictures", video.Frames)
+					details = append(details, "video_pictures", video.Frames, "video_packets", video.Packets)
 					if d := video.Duration(); d > 0 {
 						details = append(details, "video_kbit_s", math.Round(float64(video.Bytes)*8/d/1000))
 					}

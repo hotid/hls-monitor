@@ -233,6 +233,7 @@ func analyzeFMP4(data []byte, init *Init, info *Info) {
 							t.PlainFrames++
 						}
 						t.seen++
+						t.Packets++
 						t.Frames++
 						t.Bytes += int64(s.Size)
 						dts += int64(s.Dur)

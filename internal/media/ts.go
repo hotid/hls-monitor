@@ -388,6 +388,7 @@ func videoFrameDuration(timed []pesTime) (frameDur float64, lastHalves int) {
 
 func finalizeTSTrack(t *tsTrack) {
 	t.Frames = t.pesCount
+	t.Packets = t.pesCount
 	if !t.havePTS {
 		return
 	}
