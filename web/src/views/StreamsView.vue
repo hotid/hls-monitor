@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { api } from '@/api'
-import { levelLabel, statusLabel } from '@/catalog'
-import { fmtAgo } from '@/format'
+import { api, basePath } from '@/api'
+import { levelLabel, problemName, statusLabel } from '@/catalog'
+import { fmtAgo, fmtBits } from '@/format'
 import { t } from '@/i18n'
 import { timeValue, useSort } from '@/sort'
 import { useLive } from '@/stores/live'
 import { useSession } from '@/stores/session'
 import { useToasts } from '@/stores/toasts'
-import type { Status, Stream } from '@/types'
+import type { Incident, Status, Stream } from '@/types'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import FilterEmpty from '@/components/FilterEmpty.vue'
 import SortTh from '@/components/SortTh.vue'
@@ -43,11 +43,35 @@ function lastCheck(s: Stream): string {
   return t ? fmtAgo(t, live.updatedAt) : notChecked
 }
 
+// Why a stream is not in order: its open incidents, the failures first,
+// each kind once.
+const reasons = computed(() => {
+  const by = new Map<number, Incident[]>()
+  for (const i of live.overview?.incidents ?? []) {
+    const list = by.get(i.stream_id) ?? []
+    if (!list.some((o) => o.kind === i.kind)) list.push(i)
+    by.set(i.stream_id, list)
+  }
+  for (const list of by.values()) list.sort((a, b) => Number(b.severity === 'crit') - Number(a.severity === 'crit'))
+  return by
+})
+const why = (s: Stream) => (s.status === 'fail' || s.status === 'warn' ? (reasons.value.get(s.id) ?? []) : [])
+
+// The figures of a stream as its vantage points last saw it: the largest of each.
+function figure(s: Stream, key: string): number | undefined {
+  const v = s.agents.map((a) => a.summary?.[key]).filter((x): x is number => typeof x === 'number' && x > 0)
+  return v.length ? Math.max(...v) : undefined
+}
+const thumb = (s: Stream) => (s.picture_ref ? `${basePath}/api/v1/streams/${s.id}/picture?agent=${s.picture_ref.agent_id}&t=${new Date(s.picture_ref.time).getTime()}` : '')
+
 // The worst first when sorted from the largest.
 const severity: Record<Status, number> = { fail: 4, warn: 3, nodata: 2, ok: 1, disabled: 0 }
 const sort = useSort(() => found.value, {
   name: { value: (s) => s.name, filter: 'text', label: (s) => `${s.name} ${s.url}` },
   status: { value: (s) => severity[s.status], filter: 'choice', label: (s) => statusLabel()[s.status] },
+  why: { value: (s) => why(s).map((i) => problemName(i.kind)).join(', '), filter: 'text' },
+  bitrate: { value: (s) => figure(s, 'bitrate_bps') ?? 0, filter: 'range', unit: t('streams.mbit'), scale: 1e6 },
+  height: { value: (s) => figure(s, 'height') ?? 0, filter: 'range' },
   level: { value: (s) => levelLabel()[s.level], filter: 'choice' },
   agents: { value: (s) => s.agents.map((a) => a.agent_name).join(', '), filter: 'choice', label: (s) => s.agents.map((a) => a.agent_name).join(', ') || t('common.notAssigned') },
   checked: (s) => timeValue(lastChecked(s)),
@@ -101,8 +125,12 @@ async function remove() {
         <table class="table">
           <thead>
             <tr>
+              <th class="hide-narrow" />
               <SortTh :sort="sort" by="name">{{ t('common.stream') }}</SortTh>
               <SortTh :sort="sort" by="status">{{ t('common.status') }}</SortTh>
+              <SortTh :sort="sort" by="why">{{ t('streams.why') }}</SortTh>
+              <SortTh :sort="sort" by="bitrate" class="right hide-narrow">{{ t('common.bitrate') }}</SortTh>
+              <SortTh :sort="sort" by="height" class="right hide-narrow">{{ t('streams.picture') }}</SortTh>
               <SortTh :sort="sort" by="level" class="hide-narrow">{{ t('common.checkLevel') }}</SortTh>
               <SortTh :sort="sort" by="agents" class="hide-narrow">{{ t('common.agents') }}</SortTh>
               <SortTh :sort="sort" by="checked" class="hide-narrow">{{ t('streams.lastCheck') }}</SortTh>
@@ -111,11 +139,18 @@ async function remove() {
           </thead>
           <tbody>
             <tr v-for="s in streams" :key="s.id" class="clickable" @click="router.push({ name: 'stream', params: { id: s.id } })">
-              <td style="max-width: 420px">
+              <td class="hide-narrow thumb"><img v-if="thumb(s)" :src="thumb(s)" alt="" loading="lazy" /></td>
+              <td style="max-width: 360px">
                 <RouterLink :to="{ name: 'stream', params: { id: s.id } }" class="strong" @click.stop>{{ s.name }}</RouterLink>
                 <div class="mono muted truncate" :title="s.url">{{ s.url }}</div>
               </td>
               <td><StatusBadge :status="s.status" /></td>
+              <td class="why">
+                <template v-for="(i, n) in why(s).slice(0, 2)" :key="i.id"><template v-if="n">, </template><span :class="i.severity" :title="i.message">{{ problemName(i.kind) }}</span></template>
+                <span v-if="why(s).length > 2" class="muted more" :title="why(s).slice(2).map((i) => problemName(i.kind)).join(', ')">{{ t('streams.andMore', { n: why(s).length - 2 }) }}</span>
+              </td>
+              <td class="mono right hide-narrow nowrap">{{ figure(s, 'bitrate_bps') ? fmtBits(figure(s, 'bitrate_bps')) : '—' }}</td>
+              <td class="mono right hide-narrow nowrap">{{ figure(s, 'height') ? figure(s, 'height') + 'p' : '—' }}</td>
               <td class="hide-narrow">{{ levelLabel()[s.level] }}</td>
               <td class="hide-narrow">
                 <template v-if="s.agents.length">{{ s.agents.map((a) => a.agent_name).join(', ') }}</template>
@@ -141,3 +176,31 @@ async function remove() {
     </ConfirmDialog>
   </div>
 </template>
+
+<style scoped>
+.thumb {
+  width: 72px;
+  padding-right: 0;
+}
+.thumb img {
+  display: block;
+  width: 64px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 3px;
+  background: #000;
+}
+.why {
+  max-width: 300px;
+  font-size: 13px;
+}
+.why .more {
+  margin-left: 0.3em;
+}
+.why .crit {
+  color: #ff7a85;
+}
+.why .warn {
+  color: var(--accent-warm);
+}
+</style>

@@ -1,8 +1,12 @@
 {
   "addAPlaylistURLChecksStart": "Добавьте адрес плейлиста — проверки начнутся сразу.",
+  "andMore": "и ещё {n}",
   "checksOfStreamResumed": "Проверки потока «{name}» возобновлены",
   "checksOfStreamStopped": "Проверки потока «{name}» остановлены",
   "findByNameOrURL": "Найти по названию или адресу",
   "lastCheck": "Последняя проверка",
-  "streamWillBeDeletedTogetherWith": "Поток «{name}» будет удалён вместе с историей: метриками, инцидентами и журналом сегментов. Отменить это нельзя."
+  "mbit": "Мбит/с",
+  "picture": "Картинка",
+  "streamWillBeDeletedTogetherWith": "Поток «{name}» будет удалён вместе с историей: метриками, инцидентами и журналом сегментов. Отменить это нельзя.",
+  "why": "Что не так"
 }

@@ -319,6 +319,7 @@ func housekeeping(ctx context.Context, st *store.Store, srv *api.Server, cfg con
 			doPurge()
 		case <-watch.C:
 			srv.WatchServers(ctx)
+			srv.RecordSelf()
 		case <-sync.C:
 			srv.SyncLocal(ctx)
 			srv.PurgeSeries(ctx)

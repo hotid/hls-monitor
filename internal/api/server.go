@@ -168,6 +168,7 @@ func (s *Server) routes(ui http.Handler) {
 	admin.POST("/streams", s.createStream)
 	admin.POST("/slates", s.markSlate)
 	admin.DELETE("/slates/:id", s.deleteSlate)
+	admin.DELETE("/slates/frames/:id", s.deleteSlateFrame)
 	admin.PUT("/streams/:id", s.updateStream)
 	admin.DELETE("/streams/:id", s.deleteStream)
 	admin.POST("/streams/:id/enable", s.enableStream)

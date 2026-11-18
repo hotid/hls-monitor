@@ -76,7 +76,7 @@ async function savePassword() {
         <RouterLink :to="{ name: 'streams' }">{{ t('common.streams') }}</RouterLink>
         <RouterLink :to="{ name: 'incidents' }">{{ t('common.incidents') }}<span v-if="live.openIncidents" class="count">{{ live.openIncidents }}</span></RouterLink>
         <RouterLink :to="{ name: 'agents' }">{{ t('common.agents') }}</RouterLink>
-        <RouterLink v-if="session.isAdmin" :to="{ name: 'access' }">{{ t('common.access') }}</RouterLink>
+        <RouterLink v-if="session.isAdmin" :to="{ name: 'settings' }">{{ t('common.access') }}</RouterLink>
       </nav>
       <span class="spacer" />
       <div class="seg lang" role="group" :aria-label="t('common.language')">

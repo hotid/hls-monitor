@@ -158,6 +158,30 @@ func (s *Server) deleteSlate(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// deleteSlateFrame godoc
+//
+//	@Summary	Forget one picture of a slate
+//	@Description	The slate goes with its last picture.
+//	@Tags		slates
+//	@Security	SessionCookie
+//	@Security	BearerToken
+//	@Param		id	path	int	true	"Frame ID"
+//	@Success	204
+//	@Failure	404	{object}	apiError
+//	@Router		/api/v1/slates/frames/{id} [delete]
+func (s *Server) deleteSlateFrame(c *gin.Context) {
+	id, ok := pathID(c)
+	if !ok {
+		return
+	}
+	ctx := c.Request.Context()
+	if s.storeError(c, s.st.DeleteSlateFrame(ctx, id)) {
+		return
+	}
+	s.LoadSlates(ctx)
+	c.Status(http.StatusNoContent)
+}
+
 // slateFrame godoc
 //
 //	@Summary	The picture of one frame of a slate

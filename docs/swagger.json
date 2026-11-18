@@ -1237,6 +1237,41 @@
                         }
                     }
                 }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "description": "The slate goes with its last picture.",
+                "tags": [
+                    "slates"
+                ],
+                "summary": "Forget one picture of a slate",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Frame ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
             }
         },
         "/api/v1/slates/{id}": {
@@ -3289,6 +3324,10 @@
         "github_com_hotid_hls-monitor_internal_selfstat.Status": {
             "type": "object",
             "properties": {
+                "cpu_all_cores": {
+                    "description": "CPUAllCores is how many processors the whole container used, the\nprograms the process runs included (the decoder of pictures is\none); zero where the container cannot be asked.",
+                    "type": "number"
+                },
                 "cpu_cores": {
                     "description": "CPUCores is how many processors the process used, CPULimit how many\nit may use.",
                     "type": "number"
@@ -3446,6 +3485,17 @@
                     "type": "string"
                 },
                 "variant_kind": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.PictureRef": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "integer"
+                },
+                "time": {
                     "type": "string"
                 }
             }
@@ -4500,6 +4550,14 @@
                     "description": "Picture is what the picture and the sound are checked for: \"\" for\neverything, \"static\" when a still picture is what the stream shows,\n\"off\" not to look.",
                     "type": "string"
                 },
+                "picture_ref": {
+                    "description": "Picture says which look at the stream has a picture to show (see\n/api/v1/streams/{id}/picture); absent when it was never looked at.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.PictureRef"
+                        }
+                    ]
+                },
                 "revision": {
                     "type": "integer"
                 },
@@ -4645,6 +4703,14 @@
                 "picture": {
                     "description": "Picture is what the picture and the sound are checked for: \"\" for\neverything, \"static\" when a still picture is what the stream shows,\n\"off\" not to look.",
                     "type": "string"
+                },
+                "picture_ref": {
+                    "description": "Picture says which look at the stream has a picture to show (see\n/api/v1/streams/{id}/picture); absent when it was never looked at.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.PictureRef"
+                        }
+                    ]
                 },
                 "revision": {
                     "type": "integer"

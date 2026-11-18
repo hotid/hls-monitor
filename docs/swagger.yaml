@@ -675,6 +675,12 @@ definitions:
     type: object
   github_com_hotid_hls-monitor_internal_selfstat.Status:
     properties:
+      cpu_all_cores:
+        description: |-
+          CPUAllCores is how many processors the whole container used, the
+          programs the process runs included (the decoder of pictures is
+          one); zero where the container cannot be asked.
+        type: number
       cpu_cores:
         description: |-
           CPUCores is how many processors the process used, CPULimit how many
@@ -801,6 +807,13 @@ definitions:
       variant_key:
         type: string
       variant_kind:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_store.PictureRef:
+    properties:
+      agent_id:
+        type: integer
+      time:
         type: string
     type: object
   github_com_hotid_hls-monitor_internal_store.SegmentRecord:
@@ -1546,6 +1559,12 @@ definitions:
           everything, "static" when a still picture is what the stream shows,
           "off" not to look.
         type: string
+      picture_ref:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.PictureRef'
+        description: |-
+          Picture says which look at the stream has a picture to show (see
+          /api/v1/streams/{id}/picture); absent when it was never looked at.
       revision:
         type: integer
       status:
@@ -1649,6 +1668,12 @@ definitions:
           everything, "static" when a still picture is what the stream shows,
           "off" not to look.
         type: string
+      picture_ref:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.PictureRef'
+        description: |-
+          Picture says which look at the stream has a picture to show (see
+          /api/v1/streams/{id}/picture); absent when it was never looked at.
       revision:
         type: integer
       status:
@@ -2649,6 +2674,27 @@ paths:
       tags:
       - slates
   /api/v1/slates/frames/{id}:
+    delete:
+      description: The slate goes with its last picture.
+      parameters:
+      - description: Frame ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: Forget one picture of a slate
+      tags:
+      - slates
     get:
       parameters:
       - description: Frame ID

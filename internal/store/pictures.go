@@ -78,6 +78,32 @@ func (s *Store) StreamPictures(ctx context.Context, streamID int64) ([]StreamPic
 	return out, rows.Err()
 }
 
+// PictureRef says which look at a stream has a picture to show.
+type PictureRef struct {
+	AgentID int64     `json:"agent_id"`
+	Time    time.Time `json:"time"`
+}
+
+// LatestPictures returns, per stream, the latest look that has a picture.
+func (s *Store) LatestPictures(ctx context.Context) (map[int64]PictureRef, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT stream_id, agent_id, time FROM stream_pictures WHERE has_picture = 1 AND jpeg IS NOT NULL")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]PictureRef{}
+	for rows.Next() {
+		var stream, agent, at int64
+		if err := rows.Scan(&stream, &agent, &at); err != nil {
+			return nil, err
+		}
+		if t := fromMs(at); t.After(out[stream].Time) {
+			out[stream] = PictureRef{AgentID: agent, Time: t}
+		}
+	}
+	return out, rows.Err()
+}
+
 // PictureJPEG returns the picture of the latest look at a stream from an
 // agent and when it was taken; ErrNotFound when there is none.
 func (s *Store) PictureJPEG(ctx context.Context, streamID, agentID int64) ([]byte, time.Time, error) {

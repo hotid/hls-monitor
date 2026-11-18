@@ -14,7 +14,9 @@ export const router = createRouter({
     { path: '/servers/:host/:ip?', name: 'server', component: () => import('./views/HostView.vue'), props: true },
     { path: '/incidents', name: 'incidents', component: () => import('./views/IncidentsView.vue') },
     { path: '/agents', name: 'agents', component: () => import('./views/AgentsView.vue') },
-    { path: '/access', name: 'access', component: () => import('./views/AccessView.vue'), meta: { admin: true } },
+    { path: '/settings', name: 'settings', component: () => import('./views/AccessView.vue'), meta: { admin: true } },
+    // The page used to be called Access.
+    { path: '/access', redirect: '/settings' },
     { path: '/:rest(.*)*', redirect: '/' },
   ],
   scrollBehavior: (_to, _from, saved) => saved ?? { top: 0 },

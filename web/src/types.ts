@@ -106,6 +106,8 @@ export interface Stream {
   status: Status
   agents: AgentStatus[]
   open_incidents: Record<string, number>
+  /** Which look at the stream has a picture to show; absent when it was never looked at. */
+  picture_ref?: { agent_id: number; time: string }
 }
 
 export interface Hop {

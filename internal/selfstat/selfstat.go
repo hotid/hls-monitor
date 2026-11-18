@@ -46,6 +46,10 @@ type Status struct {
 	// it may use.
 	CPUCores float64 `json:"cpu_cores"`
 	CPULimit float64 `json:"cpu_limit"`
+	// CPUAllCores is how many processors the whole container used, the
+	// programs the process runs included (the decoder of pictures is
+	// one); zero where the container cannot be asked.
+	CPUAllCores float64 `json:"cpu_all_cores"`
 	// CPUThrottled is how many seconds per second the kernel kept the
 	// container's processors from it for having used up its quota.
 	CPUThrottled float64 `json:"cpu_throttled"`
@@ -84,6 +88,7 @@ type Monitor struct {
 type sample struct {
 	at        time.Time
 	cpu       time.Duration // processor time used by the process
+	all       time.Duration // and by the whole container
 	throttled time.Duration
 	sched     *metrics.Float64Histogram
 	// late and lateMax describe the wake-ups since the previous sample.
@@ -148,6 +153,9 @@ func (m *Monitor) read() sample {
 	if v, ok := cgroupStat(filepath.Join(m.cgroup, "cpu.stat"), "throttled_usec"); ok {
 		s.throttled = time.Duration(v) * time.Microsecond
 	}
+	if v, ok := cgroupStat(filepath.Join(m.cgroup, "cpu.stat"), "usage_usec"); ok {
+		s.all = time.Duration(v) * time.Microsecond
+	}
 	set := []metrics.Sample{{Name: "/sched/latencies:seconds"}}
 	metrics.Read(set)
 	if set[0].Value.Kind() == metrics.KindFloat64Histogram {
@@ -177,6 +185,9 @@ func (m *Monitor) evaluate(prev, cur sample) Status {
 	if wall := cur.at.Sub(prev.at).Seconds(); wall > 0 {
 		st.CPUCores = round(max(cur.cpu-prev.cpu, 0).Seconds()/wall, 100)
 		st.CPUThrottled = round(max(cur.throttled-prev.throttled, 0).Seconds()/wall, 1000)
+		if prev.all > 0 && cur.all >= prev.all {
+			st.CPUAllCores = round((cur.all-prev.all).Seconds()/wall, 100)
+		}
 	}
 	st.Delay, st.DelayMax = round(cur.late.Seconds(), 1000), round(cur.lateMax.Seconds(), 1000)
 	st.SchedulerDelay = quantile(prev.sched, cur.sched, 0.99)

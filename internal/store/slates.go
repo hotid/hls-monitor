@@ -115,6 +115,22 @@ func (s *Store) DeleteSlate(ctx context.Context, id int64) error {
 	return affected(s.db.ExecContext(ctx, "DELETE FROM slates WHERE id = ?", id))
 }
 
+// DeleteSlateFrame forgets one picture of a slate, and the slate with it
+// when that was its last.
+func (s *Store) DeleteSlateFrame(ctx context.Context, frameID int64) error {
+	return s.Tx(ctx, func(tx *Tx) error {
+		var slate int64
+		if err := tx.q.QueryRowContext(ctx, "SELECT slate_id FROM slate_frames WHERE id = ?", frameID).Scan(&slate); err != nil {
+			return notFound(err)
+		}
+		if _, err := tx.q.ExecContext(ctx, "DELETE FROM slate_frames WHERE id = ?", frameID); err != nil {
+			return err
+		}
+		_, err := tx.q.ExecContext(ctx, "DELETE FROM slates WHERE id = ? AND NOT EXISTS (SELECT 1 FROM slate_frames WHERE slate_id = ?)", slate, slate)
+		return err
+	})
+}
+
 // SlateFrameJPEG returns the picture of a slate's frame.
 func (s *Store) SlateFrameJPEG(ctx context.Context, frameID int64) ([]byte, time.Time, error) {
 	return s.jpeg(ctx, "SELECT jpeg, created_at FROM slate_frames WHERE id = ?", frameID)

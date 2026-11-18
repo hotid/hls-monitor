@@ -1,8 +1,12 @@
 {
   "addAPlaylistURLChecksStart": "Add a playlist URL — checks start right away.",
+  "andMore": "and {n} more",
   "checksOfStreamResumed": "Checks of stream “{name}” resumed",
   "checksOfStreamStopped": "Checks of stream “{name}” stopped",
   "findByNameOrURL": "Find by name or URL",
   "lastCheck": "Last check",
-  "streamWillBeDeletedTogetherWith": "Stream “{name}” will be deleted together with its history: metrics, incidents and the segment journal. This cannot be undone."
+  "mbit": "Mbit/s",
+  "picture": "Picture",
+  "streamWillBeDeletedTogetherWith": "Stream “{name}” will be deleted together with its history: metrics, incidents and the segment journal. This cannot be undone.",
+  "why": "What is wrong"
 }

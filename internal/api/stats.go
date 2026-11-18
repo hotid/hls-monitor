@@ -337,6 +337,11 @@ var aggregates = []struct{ id, expr string }{
 	{"check_traffic", `sum(sum_over_time(hls_check_bytes[%[1]ds])) * 8 / %[1]d`},
 	{"bitrate_avg", `avg(max by (stream) (avg_over_time(hls_segment_bitrate_bps[%[1]ds])))`},
 	{"stale_max", `max(max_over_time(hls_playlist_stale_seconds[%[1]ds]))`},
+	// What the server itself uses: the process, and the whole container
+	// with the programs it runs.
+	{"self_cpu", `avg(avg_over_time(hlsmon_self_cpu_cores[%[1]ds]))`},
+	{"self_cpu_all", `avg(avg_over_time(hlsmon_self_cpu_all_cores[%[1]ds]))`},
+	{"self_memory", `avg(avg_over_time(hlsmon_self_memory_bytes[%[1]ds]))`},
 	{"check_lag_max", `max(max_over_time(hls_check_lag_seconds[%[1]ds]))`},
 	{"check_duration_p95", `quantile(0.95, avg_over_time(hls_check_duration_seconds[%[1]ds]))`},
 }

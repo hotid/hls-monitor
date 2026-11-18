@@ -151,6 +151,18 @@ const summaryCharts: SummaryChart[] = [
     id: 'source-changes', title: t('common.answeringServerChanges'), hint: t('dashboard.howManyTimesAPlaylistCame'), unit: 'count', steps: true, zeroFill: true,
     series: [{ id: 'source_changes', label: t('dashboard.changesPerStep') }],
   },
+  // What the monitor itself costs.
+  {
+    id: 'self-cpu', title: t('dashboard.selfCPU'), hint: t('dashboard.selfCPUHint'), unit: 'count',
+    series: [
+      { id: 'self_cpu', label: t('dashboard.selfCPUProcess') },
+      { id: 'self_cpu_all', label: t('dashboard.selfCPUAll') },
+    ],
+  },
+  {
+    id: 'self-memory', title: t('dashboard.selfMemory'), hint: t('dashboard.selfMemoryHint'), unit: 'bytes',
+    series: [{ id: 'self_memory', label: t('dashboard.selfMemoryUsed') }],
+  },
 ]
 
 function lines(c: SummaryChart): ChartLine[] {

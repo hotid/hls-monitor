@@ -1178,6 +1178,17 @@ func TestSlates(t *testing.T) {
 		t.Fatalf("the checks know %+v", known)
 	}
 	with := slatesRevision(known)
+	// One picture can be forgotten by itself; the slate goes with its last.
+	viewer.want(http.StatusForbidden, "DELETE", fmt.Sprintf("/api/v1/slates/frames/%d", list[0].Frames[0].ID), nil, nil)
+	admin.want(http.StatusNoContent, "DELETE", fmt.Sprintf("/api/v1/slates/frames/%d", list[0].Frames[0].ID), nil, nil)
+	if known := e.srv.Slates(); len(known) != 1 || len(known[0].Frames) != 1 {
+		t.Fatalf("after one picture was forgotten the checks know %+v", known)
+	}
+	admin.want(http.StatusNoContent, "DELETE", fmt.Sprintf("/api/v1/slates/frames/%d", list[0].Frames[1].ID), nil, nil)
+	if known := e.srv.Slates(); len(known) != 0 {
+		t.Fatalf("the slate outlived its last picture: %+v", known)
+	}
+	admin.want(http.StatusOK, "POST", "/api/v1/slates", mark, &sl)
 	admin.want(http.StatusNoContent, "DELETE", fmt.Sprintf("/api/v1/slates/%d", sl.ID), nil, nil)
 	if len(e.srv.Slates()) != 0 || with == "" || slatesRevision(e.srv.Slates()) == with {
 		t.Errorf("after the slate was forgotten the checks know %+v", e.srv.Slates())

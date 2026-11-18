@@ -37,6 +37,9 @@ type streamView struct {
 	Status        string         `json:"status"`
 	Agents        []agentStatus  `json:"agents"`
 	OpenIncidents map[string]int `json:"open_incidents"`
+	// Picture says which look at the stream has a picture to show (see
+	// /api/v1/streams/{id}/picture); absent when it was never looked at.
+	Picture *store.PictureRef `json:"picture_ref,omitempty"`
 }
 
 // statusContext is what is needed to judge the state of streams.
@@ -45,6 +48,7 @@ type statusContext struct {
 	agents    map[int64]*store.Agent
 	states    map[int64]map[int64]*store.StreamState
 	incidents map[int64]map[string]int
+	pictures  map[int64]store.PictureRef
 }
 
 func (s *Server) agentOnline(a *store.Agent, now time.Time) bool {
@@ -76,6 +80,9 @@ func (s *Server) loadStatusContext(ctx context.Context) (*statusContext, error) 
 	if sc.incidents, err = s.st.OpenIncidentCounts(ctx); err != nil {
 		return nil, err
 	}
+	if sc.pictures, err = s.st.LatestPictures(ctx); err != nil {
+		return nil, err
+	}
 	return sc, nil
 }
 
@@ -98,6 +105,9 @@ func (s *Server) view(st *store.Stream, sc *statusContext, admin bool) *streamVi
 	v := &streamView{Stream: st, Status: statusNoData, Agents: []agentStatus{}, OpenIncidents: map[string]int{}}
 	if n := sc.incidents[st.ID]; n != nil {
 		v.OpenIncidents = n
+	}
+	if p, ok := sc.pictures[st.ID]; ok {
+		v.Picture = &p
 	}
 	if !admin && len(st.Headers) > 0 {
 		// Request headers often carry credentials.
