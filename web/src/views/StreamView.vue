@@ -406,7 +406,7 @@ function trackParams(tr: MediaTrack): string {
       </div>
       <div v-if="error" class="notice error">{{ error }}</div>
 
-      <StreamPictures :id="stream.id" />
+      <StreamPictures :id="stream.id" :name="stream.name" :incidents="incidents" />
 
       <div class="summary panel">
         <dl class="kv">
