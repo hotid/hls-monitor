@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/agentproto"
+	"github.com/hotid/hls-monitor/internal/picture"
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/runner"
 	"github.com/hotid/hls-monitor/internal/selfstat"
@@ -46,6 +47,10 @@ type Options struct {
 	KeyFile string
 	Version string
 	Log     *slog.Logger
+	// PictureEvery is how often the picture and the sound of a stream
+	// are looked at, zero not at all; FFmpeg the program to decode with.
+	PictureEvery time.Duration
+	FFmpeg       string
 	// QueueDir is where undelivered results are kept; "queue" next to the
 	// key file when empty. QueueBytes bounds its size, DefaultQueueBytes
 	// when zero: beyond it the oldest results are dropped.
@@ -137,6 +142,9 @@ func Run(ctx context.Context, opt Options) error {
 	defer a.run.Stop()
 	a.load = selfstat.Start(ctx)
 	a.run.SetOverloaded(a.load.Overloaded)
+	if d := picture.Setup(opt.PictureEvery, opt.FFmpeg, a.log); d != nil {
+		a.run.SetLooker(d, opt.PictureEvery)
+	}
 
 	sendDone := make(chan struct{})
 	sctx, stopSend := context.WithCancel(context.Background())

@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/hotid/hls-monitor/internal/agent"
 	"github.com/hotid/hls-monitor/internal/envflag"
@@ -35,6 +36,10 @@ func main() {
 	envflag.Int(fs, &bodyMemoryMB, "body-memory-mb", "HLSMON_BODY_MEMORY_MB", probe.DefaultBodyMemory>>20, "MiB of segment bodies the checks may hold in memory at once; downloads wait for room")
 	var privateNetworks string
 	envflag.String(fs, &privateNetworks, "private-networks", "HLSMON_PRIVATE_NETWORKS", "same", "whether checks may connect to addresses that are not public: same (only for streams whose own address is such), allow or deny")
+	var pictureCheck time.Duration
+	var ffmpeg string
+	envflag.Duration(fs, &pictureCheck, "picture-check", "HLSMON_PICTURE_CHECK", 0, "how often the picture and the sound of every stream are looked at, e.g. 5m; needs ffmpeg; 0 does not look")
+	envflag.String(fs, &ffmpeg, "ffmpeg", "HLSMON_FFMPEG", "ffmpeg", "the ffmpeg program to decode with, for picture-check")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	_ = fs.Parse(os.Args[1:])
 	if *showVersion {
@@ -57,7 +62,8 @@ func main() {
 		log.Error("fatal", "error", err)
 		os.Exit(1)
 	}
-	err := agent.Run(ctx, agent.Options{QueueDir: queueDir, QueueBytes: int64(queueMaxMB) << 20, ServerURL: serverURL, EnrollToken: token, KeyFile: keyFile, Version: version, Log: log})
+	err := agent.Run(ctx, agent.Options{QueueDir: queueDir, QueueBytes: int64(queueMaxMB) << 20, ServerURL: serverURL, EnrollToken: token, KeyFile: keyFile, Version: version, Log: log,
+		PictureEvery: pictureCheck, FFmpeg: ffmpeg})
 	if err != nil {
 		log.Error("fatal", "error", err)
 		os.Exit(1)

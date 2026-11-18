@@ -848,6 +848,46 @@
                 }
             }
         },
+        "/api/v1/incidents/{id}/picture": {
+            "get": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "description": "Kept for incidents found by looking at the picture: a black screen, a picture that stopped.",
+                "produces": [
+                    "image/jpeg"
+                ],
+                "tags": [
+                    "incidents"
+                ],
+                "summary": "The picture an incident was last seen on",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Incident ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/incidents/{id}/scope": {
             "get": {
                 "security": [
@@ -1458,6 +1498,91 @@
                         "description": "Not Found",
                         "schema": {
                             "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/picture": {
+            "get": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "produces": [
+                    "image/jpeg"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "The picture of the latest look at a stream",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Vantage point; the server's own by default",
+                        "name": "agent",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/pictures": {
+            "get": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "description": "One per vantage point: when the stream was looked at, how bright the picture was and how loud the sound. The picture itself is at /api/v1/streams/{id}/picture. Empty when the picture is not checked (see HLSMON_PICTURE_CHECK).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "The latest looks at a stream's picture and sound",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.StreamPicture"
+                            }
                         }
                     }
                 }
@@ -2600,6 +2725,41 @@
                 }
             }
         },
+        "github_com_hotid_hls-monitor_internal_probe.Picture": {
+            "type": "object",
+            "properties": {
+                "audio_db": {
+                    "type": "number"
+                },
+                "dark": {
+                    "type": "number"
+                },
+                "has_audio": {
+                    "description": "AudioDB is the level of the sound in decibels below full scale.",
+                    "type": "boolean"
+                },
+                "has_picture": {
+                    "description": "Luma is the mean brightness, 0 to 255; Dark the share of points\nthat are all but black.",
+                    "type": "boolean"
+                },
+                "jpeg": {
+                    "description": "JPEG is the picture, small; absent when the stream has none.",
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
+                "luma": {
+                    "type": "number"
+                },
+                "time": {
+                    "type": "string"
+                },
+                "variant": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_hotid_hls-monitor_internal_probe.Problem": {
             "type": "object",
             "properties": {
@@ -2638,6 +2798,14 @@
                 "overloaded": {
                     "description": "Overloaded names what the checking process itself was short of during\nthe cycle; empty when it kept up. Findings that rest on timing alone\nare left out of such a result: a monitor that cannot keep up measures\nits own delay, not the stream's.",
                     "type": "string"
+                },
+                "picture": {
+                    "description": "Picture is what a look at the stream found, in the cycles that looked.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Picture"
+                        }
+                    ]
                 },
                 "problems": {
                     "type": "array",
@@ -2833,6 +3001,10 @@
                 "max_segments": {
                     "description": "MaxSegments limits segment downloads per variant per cycle; zero means 3.",
                     "type": "integer"
+                },
+                "picture": {
+                    "description": "Picture says what the picture and the sound are checked for: all of\nit by default, PictureStatic when a picture that does not change is\nwhat the stream shows, PictureOff not to look at all.",
+                    "type": "string"
                 },
                 "revision": {
                     "description": "Revision changes whenever the configuration changes.",
@@ -3261,6 +3433,43 @@
                 },
                 "what": {
                     "description": "playlist or segment",
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.StreamPicture": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "integer"
+                },
+                "agent_name": {
+                    "type": "string"
+                },
+                "audio_db": {
+                    "type": "number"
+                },
+                "dark": {
+                    "type": "number"
+                },
+                "has_audio": {
+                    "description": "AudioDB is the level of the sound in decibels below full scale.",
+                    "type": "boolean"
+                },
+                "has_picture": {
+                    "description": "HasPicture tells that there was a picture to look at; Luma is its\nmean brightness, 0 to 255, Dark the share of points all but black.",
+                    "type": "boolean"
+                },
+                "luma": {
+                    "type": "number"
+                },
+                "stream_id": {
+                    "type": "integer"
+                },
+                "time": {
+                    "type": "string"
+                },
+                "variant": {
                     "type": "string"
                 }
             }
@@ -4046,6 +4255,10 @@
                         "type": "integer"
                     }
                 },
+                "picture": {
+                    "description": "Picture is what the picture and the sound are checked for: \"\" for\neverything, \"static\" when a still picture is what the stream shows,\n\"off\" not to look.",
+                    "type": "string"
+                },
                 "revision": {
                     "type": "integer"
                 },
@@ -4122,6 +4335,10 @@
                 "notes": {
                     "type": "string"
                 },
+                "picture": {
+                    "description": "Picture: \"\" to check the picture and the sound, \"static\" when a\nstill picture is what the stream shows, \"off\" not to look.",
+                    "type": "string"
+                },
                 "timeout_sec": {
                     "type": "number"
                 },
@@ -4183,6 +4400,10 @@
                     "additionalProperties": {
                         "type": "integer"
                     }
+                },
+                "picture": {
+                    "description": "Picture is what the picture and the sound are checked for: \"\" for\neverything, \"static\" when a still picture is what the stream shows,\n\"off\" not to look.",
+                    "type": "string"
                 },
                 "revision": {
                     "type": "integer"

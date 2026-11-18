@@ -141,6 +141,8 @@ func (s *Server) routes(ui http.Handler) {
 	user.GET("/servers", s.servers)
 	user.GET("/servers/network", s.serversNetwork)
 	user.GET("/streams/:id/sources", s.streamSources)
+	user.GET("/streams/:id/pictures", s.streamPictures)
+	user.GET("/streams/:id/picture", s.streamPicture)
 	user.GET("/streams", s.listStreams)
 	user.GET("/streams/:id", s.getStream)
 	user.GET("/streams/:id/diagnose", s.diagnose)
@@ -152,6 +154,7 @@ func (s *Server) routes(ui http.Handler) {
 	user.GET("/snapshots/:id", s.getSnapshot)
 	user.GET("/incidents", s.listIncidents)
 	user.GET("/incidents/:id/scope", s.incidentScope)
+	user.GET("/incidents/:id/picture", s.incidentPicture)
 	user.GET("/server-incidents", s.listServerIncidents)
 	user.GET("/agents", s.listAgents)
 

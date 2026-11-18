@@ -23,6 +23,7 @@ const form = reactive({
   timeout_sec: props.stream?.timeout_sec ?? 0,
   max_segments: props.stream?.max_segments ?? 0,
   insecure: props.stream?.insecure ?? false,
+  picture: props.stream?.picture ?? '',
   notes: props.stream?.notes ?? '',
   agent_ids: [...(props.stream?.agent_ids ?? [1])],
   headers: Object.entries(props.stream?.headers ?? {})
@@ -60,6 +61,7 @@ async function save() {
     timeout_sec: Number(form.timeout_sec) || 0,
     max_segments: Number(form.max_segments) || 0,
     insecure: form.insecure,
+    picture: form.picture,
     notes: form.notes,
     agent_ids: form.agent_ids,
     headers,
@@ -109,6 +111,15 @@ async function save() {
             <template v-else-if="form.level === 'segments'">{{ t('streamForm.levelSegmentsHelp') }}</template>
             <template v-else>{{ t('streamForm.levelContainerHelp') }}</template>
           </span>
+        </div>
+        <div class="field">
+          <label for="sf-picture">{{ t('streamForm.pictureAndSound') }}</label>
+          <select id="sf-picture" v-model="form.picture" class="input" :disabled="form.level === 'playlist'">
+            <option value="">{{ t('streamForm.pictureCheck') }}</option>
+            <option value="static">{{ t('streamForm.pictureStatic') }}</option>
+            <option value="off">{{ t('streamForm.pictureOff') }}</option>
+          </select>
+          <span class="help">{{ t('streamForm.pictureHelp') }}</span>
         </div>
         <div class="field">
           <span class="label">{{ t('streamForm.whereToCheckFrom') }}</span>

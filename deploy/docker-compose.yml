@@ -48,6 +48,9 @@ services:
       HLSMON_SNAPSHOT_RETENTION: ${HLSMON_SNAPSHOT_RETENTION:-}
       HLSMON_INCIDENT_RETENTION: ${HLSMON_INCIDENT_RETENTION:-}
       HLSMON_EVENT_RETENTION: ${HLSMON_EVENT_RETENTION:-}
+      # How often the picture and the sound of every stream are looked at,
+      # e.g. 5m; empty does not look.
+      HLSMON_PICTURE_CHECK: ${HLSMON_PICTURE_CHECK:-}
     ports:
       # Ports published by Docker bypass the host's INPUT firewall rules, so
       # the port stays on the loopback until HLSMON_BIND opens it on purpose.
@@ -86,6 +89,7 @@ services:
     environment:
       HLSMON_SERVER_URL: http://server:4000
       HLSMON_ENROLL_TOKEN: ${HLSMON_ENROLL_TOKEN:-}
+      HLSMON_PICTURE_CHECK: ${HLSMON_PICTURE_CHECK:-}
     volumes:
       - agent-data:/var/lib/hls-monitor
 

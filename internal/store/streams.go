@@ -22,11 +22,15 @@ type Stream struct {
 	MaxSegments int               `json:"max_segments"`
 	Headers     map[string]string `json:"headers"`
 	Insecure    bool              `json:"insecure"`
-	Notes       string            `json:"notes"`
-	Revision    int64             `json:"revision"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
-	AgentIDs    []int64           `json:"agent_ids"`
+	// Picture is what the picture and the sound are checked for: "" for
+	// everything, "static" when a still picture is what the stream shows,
+	// "off" not to look.
+	Picture   string    `json:"picture"`
+	Notes     string    `json:"notes"`
+	Revision  int64     `json:"revision"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	AgentIDs  []int64   `json:"agent_ids"`
 }
 
 // StreamInput is what can be set when creating or editing a stream.
@@ -40,18 +44,19 @@ type StreamInput struct {
 	MaxSegments int
 	Headers     map[string]string
 	Insecure    bool
+	Picture     string
 	Notes       string
 	AgentIDs    []int64
 }
 
-const streamCols = "id, name, url, enabled, level, interval_sec, timeout_sec, max_segments, headers, insecure, notes, revision, created_at, updated_at"
+const streamCols = "id, name, url, enabled, level, interval_sec, timeout_sec, max_segments, headers, insecure, picture, notes, revision, created_at, updated_at"
 
 func scanStream(row interface{ Scan(...any) error }) (*Stream, error) {
 	var st Stream
 	var headers string
 	var created, updated int64
 	if err := row.Scan(&st.ID, &st.Name, &st.URL, &st.Enabled, &st.Level, &st.IntervalSec, &st.TimeoutSec, &st.MaxSegments,
-		&headers, &st.Insecure, &st.Notes, &st.Revision, &created, &updated); err != nil {
+		&headers, &st.Insecure, &st.Picture, &st.Notes, &st.Revision, &created, &updated); err != nil {
 		return nil, notFound(err)
 	}
 	st.Headers = map[string]string{}
@@ -106,10 +111,10 @@ func (s *Store) CreateStream(ctx context.Context, in StreamInput, now time.Time)
 	var id int64
 	err := s.Tx(ctx, func(tx *Tx) error {
 		res, err := tx.q.ExecContext(ctx, `
-			INSERT INTO streams (id, name, url, enabled, level, interval_sec, timeout_sec, max_segments, headers, insecure, notes, created_at, updated_at)
-			VALUES (`+nextID("streams", "stream")+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			INSERT INTO streams (id, name, url, enabled, level, interval_sec, timeout_sec, max_segments, headers, insecure, picture, notes, created_at, updated_at)
+			VALUES (`+nextID("streams", "stream")+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			in.Name, in.URL, in.Enabled, in.Level, in.IntervalSec, in.TimeoutSec, in.MaxSegments,
-			headersJSON(in.Headers), in.Insecure, in.Notes, toMs(now), toMs(now))
+			headersJSON(in.Headers), in.Insecure, in.Picture, in.Notes, toMs(now), toMs(now))
 		if err != nil {
 			return err
 		}
@@ -127,10 +132,10 @@ func (s *Store) UpdateStream(ctx context.Context, id int64, in StreamInput, now 
 	err := s.Tx(ctx, func(tx *Tx) error {
 		err := affected(tx.q.ExecContext(ctx, `
 			UPDATE streams SET name = ?, url = ?, enabled = ?, level = ?, interval_sec = ?, timeout_sec = ?, max_segments = ?,
-				headers = ?, insecure = ?, notes = ?, revision = revision + 1, updated_at = ?
+				headers = ?, insecure = ?, picture = ?, notes = ?, revision = revision + 1, updated_at = ?
 			WHERE id = ?`,
 			in.Name, in.URL, in.Enabled, in.Level, in.IntervalSec, in.TimeoutSec, in.MaxSegments,
-			headersJSON(in.Headers), in.Insecure, in.Notes, toMs(now), id))
+			headersJSON(in.Headers), in.Insecure, in.Picture, in.Notes, toMs(now), id))
 		if err != nil {
 			return err
 		}
@@ -324,6 +329,7 @@ func (s *Store) TargetsForAgent(ctx context.Context, agentID int64) ([]probe.Tar
 			MaxSegments: st.MaxSegments,
 			Headers:     st.Headers,
 			Insecure:    st.Insecure,
+			Picture:     st.Picture,
 			Revision:    st.Revision,
 		})
 	}

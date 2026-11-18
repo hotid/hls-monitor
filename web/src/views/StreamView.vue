@@ -12,6 +12,7 @@ import { useToasts } from '@/stores/toasts'
 import { t } from '@/i18n'
 import type { Endpoint, Incident, MediaTrack, SegmentRecord, SeriesResponse, Snapshot, SourceSeen, StreamDetail, Variant } from '@/types'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import StreamPictures from '@/components/StreamPictures.vue'
 import FilterEmpty from '@/components/FilterEmpty.vue'
 import IncidentTable from '@/components/IncidentTable.vue'
 import PlaylistPair from '@/components/PlaylistPair.vue'
@@ -404,6 +405,8 @@ function trackParams(tr: MediaTrack): string {
         </template>
       </div>
       <div v-if="error" class="notice error">{{ error }}</div>
+
+      <StreamPictures :id="stream.id" />
 
       <div class="summary panel">
         <dl class="kv">

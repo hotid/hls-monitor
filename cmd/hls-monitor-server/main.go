@@ -22,6 +22,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/envflag"
 	"github.com/hotid/hls-monitor/internal/ingest"
 	"github.com/hotid/hls-monitor/internal/metrics"
+	"github.com/hotid/hls-monitor/internal/picture"
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/runner"
 	"github.com/hotid/hls-monitor/internal/selfstat"
@@ -50,6 +51,8 @@ type config struct {
 	segmentKeep, segmentKeepProblems, journalMaxMB int
 	bodyMemoryMB, metricsQueueMB                   int
 	privateNetworks                                string
+	pictureCheck                                   time.Duration
+	ffmpeg                                         string
 	snapshotRetention                              time.Duration
 	incidentRetention                              time.Duration
 }
@@ -76,6 +79,8 @@ func parseConfig() config {
 	envflag.Int(fs, &c.metricsQueueMB, "metrics-queue-max-mb", "HLSMON_METRICS_QUEUE_MAX_MB", metrics.DefaultQueueBytes>>20, "MiB of disk for samples VictoriaMetrics has not taken yet, kept next to the database; beyond it the oldest are dropped")
 	envflag.Int(fs, &c.bodyMemoryMB, "body-memory-mb", "HLSMON_BODY_MEMORY_MB", probe.DefaultBodyMemory>>20, "MiB of segment bodies the local checks may hold in memory at once; downloads wait for room")
 	envflag.String(fs, &c.privateNetworks, "private-networks", "HLSMON_PRIVATE_NETWORKS", "same", "whether local checks may connect to addresses that are not public: same (only for streams whose own address is such), allow or deny")
+	envflag.Duration(fs, &c.pictureCheck, "picture-check", "HLSMON_PICTURE_CHECK", 0, "how often the picture and the sound of every stream are looked at, e.g. 5m: a black screen, a picture that stopped, silence; needs ffmpeg; 0 does not look")
+	envflag.String(fs, &c.ffmpeg, "ffmpeg", "HLSMON_FFMPEG", "ffmpeg", "the ffmpeg program to decode with, for picture-check")
 	envflag.Duration(fs, &c.eventRetention, "event-retention", "HLSMON_EVENT_RETENTION", 7*24*time.Hour, "how long closed informational incidents are kept")
 	envflag.Duration(fs, &c.snapshotRetention, "snapshot-retention", "HLSMON_SNAPSHOT_RETENTION", 7*24*time.Hour, "how long playlist snapshots are kept")
 	envflag.Duration(fs, &c.incidentRetention, "incident-retention", "HLSMON_INCIDENT_RETENTION", 90*24*time.Hour, "how long closed incidents are kept")
@@ -166,6 +171,9 @@ func run(cfg config, log *slog.Logger) error {
 	}, "hls-monitor/"+version, log)
 	load := selfstat.Start(bg)
 	local.SetOverloaded(load.Overloaded)
+	if d := picture.Setup(cfg.pictureCheck, cfg.ffmpeg, log); d != nil {
+		local.SetLooker(d, cfg.pictureCheck)
+	}
 
 	var proxies []string
 	for _, p := range strings.Split(cfg.trustedProxies, ",") {

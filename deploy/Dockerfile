@@ -29,7 +29,9 @@ RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/hls-m
 FROM alpine:3.24.4 AS base
 # The data directory is created and owned here so that a named volume
 # mounted over it starts out writable by the unprivileged user.
-RUN apk add --no-cache ca-certificates tzdata \
+# ffmpeg is there for the look at the picture and the sound of the streams
+# (HLSMON_PICTURE_CHECK); nothing runs it until that is turned on.
+RUN apk add --no-cache ca-certificates tzdata ffmpeg \
  && addgroup -S hlsmon && adduser -S -G hlsmon -H hlsmon \
  && mkdir -p /var/lib/hls-monitor && chown hlsmon:hlsmon /var/lib/hls-monitor
 VOLUME /var/lib/hls-monitor

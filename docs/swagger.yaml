@@ -362,6 +362,32 @@ definitions:
       x:
         type: number
     type: object
+  github_com_hotid_hls-monitor_internal_probe.Picture:
+    properties:
+      audio_db:
+        type: number
+      dark:
+        type: number
+      has_audio:
+        description: AudioDB is the level of the sound in decibels below full scale.
+        type: boolean
+      has_picture:
+        description: |-
+          Luma is the mean brightness, 0 to 255; Dark the share of points
+          that are all but black.
+        type: boolean
+      jpeg:
+        description: JPEG is the picture, small; absent when the stream has none.
+        items:
+          type: integer
+        type: array
+      luma:
+        type: number
+      time:
+        type: string
+      variant:
+        type: string
+    type: object
   github_com_hotid_hls-monitor_internal_probe.Problem:
     properties:
       count:
@@ -396,6 +422,11 @@ definitions:
           are left out of such a result: a monitor that cannot keep up measures
           its own delay, not the stream's.
         type: string
+      picture:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Picture'
+        description: Picture is what a look at the stream found, in the cycles that
+          looked.
       problems:
         items:
           $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Problem'
@@ -534,6 +565,12 @@ definitions:
         description: MaxSegments limits segment downloads per variant per cycle; zero
           means 3.
         type: integer
+      picture:
+        description: |-
+          Picture says what the picture and the sound are checked for: all of
+          it by default, PictureStatic when a picture that does not change is
+          what the stream shows, PictureOff not to look at all.
+        type: string
       revision:
         description: Revision changes whenever the configuration changes.
         type: integer
@@ -861,6 +898,33 @@ definitions:
         type: integer
       what:
         description: playlist or segment
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_store.StreamPicture:
+    properties:
+      agent_id:
+        type: integer
+      agent_name:
+        type: string
+      audio_db:
+        type: number
+      dark:
+        type: number
+      has_audio:
+        description: AudioDB is the level of the sound in decibels below full scale.
+        type: boolean
+      has_picture:
+        description: |-
+          HasPicture tells that there was a picture to look at; Luma is its
+          mean brightness, 0 to 255, Dark the share of points all but black.
+        type: boolean
+      luma:
+        type: number
+      stream_id:
+        type: integer
+      time:
+        type: string
+      variant:
         type: string
     type: object
   github_com_hotid_hls-monitor_internal_store.Usage:
@@ -1412,6 +1476,12 @@ definitions:
         additionalProperties:
           type: integer
         type: object
+      picture:
+        description: |-
+          Picture is what the picture and the sound are checked for: "" for
+          everything, "static" when a still picture is what the stream shows,
+          "off" not to look.
+        type: string
       revision:
         type: integer
       status:
@@ -1463,6 +1533,11 @@ definitions:
         type: string
       notes:
         type: string
+      picture:
+        description: |-
+          Picture: "" to check the picture and the sound, "static" when a
+          still picture is what the stream shows, "off" not to look.
+        type: string
       timeout_sec:
         type: number
       url:
@@ -1504,6 +1579,12 @@ definitions:
         additionalProperties:
           type: integer
         type: object
+      picture:
+        description: |-
+          Picture is what the picture and the sound are checked for: "" for
+          everything, "static" when a still picture is what the stream shows,
+          "off" not to look.
+        type: string
       revision:
         type: integer
       status:
@@ -2252,6 +2333,31 @@ paths:
       summary: Incidents, open ones first
       tags:
       - incidents
+  /api/v1/incidents/{id}/picture:
+    get:
+      description: 'Kept for incidents found by looking at the picture: a black screen,
+        a picture that stopped.'
+      parameters:
+      - description: Incident ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - image/jpeg
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: The picture an incident was last seen on
+      tags:
+      - incidents
   /api/v1/incidents/{id}/scope:
     get:
       description: Which vantage points saw the same problem, and which other streams
@@ -2663,6 +2769,59 @@ paths:
           schema:
             $ref: '#/definitions/internal_api.apiError'
       summary: Resume checking a stream
+      tags:
+      - streams
+  /api/v1/streams/{id}/picture:
+    get:
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: Vantage point; the server's own by default
+        in: query
+        name: agent
+        type: integer
+      produces:
+      - image/jpeg
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: The picture of the latest look at a stream
+      tags:
+      - streams
+  /api/v1/streams/{id}/pictures:
+    get:
+      description: 'One per vantage point: when the stream was looked at, how bright
+        the picture was and how loud the sound. The picture itself is at /api/v1/streams/{id}/picture.
+        Empty when the picture is not checked (see HLSMON_PICTURE_CHECK).'
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.StreamPicture'
+            type: array
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: The latest looks at a stream's picture and sound
       tags:
       - streams
   /api/v1/streams/{id}/segments:

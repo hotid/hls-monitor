@@ -155,8 +155,11 @@ type streamRequest struct {
 	MaxSegments int               `json:"max_segments"`
 	Headers     map[string]string `json:"headers"`
 	Insecure    bool              `json:"insecure"`
-	Notes       string            `json:"notes"`
-	AgentIDs    []int64           `json:"agent_ids"`
+	// Picture: "" to check the picture and the sound, "static" when a
+	// still picture is what the stream shows, "off" not to look.
+	Picture  string  `json:"picture"`
+	Notes    string  `json:"notes"`
+	AgentIDs []int64 `json:"agent_ids"`
 }
 
 func (r *streamRequest) input() (store.StreamInput, string) {
@@ -170,6 +173,7 @@ func (r *streamRequest) input() (store.StreamInput, string) {
 		MaxSegments: r.MaxSegments,
 		Headers:     map[string]string{},
 		Insecure:    r.Insecure,
+		Picture:     r.Picture,
 		Notes:       strings.TrimSpace(r.Notes),
 		AgentIDs:    r.AgentIDs,
 	}
@@ -184,6 +188,8 @@ func (r *streamRequest) input() (store.StreamInput, string) {
 		return in, "name must be 1 to 100 characters long"
 	case !probe.ValidLevel(probe.Level(in.Level)):
 		return in, "level must be one of: playlist, header, segments, container"
+	case !probe.ValidPicture(in.Picture):
+		return in, "picture must be empty, static or off"
 	case in.IntervalSec != 0 && (in.IntervalSec < 1 || in.IntervalSec > 3600):
 		return in, "interval_sec must be 0 (automatic) or between 1 and 3600"
 	case in.TimeoutSec != 0 && (in.TimeoutSec < 1 || in.TimeoutSec > 120):

@@ -63,6 +63,9 @@ export const problemTitle = perLocale((): Record<string, string> => ({
   duration_mismatch: t('catalog.durationDoesNotMatchThePlaylist'),
   pts_discontinuity: t('catalog.timestampGap'),
   av_desync: t('catalog.audioVideoDesync'),
+  picture_black: t('catalog.pictureBlack'),
+  picture_frozen: t('catalog.pictureFrozen'),
+  audio_silent: t('catalog.audioSilent'),
   media_params_changed: t('catalog.videoParametersChanged'),
   playlist_source_changed: t('catalog.playlistServedByADifferentServer'),
   segment_source_changed: t('catalog.segmentsServedByADifferentServer'),
@@ -269,6 +272,16 @@ export const chartGroups = perLocale((): ChartGroup[] => [
   {
     title: t('catalog.media'),
     charts: [
+      {
+        id: 'picture-luma', title: t('catalog.pictureBrightness'), hint: t('catalog.pictureBrightnessHint'), unit: 'count', agg: 'avg', levels: ['header', 'segments', 'container'],
+        emptyHint: t('catalog.pictureNotChecked'),
+        series: [{ metric: 'hls_picture_luma', label: t('catalog.brightness') }],
+      },
+      {
+        id: 'audio-level', title: t('catalog.soundLevel'), hint: t('catalog.soundLevelHint'), unit: 'count', agg: 'avg', levels: ['header', 'segments', 'container'],
+        emptyHint: t('catalog.pictureNotChecked'),
+        series: [{ metric: 'hls_audio_level_db', label: t('catalog.levelDB') }],
+      },
       {
         id: 'bitrate', title: t('catalog.segmentBitrate'), hint: t('catalog.segmentSizeDividedByDuration'), unit: 'bps', agg: 'avg', levels: ['header', 'segments', 'container'],
         series: [{ metric: 'hls_segment_bitrate_bps', label: t('common.bitrate') }],

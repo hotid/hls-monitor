@@ -96,6 +96,8 @@ export interface Stream {
   max_segments: number
   headers: Record<string, string>
   insecure: boolean
+  /** What the picture and the sound are checked for: '' everything, 'static' a still picture is normal, 'off' nothing. */
+  picture: '' | 'static' | 'off'
   notes: string
   revision: number
   created_at: string
@@ -223,6 +225,20 @@ export interface Incident {
   active: boolean
   /** The figures the incident was concluded from; absent for old incidents. */
   details?: Record<string, unknown>
+}
+
+/** The latest look at a stream's picture and sound from one vantage point. */
+export interface StreamPicture {
+  stream_id: number
+  agent_id: number
+  agent_name: string
+  time: string
+  variant: string
+  has_picture: boolean
+  luma: number
+  dark: number
+  has_audio: boolean
+  audio_db: number
 }
 
 /** Something wrong with a server rather than with one stream. */

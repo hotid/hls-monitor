@@ -32,6 +32,9 @@ type Runner struct {
 
 	// overloaded is given to every checker; see SetOverloaded.
 	overloaded func(since time.Time) string
+	// looker and lookEvery are given to every checker; see SetLooker.
+	looker    probe.Looker
+	lookEvery time.Duration
 
 	mu   sync.Mutex
 	jobs map[int64]*job
@@ -107,6 +110,10 @@ func (r *Runner) Stats() Stats {
 // could not keep up (see probe.Checker.Overloaded). Call it before Sync.
 func (r *Runner) SetOverloaded(f func(since time.Time) string) { r.overloaded = f }
 
+// SetLooker gives the checkers the means to look at the picture of a
+// stream and listen to its sound, once in every period. Call it before Sync.
+func (r *Runner) SetLooker(l probe.Looker, every time.Duration) { r.looker, r.lookEvery = l, every }
+
 func (r *Runner) checker(t probe.Target) *probe.Checker {
 	hc := r.secure
 	if t.Insecure {
@@ -114,6 +121,9 @@ func (r *Runner) checker(t probe.Target) *probe.Checker {
 	}
 	c := probe.New(t, hc)
 	c.Overloaded = r.overloaded
+	if r.looker != nil && r.lookEvery > 0 {
+		c.Looker, c.PictureEvery = r.looker, r.lookEvery
+	}
 	return c
 }
 

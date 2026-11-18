@@ -28,6 +28,12 @@ const (
 	PictureOff    = "off"    // not looked at
 )
 
+// PictureProblem reports whether a problem is found by looking at the
+// picture or listening to the sound.
+func PictureProblem(kind string) bool {
+	return kind == ProbPictureBlack || kind == ProbPictureFrozen || kind == ProbAudioSilent
+}
+
 // ValidPicture reports whether p is one of the settings above.
 func ValidPicture(p string) bool {
 	return p == PictureCheck || p == PictureStatic || p == PictureOff

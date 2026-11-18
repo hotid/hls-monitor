@@ -268,6 +268,23 @@ func (in *Ingester) apply(ctx context.Context, agentID int64, r *probe.Result) e
 				return err
 			}
 		}
+		// A look at the stream: the latest one is kept to be shown, and
+		// the picture stays with the incidents it is the evidence of.
+		if p := r.Picture; p != nil {
+			if err := tx.SavePicture(ctx, store.StreamPicture{StreamID: r.TargetID, AgentID: agentID, Time: p.Time, Variant: p.Variant,
+				HasPicture: p.HasPicture, Luma: p.Luma, Dark: p.Dark, HasAudio: p.HasAudio, AudioDB: p.AudioDB, JPEG: p.JPEG}); err != nil {
+				return err
+			}
+			var seen []string
+			for _, pr := range r.Problems {
+				if probe.PictureProblem(pr.Kind) {
+					seen = append(seen, pr.Kind)
+				}
+			}
+			if err := tx.SaveIncidentPictures(ctx, r.TargetID, agentID, seen, p.Time, p.JPEG); err != nil {
+				return err
+			}
+		}
 		for _, sn := range r.Snapshots {
 			if len(began[sn.Variant]) == 0 {
 				continue
