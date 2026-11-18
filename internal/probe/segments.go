@@ -112,6 +112,9 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 		rq := httpx.Request{URL: u, MaxBody: segmentMaxBody, RangeOffset: s.seg.Offset, RangeLength: s.seg.Limit}
 		// One segment of a cycle that is due is also looked at.
 		look := !s.encrypted && c.wantsLook(v)
+		// And one of a playlist of sound alone is listened to, where the
+		// look found the picture without its sound.
+		listen := !s.encrypted && !look && c.wantsListen(v)
 		if header {
 			// A server that ignores Range answers with the whole segment;
 			// MaxBody then stops the download at the same point. A look
@@ -119,6 +122,8 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 			// first keyframe and a moment of sound.
 			head := int64(headerBytes)
 			if look {
+				head = c.lookSize()
+			} else if listen {
 				head = lookBytes
 			}
 			rq.MaxBody = head
@@ -256,6 +261,9 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 		}
 		if look && err == nil && resp != nil && resp.OK() {
 			c.look(ctx, cy, v, resp.Body, st.initRaw, info, c.now())
+		}
+		if listen && err == nil && resp != nil && resp.OK() {
+			c.listen(ctx, cy, v, resp.Body, st.initRaw, info, c.now())
 		}
 		emit()
 	}

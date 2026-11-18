@@ -80,6 +80,9 @@ type Frame struct {
 	ChannelDB []float64 `json:"channel_db,omitempty"`
 	// AudioError is what the decoder said when no sound came out.
 	AudioError string `json:"-"`
+	// NoSound tells that the data has no sound in it at all: the stream
+	// keeps it somewhere else, in a playlist of its own.
+	NoSound bool `json:"-"`
 }
 
 // CellCols and CellRows are the size of Frame.Cells.
@@ -258,7 +261,7 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 		pcm, channels = readWAV(sound)
 	}
 
-	f := &Frame{}
+	f := &Frame{NoSound: apart && len(shot) > 0}
 	if img := readPPM(shot); img != nil {
 		f.HasPicture = true
 		f.Width, f.Height = img.Bounds().Dx(), img.Bounds().Dy()
@@ -269,17 +272,7 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 			f.JPEG = out.Bytes()
 		}
 	}
-	if heard() {
-		f.HasAudio = true
-		f.AudioDB = Silent
-		for ch := range channels {
-			db := level(pcm, ch, channels)
-			f.ChannelDB = append(f.ChannelDB, db)
-			f.AudioDB = max(f.AudioDB, db)
-		}
-	} else if msg := strings.TrimSpace(audioErr); msg != "" && !refusedOutput(msg) {
-		f.AudioError = firstLine(msg)
-	}
+	f.hear(sound, audioErr)
 	if !f.HasPicture && !f.HasAudio {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("the decoder did not finish in %s", d.timeout)
@@ -288,6 +281,54 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 			return nil, fmt.Errorf("%w: %s", ErrNothing, firstLine(msg))
 		}
 		if runErr != nil {
+			return nil, fmt.Errorf("%w: %v", ErrNothing, runErr)
+		}
+		return nil, ErrNothing
+	}
+	return f, nil
+}
+
+// hear measures the sound that came out of the decoder, if enough did.
+func (f *Frame) hear(sound []byte, errText string) {
+	pcm, channels := readWAV(sound)
+	if channels == 0 || len(pcm)/2/channels < audioRate/10 {
+		if msg := strings.TrimSpace(errText); msg != "" && !refusedOutput(msg) {
+			f.AudioError = firstLine(msg)
+		}
+		return
+	}
+	f.HasAudio = true
+	f.AudioDB = Silent
+	for ch := range channels {
+		db := level(pcm, ch, channels)
+		f.ChannelDB = append(f.ChannelDB, db)
+		f.AudioDB = max(f.AudioDB, db)
+	}
+}
+
+// Listen is Sample for a segment that is sound alone: the first seconds
+// of it, and no picture asked for.
+func (d *Decoder) Listen(ctx context.Context, data []byte) (*Frame, error) {
+	if err := d.Available(); err != nil {
+		return nil, err
+	}
+	select {
+	case d.slots <- struct{}{}:
+		defer func() { <-d.slots }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	ctx, cancel := context.WithTimeout(ctx, d.timeout)
+	defer cancel()
+	_, sound, errText, runErr := d.decode(ctx, data, false, true, true)
+	f := &Frame{}
+	if f.hear(sound, errText); !f.HasAudio {
+		switch {
+		case ctx.Err() != nil:
+			return nil, fmt.Errorf("the decoder did not finish in %s", d.timeout)
+		case f.AudioError != "":
+			return nil, fmt.Errorf("%w: %s", ErrNothing, f.AudioError)
+		case runErr != nil:
 			return nil, fmt.Errorf("%w: %v", ErrNothing, runErr)
 		}
 		return nil, ErrNothing

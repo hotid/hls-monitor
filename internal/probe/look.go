@@ -18,6 +18,8 @@ import (
 // Looker decodes a picture and some sound out of a segment.
 type Looker interface {
 	Sample(ctx context.Context, data []byte) (*picture.Frame, error)
+	// Listen is Sample for a segment that is sound alone.
+	Listen(ctx context.Context, data []byte) (*picture.Frame, error)
 	// Busy tells that a look asked for now would have to wait.
 	Busy() bool
 }
@@ -98,6 +100,10 @@ const (
 	// as headerBytes is: a packet cut in two reads as a loss of
 	// synchronisation.
 	lookBytes = 188 * 2800
+	// lookBytesMore is how much is fetched of a stream whose segments
+	// begin with less than a moment of sound in lookBytes: one of many
+	// megabits a second.
+	lookBytesMore = 4 * lookBytes
 	// lookAgain is how soon a look is repeated after one that found
 	// something: a dark scene and a pause are over in a moment, a fault
 	// is not. lookRuns such looks in a row, over at least lookSpan, make
@@ -200,6 +206,16 @@ type looks struct {
 	// problems stand from one look to the next: a look is rare, and an
 	// incident ends when its problem is not reported.
 	problems []standingProblem
+	// soundProblems are those of the sound, which a stream may keep in a
+	// playlist of its own, listened to apart from the look.
+	soundProblems []standingProblem
+	// listen is set by a look that found the picture and no sound in the
+	// data: a segment of a playlist of sound is listened to next. shown
+	// is the look that is shown, for the sound to be added to.
+	listen bool
+	shown  *Picture
+	// more tells to fetch more of a segment for a look.
+	more bool
 }
 
 type standingProblem struct {
@@ -215,7 +231,7 @@ func (c *Checker) beginLook(start time.Time) {
 	l := &c.looks
 	l.due, l.taken = false, false
 	if c.Looker == nil || c.PictureEvery <= 0 || c.t.Picture == PictureOff || c.t.Level == LevelPlaylist {
-		l.problems = nil
+		l.problems, l.soundProblems = nil, nil
 		return
 	}
 	if l.at.IsZero() {
@@ -292,8 +308,9 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 	}
 	l.at = at
 	l.nothing = run{}
-	cy.picture(&Picture{Variant: v.Key, Time: at, JPEG: f.JPEG, Cells: f.Cells, HasPicture: f.HasPicture, Luma: round1(f.Luma), Dark: round3(f.Dark),
-		HasAudio: f.HasAudio, AudioDB: round1(f.AudioDB)})
+	l.shown = &Picture{Variant: v.Key, Time: at, JPEG: f.JPEG, Cells: f.Cells, HasPicture: f.HasPicture, Luma: round1(f.Luma), Dark: round3(f.Dark),
+		HasAudio: f.HasAudio, AudioDB: round1(f.AudioDB)}
+	cy.picture(l.shown)
 
 	l.problems = nil
 	tell := func(severity, kind, message string, details ...any) {
@@ -343,12 +360,43 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 				"since", l.same.since.UTC().Format(time.RFC3339))
 		}
 	}
+	// The sound is in the same segment — or, where the stream keeps it in
+	// a playlist of its own, in a segment of that one, listened to next.
+	audio := audioOf(info)
+	if f.NoSound {
+		l.listen = true
+	} else {
+		suspect = c.hear(cy, v, f, audio, at) || suspect
+		// The beginning of a segment of many megabits has the picture and
+		// next to none of the sound: more of it is asked for from now on.
+		if f.HasPicture && !f.HasAudio && info != nil && (audio == nil || audio.Frames < heardFrames) {
+			l.more = true
+		}
+	}
+	switch {
+	case len(l.problems)+len(l.soundProblems) > 0:
+		l.at = at.Add(min(lookStanding, c.PictureEvery) - c.PictureEvery)
+	case suspect:
+		// Look again soon: what it is shows in a minute, not in five.
+		l.at = at.Add(min(lookAgain, c.PictureEvery) - c.PictureEvery)
+	}
+}
+
+// hear judges the sound a look or a listen found. It tells whether the
+// stream is to be listened to again soon. The caller holds the lock.
+func (c *Checker) hear(cy *cycle, v Variant, f *picture.Frame, audio *media.Track, at time.Time) (suspect bool) {
+	l := &c.looks
+	l.soundProblems = nil
+	tell := func(severity, kind, message string, details ...any) {
+		l.soundProblems = append(l.soundProblems, standingProblem{kind: kind, severity: severity, variant: v.Key, message: message,
+			details: append(details, "looked_at", at.UTC().Format(time.RFC3339))})
+	}
 	if f.HasAudio {
 		l.silent.note(f.AudioDB < silentBelow, at)
 		cy.metric("hls_audio_level_db", v.Key, f.AudioDB)
 		suspect = suspect || l.silent.n > 0
 		if l.silent.standing(at) {
-			stand(ProbAudioSilent, "the sound is silence", "audio_level_db", round1(f.AudioDB),
+			tell(SevCrit, ProbAudioSilent, "the sound is silence", "audio_level_db", round1(f.AudioDB),
 				"looks_in_a_row", l.silent.n, "since", l.silent.since.UTC().Format(time.RFC3339))
 		}
 		// Left and right are the first two channels, whatever others
@@ -381,10 +429,8 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 				"looks_in_a_row", l.quiet.n, "since", l.quiet.since.UTC().Format(time.RFC3339))
 		}
 	}
-	// Sound the container has, and the decoder made nothing of while it
-	// made a picture of the same data.
-	audio := audioOf(info)
-	deaf := f.HasPicture && !f.HasAudio && audio != nil && audio.Frames >= heardFrames
+	// Sound the container has, and the decoder made nothing of.
+	deaf := !f.HasAudio && audio != nil && audio.Frames >= heardFrames
 	l.deaf.note(deaf, at)
 	suspect = suspect || l.deaf.n > 0
 	if l.deaf.standing(at) {
@@ -394,12 +440,67 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 		}
 		tell(SevCrit, ProbAudioUndecodable, "the sound cannot be decoded", details...)
 	}
+	return suspect
+}
+
+// wantsListen tells whether the segment about to be fetched is the one to
+// listen to: one of a playlist of sound alone, after a look that found
+// the picture and no sound with it.
+func (c *Checker) wantsListen(v Variant) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	l := &c.looks
+	if !l.listen || v.Kind != KindAudio || c.Looker == nil {
+		return false
+	}
+	l.listen = false
+	return true
+}
+
+// lookSize is how much of a segment is fetched for a look.
+func (c *Checker) lookSize() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.looks.more {
+		return lookBytesMore
+	}
+	return lookBytes
+}
+
+// listen has the sound of a segment decoded and judges it: the sound of
+// a stream whose picture was looked at a moment before.
+func (c *Checker) listen(ctx context.Context, cy *cycle, v Variant, data, init []byte, info *media.Info, at time.Time) {
+	if len(init) > 0 {
+		data = append(append(make([]byte, 0, len(init)+len(data)), init...), data...)
+	}
+	f, err := c.Looker.Listen(ctx, data)
+	if err != nil {
+		if !errors.Is(err, picture.ErrNothing) || ctx.Err() != nil {
+			return
+		}
+		f = &picture.Frame{AudioError: err.Error()}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	l := &c.looks
+	suspect := c.hear(cy, v, f, audioOf(info), at)
+	// The look that is shown gets its sound.
+	if l.shown != nil && f.HasAudio {
+		p := *l.shown
+		p.HasAudio, p.AudioDB = true, round1(f.AudioDB)
+		l.shown = &p
+		cy.picture(&p)
+	}
+	sooner := func(d time.Duration) {
+		if next := at.Add(min(d, c.PictureEvery) - c.PictureEvery); next.Before(l.at) {
+			l.at = next
+		}
+	}
 	switch {
-	case len(l.problems) > 0:
-		l.at = at.Add(min(lookStanding, c.PictureEvery) - c.PictureEvery)
+	case len(l.soundProblems) > 0:
+		sooner(lookStanding)
 	case suspect:
-		// Look again soon: what it is shows in a minute, not in five.
-		l.at = at.Add(min(lookAgain, c.PictureEvery) - c.PictureEvery)
+		sooner(lookAgain)
 	}
 }
 
@@ -421,7 +522,7 @@ func videoOf(info *media.Info) *media.Track {
 // and still stands.
 func (c *Checker) reportLooks(cy *cycle) {
 	c.mu.Lock()
-	standing := append([]standingProblem(nil), c.looks.problems...)
+	standing := append(append([]standingProblem(nil), c.looks.problems...), c.looks.soundProblems...)
 	slate := false
 	for _, p := range standing {
 		slate = slate || p.kind == ProbPictureSlate

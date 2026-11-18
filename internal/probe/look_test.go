@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/hlstest"
+	"github.com/hotid/hls-monitor/internal/media"
 	"github.com/hotid/hls-monitor/internal/picture"
 )
 
@@ -16,6 +17,9 @@ type stubLooker struct {
 	busy  bool
 	looks int
 	bytes []int
+	// heard is what Listen answers with, and listens how often it was asked.
+	heard   *picture.Frame
+	listens int
 }
 
 func (s *stubLooker) Sample(_ context.Context, data []byte) (*picture.Frame, error) {
@@ -28,6 +32,16 @@ func (s *stubLooker) Sample(_ context.Context, data []byte) (*picture.Frame, err
 	return &f, nil
 }
 func (s *stubLooker) Busy() bool { return s.busy }
+
+// Listen answers with the sound of the frame the stub is set to hear.
+func (s *stubLooker) Listen(context.Context, []byte) (*picture.Frame, error) {
+	s.listens++
+	if s.heard == nil {
+		return nil, picture.ErrNothing
+	}
+	f := *s.heard
+	return &f, nil
+}
 
 // flat is a picture of one brightness all over, shrunk the way a look shrinks it.
 func flat(v byte) []byte {
@@ -455,5 +469,69 @@ func TestSoundThatDoesNotDecode(t *testing.T) {
 	watch(f, 2*time.Minute, ProbAudioUndecodable)
 	if hasProblem(f.step(1), ProbAudioUndecodable) != nil {
 		t.Error("still told after the sound was heard")
+	}
+}
+
+func TestSoundInAPlaylistOfItsOwn(t *testing.T) {
+	// The segments of the picture have no sound in them: it is in a
+	// playlist of its own, and is listened to there after every look.
+	f := newFixture(t, hlstest.Options{SoundApart: true}, "/master.m3u8", LevelContainer)
+	s := &stubLooker{frame: liveFrame}
+	s.frame.HasAudio, s.frame.NoSound = false, true
+	s.heard = &picture.Frame{HasAudio: true, AudioDB: -20, ChannelDB: []float64{-20, -21}}
+	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
+	var shown *Picture
+	for i := 0; i < 5; i++ {
+		if r := f.step(1); r.Picture != nil {
+			shown = r.Picture
+		}
+	}
+	if s.looks != 1 || s.listens != 1 || shown == nil || !shown.HasPicture || !shown.HasAudio || shown.AudioDB != -20 || len(shown.JPEG) == 0 {
+		t.Fatalf("%d looks, %d listens, shown %+v", s.looks, s.listens, shown)
+	}
+	// Silence there is silence of the stream, and is listened to again soon.
+	s.heard = &picture.Frame{HasAudio: true, AudioDB: picture.Silent, ChannelDB: []float64{picture.Silent, picture.Silent}}
+	watch(f, 7*time.Minute, ProbAudioSilent)
+	if p := hasProblem(f.step(1), ProbAudioSilent); p == nil || s.listens < 4 {
+		t.Fatalf("silence in the playlist of sound: %+v after %d listens", p, s.listens)
+	}
+	// It stands through the looks at the picture, which has nothing to say of it.
+	if n, cycles := watch(f, 3*time.Minute, ProbAudioSilent); n != cycles {
+		t.Errorf("silence was told in %d of %d cycles", n, cycles)
+	}
+	// Sound nothing can be made of is sound that does not decode.
+	s.heard = nil
+	watch(f, 3*time.Minute, ProbAudioUndecodable)
+	r := f.step(1)
+	if hasProblem(r, ProbAudioUndecodable) == nil || hasProblem(r, ProbAudioSilent) != nil {
+		t.Fatalf("sound that does not decode: %+v", r.Problems)
+	}
+	// And it is over when the sound is back.
+	s.heard = &picture.Frame{HasAudio: true, AudioDB: -20, ChannelDB: []float64{-20, -21}}
+	watch(f, 3*time.Minute, ProbAudioUndecodable)
+	if r := f.step(1); hasProblem(r, ProbAudioUndecodable) != nil || hasProblem(r, ProbAudioSilent) != nil {
+		t.Errorf("still told: %+v", r.Problems)
+	}
+}
+
+func TestMoreIsFetchedWhereTheSoundComesLate(t *testing.T) {
+	// A stream of many megabits: the beginning of a segment has the
+	// picture and next to none of the sound, by its container. From then
+	// on more of a segment is fetched for a look.
+	c := New(Target{ID: 1, URL: "http://x/", Level: LevelHeader}, nil)
+	s := &stubLooker{frame: liveFrame}
+	s.frame.HasAudio = false
+	c.Looker, c.PictureEvery = s, 5*time.Minute
+	if c.lookSize() != lookBytes {
+		t.Fatalf("a look fetches %d bytes to begin with", c.lookSize())
+	}
+	few := &media.Info{Tracks: []media.Track{{Kind: media.KindVideo, Frames: 12}, {Kind: media.KindAudio, Frames: 3}}}
+	c.look(context.Background(), &cycle{res: &Result{}}, Variant{Key: "v", Kind: KindVideo}, []byte{0x47}, nil, few, time.Now())
+	if c.lookSize() != lookBytesMore || lookBytesMore%188 != 0 {
+		t.Fatalf("after a look with a picture and three frames of sound a look fetches %d bytes", c.lookSize())
+	}
+	// And the sound is not said not to decode: there was none to speak of.
+	if len(c.looks.soundProblems) != 0 || c.looks.deaf.n != 0 {
+		t.Errorf("told of the sound: %+v", c.looks.soundProblems)
 	}
 }

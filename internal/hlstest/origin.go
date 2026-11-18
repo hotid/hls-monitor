@@ -50,6 +50,10 @@ type Options struct {
 	// PadTo makes every MPEG-TS segment at least this many bytes by adding
 	// null packets, to give load tests segments of a realistic size.
 	PadTo int
+	// SoundApart makes the master playlist name a playlist of sound of
+	// its own, va/index.m3u8, as streams do that keep the sound out of
+	// the segments of the picture.
+	SoundApart bool
 }
 
 // Origin is the fake stream. All methods are safe for concurrent use.
@@ -326,9 +330,14 @@ func (o *Origin) master() string {
 	o.mu.Unlock()
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-INDEPENDENT-SEGMENTS\n")
+	group := ""
+	if o.opt.SoundApart {
+		b.WriteString("#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"sound\",NAME=\"main\",DEFAULT=YES,AUTOSELECT=YES,URI=\"va/index.m3u8\"\n")
+		group = ",AUDIO=\"sound\""
+	}
 	for i := range n {
-		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,AVERAGE-BANDWIDTH=%d,RESOLUTION=160x90,FRAME-RATE=25.000,CODECS=\"avc1.64000b,mp4a.40.2\"\n",
-			200000*(i+1), 150000*(i+1))
+		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,AVERAGE-BANDWIDTH=%d,RESOLUTION=160x90,FRAME-RATE=25.000,CODECS=\"avc1.64000b,mp4a.40.2\"%s\n",
+			200000*(i+1), 150000*(i+1), group)
 		fmt.Fprintf(&b, "v%d/index.m3u8\n", i)
 	}
 	return b.String()
