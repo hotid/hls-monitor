@@ -196,6 +196,7 @@ func run(cfg config, log *slog.Logger) error {
 		Load:           load,
 		PlayKey:        playKey(filepath.Join(filepath.Dir(cfg.dbPath), "play.key"), log),
 	}, st, mx, ing, local, webui.Handler(basePath), log)
+	local.SetSlates(srv.Slates)
 	srv.SyncLocal(ctx)
 
 	done := make(chan struct{}, 2)

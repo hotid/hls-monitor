@@ -219,3 +219,45 @@ func TestDarkNoticeIsAPictureThatStays(t *testing.T) {
 		t.Errorf("ten minutes of a dark notice: frozen reported %d times, black %d times", frozen, black)
 	}
 }
+
+func TestKnownSlate(t *testing.T) {
+	f, s := lookFixture(t, LevelSegments)
+	notice := flat(70)
+	notice[100], notice[101] = 200, 200 // something written on it
+	f.c.Slates = func() []Slate { return []Slate{{ID: 7, Name: "technical break", Frames: [][]byte{flat(10), notice}}} }
+
+	// An ordinary picture is not it.
+	if n, _ := watch(f, time.Minute, ProbPictureSlate); n != 0 {
+		t.Fatalf("an ordinary picture was taken for the slate %d times", n)
+	}
+	// The slate goes on air, coded anew, a little off the one that was
+	// marked: it is known at the first look, with no minute to wait.
+	shown := flat(74)
+	shown[100], shown[101] = 196, 205
+	s.frame = picture.Frame{HasPicture: true, Luma: 75, Dark: 0.1, Cells: shown, JPEG: []byte{0xFF, 0xD8}, HasAudio: true, AudioDB: -20}
+	before := s.looks
+	var first *Problem
+	for i := 0; i < 200 && first == nil; i++ {
+		first = hasProblem(f.step(1), ProbPictureSlate)
+	}
+	if first == nil || s.looks != before+1 {
+		t.Fatalf("the slate was not known at the first look (%d looks): %+v", s.looks-before, first)
+	}
+	if first.Severity != SevCrit || first.Details["slate"] != "technical break" {
+		t.Errorf("problem = %+v", first)
+	}
+	// It stands still, and is told once, as the slate it is.
+	var slate, frozen, cycles int
+	for end := f.clock.Add(5 * time.Minute); f.clock.Before(end); cycles++ {
+		r := f.step(1)
+		if hasProblem(r, ProbPictureSlate) != nil {
+			slate++
+		}
+		if hasProblem(r, ProbPictureFrozen) != nil {
+			frozen++
+		}
+	}
+	if slate != cycles || frozen != 0 {
+		t.Errorf("five minutes of a slate: told as the slate in %d of %d cycles, as frozen in %d", slate, cycles, frozen)
+	}
+}

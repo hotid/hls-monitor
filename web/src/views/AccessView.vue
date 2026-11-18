@@ -6,6 +6,7 @@ import { t } from '@/i18n'
 import { useSession } from '@/stores/session'
 import { useToasts } from '@/stores/toasts'
 import type { ApiToken, Role, User } from '@/types'
+import SlatesPanel from '@/components/SlatesPanel.vue'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import ModalDialog from '@/components/ModalDialog.vue'
 
@@ -281,6 +282,8 @@ const origin = window.location.origin + basePath
     <ConfirmDialog v-if="deletingUser" :title="t('access.deleteUserQuestion')" :action="t('access.deleteUser')" :busy="busy" @close="deletingUser = null" @confirm="removeUser">
       <p>{{ t('access.userWillNoLongerBeAble', { name: deletingUser.username }) }}</p>
     </ConfirmDialog>
+    <SlatesPanel />
+
     <ConfirmDialog v-if="deletingToken" :title="t('access.revokeTokenQuestion')" :action="t('access.revokeToken')" :busy="busy" @close="deletingToken = null" @confirm="removeToken">
       <p>{{ t('access.systemsThatUseTheTokenWill', { name: deletingToken.name }) }}</p>
     </ConfirmDialog>

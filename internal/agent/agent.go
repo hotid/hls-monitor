@@ -74,6 +74,8 @@ type Agent struct {
 	run  *runner.Runner
 
 	revision string
+	// slates are the pictures the server knows to be slates.
+	slates atomic.Pointer[[]probe.Slate]
 
 	spool *spool.Spool
 	// writeFailed is set while results cannot be written to the queue, so
@@ -142,6 +144,12 @@ func Run(ctx context.Context, opt Options) error {
 	defer a.run.Stop()
 	a.load = selfstat.Start(ctx)
 	a.run.SetOverloaded(a.load.Overloaded)
+	a.run.SetSlates(func() []probe.Slate {
+		if p := a.slates.Load(); p != nil {
+			return *p
+		}
+		return nil
+	})
 	if d := picture.Setup(opt.PictureEvery, opt.FFmpeg, a.log); d != nil {
 		a.run.SetLooker(d, opt.PictureEvery)
 	}
@@ -318,6 +326,7 @@ func (a *Agent) configLoop(ctx context.Context) error {
 			if !cfg.Enabled {
 				targets = nil
 			}
+			a.slates.Store(&cfg.Slates)
 			a.run.Sync(targets)
 			a.revision = cfg.Revision
 			a.log.Info("configuration applied", "streams", len(targets), "enabled", cfg.Enabled)

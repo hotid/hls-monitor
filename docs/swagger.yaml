@@ -16,6 +16,13 @@ definitions:
       server_time:
         description: ServerTime is the server's clock in Unix milliseconds.
         type: integer
+      slates:
+        description: |-
+          Slates are the pictures known to be slates, for the looks at the
+          streams.
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Slate'
+        type: array
       targets:
         items:
           $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Target'
@@ -366,6 +373,10 @@ definitions:
     properties:
       audio_db:
         type: number
+      cells:
+        items:
+          type: integer
+        type: array
       dark:
         type: number
       has_audio:
@@ -377,7 +388,9 @@ definitions:
           that are all but black.
         type: boolean
       jpeg:
-        description: JPEG is the picture, small; absent when the stream has none.
+        description: |-
+          JPEG is the picture, small; absent when the stream has none. Cells
+          is the same shrunk further, to compare pictures by.
         items:
           type: integer
         type: array
@@ -514,6 +527,20 @@ definitions:
       url:
         type: string
       variant:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_probe.Slate:
+    properties:
+      frames:
+        items:
+          items:
+            format: int32
+            type: integer
+          type: array
+        type: array
+      id:
+        type: integer
+      name:
         type: string
     type: object
   github_com_hotid_hls-monitor_internal_probe.Snapshot:
@@ -846,6 +873,26 @@ definitions:
       streams:
         description: Streams is the largest number of streams that had the problem
           at once.
+        type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_store.Slate:
+    properties:
+      created_at:
+        type: string
+      frames:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.SlateFrame'
+        type: array
+      id:
+        type: integer
+      name:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_store.SlateFrame:
+    properties:
+      created_at:
+        type: string
+      id:
         type: integer
     type: object
   github_com_hotid_hls-monitor_internal_store.Snapshot:
@@ -1439,6 +1486,23 @@ definitions:
         type: number
       to:
         type: number
+    type: object
+  internal_api.slateRequest:
+    properties:
+      agent_id:
+        type: integer
+      incident_id:
+        type: integer
+      name:
+        description: |-
+          Name of the slate; a picture marked under a name that exists is
+          added to that slate, which is how one that moves gets its frames.
+        type: string
+      stream_id:
+        description: |-
+          The picture: the latest look at a stream from a vantage point (the
+          server's own by default), or the one kept with an incident.
+        type: integer
     type: object
   internal_api.streamDetail:
     properties:
@@ -2512,6 +2576,101 @@ paths:
       summary: Round trip time, loss and the share of requests, by server
       tags:
       - overview
+  /api/v1/slates:
+    get:
+      description: A slate is what is put on air in place of a channel. A stream showing
+        a picture marked as one gets the incident picture_slate at the first look.
+        The picture of a frame is at /api/v1/slates/frames/{id}.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Slate'
+            type: array
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: Pictures known to be slates
+      tags:
+      - slates
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Which picture, and the name of the slate
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.slateRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Slate'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: Mark a picture as a slate
+      tags:
+      - slates
+  /api/v1/slates/{id}:
+    delete:
+      parameters:
+      - description: Slate ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: Forget a slate
+      tags:
+      - slates
+  /api/v1/slates/frames/{id}:
+    get:
+      parameters:
+      - description: Frame ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - image/jpeg
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: The picture of one frame of a slate
+      tags:
+      - slates
   /api/v1/snapshots/{id}:
     get:
       parameters:

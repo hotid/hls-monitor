@@ -123,7 +123,8 @@ func (s *Server) agentConfig(c *gin.Context) {
 		AgentID: a.ID, Name: a.Name, Enabled: a.Enabled,
 		Targets: targets, PollSec: agentPollSec, ServerTime: now.UnixMilli(),
 	}
-	cfg.Revision = targetsRevision(targets)
+	cfg.Slates = s.Slates()
+	cfg.Revision = targetsRevision(targets) + slatesRevision(cfg.Slates)
 	if c.Query("revision") == cfg.Revision {
 		c.Status(http.StatusNotModified)
 		return

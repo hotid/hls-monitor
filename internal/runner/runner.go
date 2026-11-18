@@ -35,6 +35,7 @@ type Runner struct {
 	// looker and lookEvery are given to every checker; see SetLooker.
 	looker    probe.Looker
 	lookEvery time.Duration
+	slates    func() []probe.Slate
 
 	mu   sync.Mutex
 	jobs map[int64]*job
@@ -114,6 +115,10 @@ func (r *Runner) SetOverloaded(f func(since time.Time) string) { r.overloaded = 
 // stream and listen to its sound, once in every period. Call it before Sync.
 func (r *Runner) SetLooker(l probe.Looker, every time.Duration) { r.looker, r.lookEvery = l, every }
 
+// SetSlates tells the checkers where to learn which pictures are slates.
+// Call it before Sync.
+func (r *Runner) SetSlates(f func() []probe.Slate) { r.slates = f }
+
 func (r *Runner) checker(t probe.Target) *probe.Checker {
 	hc := r.secure
 	if t.Insecure {
@@ -123,6 +128,7 @@ func (r *Runner) checker(t probe.Target) *probe.Checker {
 	c.Overloaded = r.overloaded
 	if r.looker != nil && r.lookEvery > 0 {
 		c.Looker, c.PictureEvery = r.looker, r.lookEvery
+		c.Slates = r.slates
 	}
 	return c
 }

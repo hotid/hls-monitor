@@ -166,6 +166,9 @@ type Config struct {
 	// Revision identifies this exact set of targets.
 	Revision string         `json:"revision"`
 	Targets  []probe.Target `json:"targets"`
+	// Slates are the pictures known to be slates, for the looks at the
+	// streams.
+	Slates []probe.Slate `json:"slates,omitempty"`
 	// PollSec is how often to ask for the configuration again.
 	PollSec int `json:"poll_sec"`
 	// ServerTime is the server's clock in Unix milliseconds.

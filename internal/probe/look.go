@@ -31,7 +31,33 @@ const (
 // PictureProblem reports whether a problem is found by looking at the
 // picture or listening to the sound.
 func PictureProblem(kind string) bool {
-	return kind == ProbPictureBlack || kind == ProbPictureFrozen || kind == ProbAudioSilent
+	return kind == ProbPictureBlack || kind == ProbPictureFrozen || kind == ProbAudioSilent || kind == ProbPictureSlate
+}
+
+// Slate is a picture put on air in place of a channel — "the broadcast is
+// interrupted for technical reasons" — as somebody marked it. One that
+// moves has several frames.
+type Slate struct {
+	ID     int64    `json:"id"`
+	Name   string   `json:"name"`
+	Frames [][]byte `json:"frames"`
+}
+
+// slateMoves is how much a picture may differ from a slate's frame, where
+// it differs most, and still be that slate: more than the noise of coding
+// alone, for every channel codes it anew, at its own size and rate.
+const slateMoves = 14
+
+// slateOf returns the slate a picture is, if it is one.
+func slateOf(slates []Slate, cells []byte) *Slate {
+	for i := range slates {
+		for _, frame := range slates[i].Frames {
+			if picture.Moved(cells, frame) <= slateMoves {
+				return &slates[i]
+			}
+		}
+	}
+	return nil
 }
 
 // ValidPicture reports whether p is one of the settings above.
@@ -72,8 +98,10 @@ const (
 type Picture struct {
 	Variant string    `json:"variant"`
 	Time    time.Time `json:"time"`
-	// JPEG is the picture, small; absent when the stream has none.
-	JPEG []byte `json:"jpeg,omitempty"`
+	// JPEG is the picture, small; absent when the stream has none. Cells
+	// is the same shrunk further, to compare pictures by.
+	JPEG  []byte `json:"jpeg,omitempty"`
+	Cells []byte `json:"cells,omitempty"`
 	// Luma is the mean brightness, 0 to 255; Dark the share of points
 	// that are all but black.
 	HasPicture bool    `json:"has_picture"`
@@ -181,7 +209,7 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 		return
 	}
 	l.at = at
-	cy.picture(&Picture{Variant: v.Key, Time: at, JPEG: f.JPEG, HasPicture: f.HasPicture, Luma: round1(f.Luma), Dark: round3(f.Dark),
+	cy.picture(&Picture{Variant: v.Key, Time: at, JPEG: f.JPEG, Cells: f.Cells, HasPicture: f.HasPicture, Luma: round1(f.Luma), Dark: round3(f.Dark),
 		HasAudio: f.HasAudio, AudioDB: round1(f.AudioDB)})
 
 	l.problems = nil
@@ -207,10 +235,19 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 			stand(ProbPictureBlack, "the picture is black", "picture_luma", round1(f.Luma), "picture_dark_share", round3(f.Dark),
 				"looks_in_a_row", l.black.n, "since", l.black.since.UTC().Format(time.RFC3339))
 		}
+		// A picture somebody marked as a slate is known at the first
+		// look, and is not told a second time as one that does not change.
+		var slate *Slate
+		if c.Slates != nil {
+			slate = slateOf(c.Slates(), f.Cells)
+		}
+		if slate != nil {
+			stand(ProbPictureSlate, "the stream shows the slate \""+slate.Name+"\"", "slate", slate.Name)
+		}
 		// A black screen does not change either; it is told as black. A
 		// dark notice with something blinking on it is black one look and
 		// not the next, and is told as what it is: a picture that stays.
-		if l.same.standing(at) && !l.black.standing(at) {
+		if slate == nil && l.same.standing(at) && !l.black.standing(at) {
 			stand(ProbPictureFrozen, "the picture does not change", "looks_in_a_row", l.same.n+1,
 				"since", l.same.since.UTC().Format(time.RFC3339))
 		}

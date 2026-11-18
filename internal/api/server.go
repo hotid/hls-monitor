@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/ingest"
 	"github.com/hotid/hls-monitor/internal/metrics"
+	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/runner"
 	"github.com/hotid/hls-monitor/internal/selfstat"
 	"github.com/hotid/hls-monitor/internal/store"
@@ -60,7 +62,9 @@ type Server struct {
 	ing   *ingest.Ingester
 	local *runner.Runner
 	log   *slog.Logger
-	now   func() time.Time
+	// slates are the pictures known to be slates, as the checks need them.
+	slates atomic.Pointer[[]probe.Slate]
+	now    func() time.Time
 
 	logins *loginLimiter
 	// diagnoses holds one slot per live diagnosis allowed at a time.
@@ -155,11 +159,15 @@ func (s *Server) routes(ui http.Handler) {
 	user.GET("/incidents", s.listIncidents)
 	user.GET("/incidents/:id/scope", s.incidentScope)
 	user.GET("/incidents/:id/picture", s.incidentPicture)
+	user.GET("/slates", s.listSlates)
+	user.GET("/slates/frames/:id", s.slateFrame)
 	user.GET("/server-incidents", s.listServerIncidents)
 	user.GET("/agents", s.listAgents)
 
 	admin := user.Group("", s.requireAdmin)
 	admin.POST("/streams", s.createStream)
+	admin.POST("/slates", s.markSlate)
+	admin.DELETE("/slates/:id", s.deleteSlate)
 	admin.PUT("/streams/:id", s.updateStream)
 	admin.DELETE("/streams/:id", s.deleteStream)
 	admin.POST("/streams/:id/enable", s.enableStream)
@@ -304,6 +312,7 @@ func (s *Server) healthz(c *gin.Context) {
 // SyncLocal makes the local runner check exactly the streams assigned to
 // the server itself.
 func (s *Server) SyncLocal(ctx context.Context) {
+	s.LoadSlates(ctx)
 	if s.local == nil {
 		return
 	}

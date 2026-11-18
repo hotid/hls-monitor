@@ -1126,6 +1126,163 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/slates": {
+            "get": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "description": "A slate is what is put on air in place of a channel. A stream showing a picture marked as one gets the incident picture_slate at the first look. The picture of a frame is at /api/v1/slates/frames/{id}.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "slates"
+                ],
+                "summary": "Pictures known to be slates",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.Slate"
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "slates"
+                ],
+                "summary": "Mark a picture as a slate",
+                "parameters": [
+                    {
+                        "description": "Which picture, and the name of the slate",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.slateRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.Slate"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/slates/frames/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "produces": [
+                    "image/jpeg"
+                ],
+                "tags": [
+                    "slates"
+                ],
+                "summary": "The picture of one frame of a slate",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Frame ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/slates/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "tags": [
+                    "slates"
+                ],
+                "summary": "Forget a slate",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Slate ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/snapshots/{id}": {
             "get": {
                 "produces": [
@@ -2282,6 +2439,13 @@ const docTemplate = `{
                     "description": "ServerTime is the server's clock in Unix milliseconds.",
                     "type": "integer"
                 },
+                "slates": {
+                    "description": "Slates are the pictures known to be slates, for the looks at the\nstreams.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Slate"
+                    }
+                },
                 "targets": {
                     "type": "array",
                     "items": {
@@ -2739,6 +2903,12 @@ const docTemplate = `{
                 "audio_db": {
                     "type": "number"
                 },
+                "cells": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "dark": {
                     "type": "number"
                 },
@@ -2751,7 +2921,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "jpeg": {
-                    "description": "JPEG is the picture, small; absent when the stream has none.",
+                    "description": "JPEG is the picture, small; absent when the stream has none. Cells\nis the same shrunk further, to compare pictures by.",
                     "type": "array",
                     "items": {
                         "type": "integer"
@@ -2940,6 +3110,27 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "variant": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_probe.Slate": {
+            "type": "object",
+            "properties": {
+                "frames": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer",
+                            "format": "int32"
+                        }
+                    }
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
                     "type": "string"
                 }
             }
@@ -3366,6 +3557,37 @@ const docTemplate = `{
                 },
                 "streams": {
                     "description": "Streams is the largest number of streams that had the problem at once.",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.Slate": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "frames": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.SlateFrame"
+                    }
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.SlateFrame": {
+            "type": "object",
+            "properties": {
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
                     "type": "integer"
                 }
             }
@@ -4206,6 +4428,25 @@ const docTemplate = `{
                 },
                 "to": {
                     "type": "number"
+                }
+            }
+        },
+        "internal_api.slateRequest": {
+            "type": "object",
+            "properties": {
+                "agent_id": {
+                    "type": "integer"
+                },
+                "incident_id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "description": "Name of the slate; a picture marked under a name that exists is\nadded to that slate, which is how one that moves gets its frames.",
+                    "type": "string"
+                },
+                "stream_id": {
+                    "description": "The picture: the latest look at a stream from a vantage point (the\nserver's own by default), or the one kept with an incident.",
+                    "type": "integer"
                 }
             }
         },

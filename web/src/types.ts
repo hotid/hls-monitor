@@ -227,6 +227,14 @@ export interface Incident {
   details?: Record<string, unknown>
 }
 
+/** A picture put on air in place of a channel, as somebody marked it. */
+export interface Slate {
+  id: number
+  name: string
+  created_at: string
+  frames: { id: number; created_at: string }[]
+}
+
 /** The latest look at a stream's picture and sound from one vantage point. */
 export interface StreamPicture {
   stream_id: number

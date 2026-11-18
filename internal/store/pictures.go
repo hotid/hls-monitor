@@ -22,34 +22,36 @@ type StreamPicture struct {
 	HasAudio bool    `json:"has_audio"`
 	AudioDB  float64 `json:"audio_db"`
 	JPEG     []byte  `json:"-"`
+	// Cells is the picture shrunk, to compare it with others by.
+	Cells []byte `json:"-"`
 }
 
 // SavePicture keeps the latest look at a stream from an agent.
 func (tx *Tx) SavePicture(ctx context.Context, p StreamPicture) error {
 	_, err := tx.q.ExecContext(ctx, `
-		INSERT INTO stream_pictures (stream_id, agent_id, time, variant, has_picture, luma, dark, has_audio, audio_db, jpeg)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO stream_pictures (stream_id, agent_id, time, variant, has_picture, luma, dark, has_audio, audio_db, jpeg, cells)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (stream_id, agent_id) DO UPDATE SET time = excluded.time, variant = excluded.variant,
 			has_picture = excluded.has_picture, luma = excluded.luma, dark = excluded.dark,
-			has_audio = excluded.has_audio, audio_db = excluded.audio_db, jpeg = excluded.jpeg`,
-		p.StreamID, p.AgentID, toMs(p.Time), p.Variant, p.HasPicture, p.Luma, p.Dark, p.HasAudio, p.AudioDB, p.JPEG)
+			has_audio = excluded.has_audio, audio_db = excluded.audio_db, jpeg = excluded.jpeg, cells = excluded.cells`,
+		p.StreamID, p.AgentID, toMs(p.Time), p.Variant, p.HasPicture, p.Luma, p.Dark, p.HasAudio, p.AudioDB, p.JPEG, p.Cells)
 	return err
 }
 
 // SaveIncidentPictures keeps a picture as the evidence of the open
 // incidents of the given kinds of a stream seen from an agent.
-func (tx *Tx) SaveIncidentPictures(ctx context.Context, streamID, agentID int64, kinds []string, at time.Time, jpeg []byte) error {
+func (tx *Tx) SaveIncidentPictures(ctx context.Context, streamID, agentID int64, kinds []string, at time.Time, jpeg, cells []byte) error {
 	if len(kinds) == 0 || len(jpeg) == 0 {
 		return nil
 	}
-	args := []any{toMs(at), jpeg, streamID, agentID}
+	args := []any{toMs(at), jpeg, cells, streamID, agentID}
 	for _, k := range kinds {
 		args = append(args, k)
 	}
 	_, err := tx.q.ExecContext(ctx, `
-		INSERT INTO incident_pictures (incident_id, time, jpeg)
-		SELECT id, ?, ? FROM incidents WHERE stream_id = ? AND agent_id = ? AND ended_at IS NULL AND kind IN (`+placeholders(len(kinds))+`)
-		ON CONFLICT (incident_id) DO UPDATE SET time = excluded.time, jpeg = excluded.jpeg`, args...)
+		INSERT INTO incident_pictures (incident_id, time, jpeg, cells)
+		SELECT id, ?, ?, ? FROM incidents WHERE stream_id = ? AND agent_id = ? AND ended_at IS NULL AND kind IN (`+placeholders(len(kinds))+`)
+		ON CONFLICT (incident_id) DO UPDATE SET time = excluded.time, jpeg = excluded.jpeg, cells = excluded.cells`, args...)
 	return err
 }
 

@@ -66,6 +66,7 @@ export const problemTitle = perLocale((): Record<string, string> => ({
   picture_black: t('catalog.pictureBlack'),
   picture_frozen: t('catalog.pictureFrozen'),
   audio_silent: t('catalog.audioSilent'),
+  picture_slate: t('catalog.pictureSlate'),
   media_params_changed: t('catalog.videoParametersChanged'),
   playlist_source_changed: t('catalog.playlistServedByADifferentServer'),
   segment_source_changed: t('catalog.segmentsServedByADifferentServer'),

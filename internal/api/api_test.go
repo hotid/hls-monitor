@@ -1123,3 +1123,63 @@ func TestWayToTheViewer(t *testing.T) {
 		t.Errorf("a request that came through a proxy was told the way to the proxy: %+v", via.Client)
 	}
 }
+
+func TestSlates(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	now := time.Now().Truncate(time.Second)
+	st, err := e.st.CreateStream(ctx, store.StreamInput{Name: "tv", URL: "http://x/tv.m3u8", Enabled: true, Level: "segments",
+		AgentIDs: []int64{store.LocalAgentID}}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cells := bytes.Repeat([]byte{70}, 32*18)
+	jpg := []byte{0xFF, 0xD8, 0xFF, 0xD9}
+	ing := ingest.New(e.st, metrics.New("", nil), nil)
+	if err := ing.Apply(ctx, store.LocalAgentID, &probe.Result{TargetID: st.ID, Time: now, Status: probe.StatusOK,
+		Picture: &probe.Picture{Variant: probe.VariantMedia, Time: now, HasPicture: true, Luma: 70, JPEG: jpg, Cells: cells}}); err != nil {
+		t.Fatal(err)
+	}
+
+	admin, viewer := e.login("admin"), e.login("viewer")
+	mark := map[string]any{"name": "technical break", "stream_id": st.ID}
+	viewer.want(http.StatusForbidden, "POST", "/api/v1/slates", mark, nil)
+	admin.want(http.StatusNotFound, "POST", "/api/v1/slates", map[string]any{"name": "x", "stream_id": 999}, nil)
+	admin.want(http.StatusBadRequest, "POST", "/api/v1/slates", map[string]any{"stream_id": st.ID}, nil)
+
+	var sl store.Slate
+	admin.want(http.StatusOK, "POST", "/api/v1/slates", mark, &sl)
+	if sl.Name != "technical break" || len(sl.Frames) != 1 {
+		t.Fatalf("slate = %+v", sl)
+	}
+	// Marked again under the same name: another frame of the same slate.
+	admin.want(http.StatusOK, "POST", "/api/v1/slates", mark, &sl)
+	if len(sl.Frames) != 2 {
+		t.Fatalf("frames after a second mark = %d", len(sl.Frames))
+	}
+	var list []store.Slate
+	viewer.want(http.StatusOK, "GET", "/api/v1/slates", nil, &list)
+	if len(list) != 1 || len(list[0].Frames) != 2 {
+		t.Fatalf("slates = %+v", list)
+	}
+	resp, err := viewer.hc.Get(e.http.URL + fmt.Sprintf("/api/v1/slates/frames/%d", list[0].Frames[0].ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "image/jpeg" || !bytes.Equal(got, jpg) {
+		t.Errorf("frame: %d %s %x", resp.StatusCode, resp.Header.Get("Content-Type"), got)
+	}
+
+	// The checks learn of it at once, and so does what an agent is told.
+	known := e.srv.Slates()
+	if len(known) != 1 || known[0].Name != "technical break" || len(known[0].Frames) != 2 || !bytes.Equal(known[0].Frames[0], cells) {
+		t.Fatalf("the checks know %+v", known)
+	}
+	with := slatesRevision(known)
+	admin.want(http.StatusNoContent, "DELETE", fmt.Sprintf("/api/v1/slates/%d", sl.ID), nil, nil)
+	if len(e.srv.Slates()) != 0 || with == "" || slatesRevision(e.srv.Slates()) == with {
+		t.Errorf("after the slate was forgotten the checks know %+v", e.srv.Slates())
+	}
+}

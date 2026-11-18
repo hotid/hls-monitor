@@ -56,6 +56,7 @@ export const problemAbout = perLocale((): Record<string, { what: string; how: st
   picture_black: { what: t('incident.pictureBlackWhat'), how: t('incident.pictureLookHow') },
   picture_frozen: { what: t('incident.pictureFrozenWhat'), how: t('incident.pictureLookHow') },
   audio_silent: { what: t('incident.audioSilentWhat'), how: t('incident.pictureLookHow') },
+  picture_slate: { what: t('incident.pictureSlateWhat'), how: t('incident.pictureSlateHow') },
   no_keyframe_start: {
     what: t('incident.theSegmentDoesNotStartWith'),
     how: t('incident.theFirstVideoFrameOfThe'),
@@ -112,6 +113,7 @@ const calculation = perLocale((): Field[] => [
   { key: 'last_segment_uri', label: t('incident.lastSegmentInThePlaylist'), unit: 'text' },
   { key: 'previous_last_sequence', label: t('incident.lastSegmentInThePreviousCheck'), unit: 'count' },
   { key: 'missed_segments', label: t('incident.segmentsMissed'), unit: 'count' },
+  { key: 'slate', label: t('incident.slateName'), unit: 'text' },
   { key: 'picture_luma', label: t('incident.pictureLuma'), unit: 'count' },
   { key: 'picture_dark_share', label: t('incident.pictureDarkShare'), unit: 'pct' },
   { key: 'audio_level_db', label: t('incident.audioLevel'), unit: 'count' },
