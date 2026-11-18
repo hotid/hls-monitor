@@ -20,7 +20,7 @@
   "chartRate": "Bitrate",
   "chartRateHint": "What the playlist declares for the quality being played, and what the segments really take: their size over their duration.",
   "chartSpeed": "Download speed of a segment, by hop",
-  "chartSpeedHint": "How fast one segment travels while it is being downloaded: its size over the time of the download alone. This is not traffic: a segment is fetched in a burst and then nothing is fetched until the next one, so on a fast network the speed is many times the bitrate. What matters is that every hop stays above the bitrate; a hop that falls to it cannot keep up with the stream. \"From the origin\" is to the server or to the agent, whichever is watched from; the player's estimate is its own opinion of the link to it.",
+  "chartSpeedHint": "The size of a segment over the whole time it took on the hop, waiting for the answer included. This is not traffic: a segment is fetched in a burst and then nothing is fetched until the next one, so on a fast network the speed is many times the bitrate. What matters is that every hop stays above the bitrate; a hop that falls to it cannot keep up with the stream. A segment that passed a hop in less than 20 ms is too small to tell a speed by: there is no point for it.",
   "codecNotSupported": "The browser cannot decode what the stream carries",
   "dropped": "Dropped frames",
   "droppedHint": "Frames the browser did not show in time. Says more about this computer than about the stream.",

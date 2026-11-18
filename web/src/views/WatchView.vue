@@ -143,6 +143,9 @@ function noteHops(info: FetchInfo | null, connection: string) {
   }
 }
 
+// Shorter than this, the time a segment took says nothing of the speed.
+const minSpeedTime = 0.02
+
 interface ChartDef {
   id: string
   title: string
@@ -350,22 +353,31 @@ async function start() {
     const bytes = st.total || st.loaded
     const travel = (st.loading.end - st.loading.first) / 1000
     latest.browser = Math.max(travel, 0)
-    if (travel > 0.001 && bytes) latest.speedBrowser = (bytes * 8) / travel
     if (data.frag.duration > 0 && bytes) latest.actual = (bytes * 8) / data.frag.duration
 
     const info = fetchInfo(xhr)
     noteHops(info, from ?? '')
+    // The speed of a hop is the size over the whole time the hop took,
+    // waiting for the answer included. The time between the first and the
+    // last byte alone is no measure: a browser is handed a small segment
+    // in one piece, and that gave gigabits where there are none. What
+    // took less than minSpeedTime is too short to tell a speed by.
+    const speed = (size: number, seconds: number) => (size > 0 && seconds >= minSpeedTime ? (size * 8) / seconds : undefined)
+    const behind = (info?.relay?.total_ms ?? info?.origin?.total_ms ?? 0) / 1000
+    const here = speed(bytes, (st.loading.end - st.loading.start) / 1000 - behind)
+    if (here !== undefined) latest.speedBrowser = here
     if (info?.origin) {
       const o = info.origin
       latest.originTTFB = o.ttfb_ms / 1000
       latest.originBody = Math.max(o.total_ms - o.ttfb_ms, 0) / 1000
-      // A segment that arrives in a millisecond says nothing of the speed.
-      if (o.total_ms - o.ttfb_ms > 1) latest.speedOrigin = (o.bytes * 8) / ((o.total_ms - o.ttfb_ms) / 1000)
+      const fromOrigin = speed(o.bytes, o.total_ms / 1000)
+      if (fromOrigin !== undefined) latest.speedOrigin = fromOrigin
     }
     if (info?.relay) {
       latest.relayWait = info.relay.wait_ms / 1000
       latest.relayUpload = info.relay.upload_ms / 1000
-      if (info.relay.upload_ms > 1) latest.speedRelay = (info.relay.bytes * 8) / (info.relay.upload_ms / 1000)
+      const through = speed(info.relay.bytes, info.relay.upload_ms / 1000)
+      if (through !== undefined) latest.speedRelay = through
     }
   })
   player.on(HlsLib.Events.ERROR, (_e, data) => {
