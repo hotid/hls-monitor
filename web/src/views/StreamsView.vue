@@ -62,6 +62,8 @@ function figure(s: Stream, key: string): number | undefined {
   const v = s.agents.map((a) => a.summary?.[key]).filter((x): x is number => typeof x === 'number' && x > 0)
   return v.length ? Math.max(...v) : undefined
 }
+// With one vantage point the column of agents says the same in every row.
+const severalAgents = computed(() => (live.overview?.agents.length ?? 0) > 1)
 const thumb = (s: Stream) => (s.picture_ref ? `${basePath}/api/v1/streams/${s.id}/picture?agent=${s.picture_ref.agent_id}&t=${new Date(s.picture_ref.time).getTime()}` : '')
 
 // The worst first when sorted from the largest.
@@ -131,7 +133,7 @@ async function remove() {
               <SortTh :sort="sort" by="why">{{ t('streams.why') }}</SortTh>
               <SortTh :sort="sort" by="bitrate" class="right hide-narrow">{{ t('common.bitrate') }}</SortTh>
               <SortTh :sort="sort" by="height" class="right hide-narrow">{{ t('streams.picture') }}</SortTh>
-              <SortTh :sort="sort" by="agents" class="hide-narrow">{{ t('common.agents') }}</SortTh>
+              <SortTh v-if="severalAgents" :sort="sort" by="agents" class="hide-narrow">{{ t('common.agents') }}</SortTh>
               <SortTh :sort="sort" by="checked" class="hide-narrow">{{ t('streams.lastCheck') }}</SortTh>
               <th v-if="session.isAdmin" />
             </tr>
@@ -144,13 +146,13 @@ async function remove() {
                 <div class="mono muted truncate" :title="s.url">{{ s.url }}</div>
               </td>
               <td><StatusBadge :status="s.status" /></td>
-              <td class="why">
+              <td class="why" :title="why(s).map((i) => problemName(i.kind)).join(', ')">
                 <template v-for="(i, n) in why(s).slice(0, 2)" :key="i.id"><template v-if="n">, </template><span :class="i.severity" :title="i.message">{{ problemName(i.kind) }}</span></template>
                 <span v-if="why(s).length > 2" class="muted more" :title="why(s).slice(2).map((i) => problemName(i.kind)).join(', ')">{{ t('streams.andMore', { n: why(s).length - 2 }) }}</span>
               </td>
               <td class="mono right hide-narrow nowrap">{{ figure(s, 'bitrate_bps') ? fmtBits(figure(s, 'bitrate_bps')) : '—' }}</td>
               <td class="mono right hide-narrow nowrap">{{ figure(s, 'height') ? figure(s, 'height') + 'p' : '—' }}</td>
-              <td class="hide-narrow">
+              <td v-if="severalAgents" class="hide-narrow">
                 <template v-if="s.agents.length">{{ s.agents.map((a) => a.agent_name).join(', ') }}</template>
                 <span v-else class="muted">{{ t('common.notAssigned') }}</span>
               </td>
@@ -189,8 +191,11 @@ async function remove() {
   background: #000;
 }
 .why {
-  max-width: 300px;
+  max-width: 340px;
   font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .why .more {
   margin-left: 0.3em;
