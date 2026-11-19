@@ -169,7 +169,7 @@ function build() {
       },
     },
     axes: [
-      { stroke: '#5a7a94', font: axisFont, grid, ticks: { show: false }, values: axisTime, space: 70 },
+      { stroke: '#5a7a94', font: axisFont, grid, ticks: { show: false }, values: axisTime, space: 70, size: 26 },
       {
         stroke: '#5a7a94', font: axisFont, grid, ticks: { show: false }, size: props.unit === 'status' ? 104 : props.unit === 'bps' ? 92 : 62,
         values: (_u, ticks) => ticks.map((v) => fmtUnit(v, props.unit)),
@@ -265,7 +265,7 @@ onBeforeUnmount(() => {
       <div ref="host" class="chart-host" @mouseleave="hoverIdx = null" />
       <div v-if="!hasData" class="chart-empty muted">{{ loading ? t('common.loading') : (emptyHint ?? t('chart.noDataForThisPeriod')) }}</div>
     </div>
-    <ul class="chart-legend" :class="[{ focusing: focused !== null }, 'n' + stats.length]" @mouseleave="focus(null)">
+    <ul v-if="lines.length" class="chart-legend" :class="[{ focusing: focused !== null, wide: unit === 'bps' }, 'n' + stats.length]" @mouseleave="focus(null)">
       <li class="head" :title="t('chart.statsHint')" aria-hidden="true">
         <span />
         <b v-for="k in stats" :key="k" :class="'c-' + k">{{ k === 'last' && hoverIdx !== null ? t('chart.atCursor') : statName[k]() }}</b>
@@ -373,8 +373,26 @@ onBeforeUnmount(() => {
     display: none;
   }
 }
+/* Speeds are long figures: they give the mean up sooner. */
+@container (max-width: 620px) {
+  .chart-legend.n4.wide {
+    grid-template-columns: minmax(60px, 1fr) repeat(3, auto);
+  }
+  .chart-legend.n4.wide .c-avg {
+    display: none;
+  }
+}
+@container (max-width: 470px) {
+  .chart-legend.n4.wide {
+    grid-template-columns: minmax(60px, 1fr) repeat(2, auto);
+  }
+  .chart-legend.n4.wide .c-min {
+    display: none;
+  }
+}
 @container (max-width: 380px) {
-  .chart-legend.n4 {
+  .chart-legend.n4,
+  .chart-legend.n4.wide {
     grid-template-columns: minmax(60px, 1fr) repeat(2, auto);
   }
   .chart-legend.n4 .c-min {
