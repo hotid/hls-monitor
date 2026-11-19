@@ -1194,6 +1194,53 @@ definitions:
       name:
         type: string
     type: object
+  internal_api.agentStats:
+    properties:
+      check_p95_seconds:
+        description: |-
+          CheckP95 is how long a check takes, the 95th percentile over its
+          streams, and LagMax how late the latest one started, in seconds.
+        type: number
+      fail:
+        type: integer
+      incidents_crit:
+        description: Open incidents found from here, by severity; events are not counted.
+        type: integer
+      incidents_warn:
+        type: integer
+      lag_max_seconds:
+        type: number
+      ok:
+        description: Streams by their state as this vantage point sees them.
+        type: integer
+      segment_errors:
+        type: number
+      segments_per_min:
+        type: number
+      traffic_bps:
+        description: |-
+          TrafficBps is what its checks download, as a rate; SegmentsPerMin
+          how many segments it checks a minute; SegmentErrors how many of
+          them failed in the window.
+        type: number
+      warn:
+        type: integer
+    type: object
+  internal_api.agentStatsResponse:
+    properties:
+      agents:
+        additionalProperties:
+          $ref: '#/definitions/internal_api.agentStats'
+        type: object
+      metrics:
+        description: |-
+          Metrics is false when the time series storage did not answer: the
+          figures that come from it are zero then.
+        type: boolean
+      window_seconds:
+        description: Window is the time the rates and counts are over, in seconds.
+        type: integer
+    type: object
   internal_api.agentStatus:
     properties:
       agent_id:
@@ -2432,6 +2479,26 @@ paths:
           schema:
             $ref: '#/definitions/internal_api.apiError'
       summary: Issue a new enrollment token
+      tags:
+      - agents
+  /api/v1/agents/stats:
+    get:
+      description: 'For the server''s own checks and for every agent: the streams
+        it checks by their state as it sees them, the open incidents found from it,
+        what its checks download, how many segments it checks a minute and how many
+        of them failed, how long a check takes and how late checks start. Rates and
+        counts are over the last five minutes. Keyed by agent ID.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.agentStatsResponse'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: What every vantage point is doing
       tags:
       - agents
   /api/v1/aggregate:

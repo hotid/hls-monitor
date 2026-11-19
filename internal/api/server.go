@@ -170,6 +170,7 @@ func (s *Server) routes(ui http.Handler) {
 	user.GET("/slates/frames/:id", s.slateFrame)
 	user.GET("/server-incidents", s.listServerIncidents)
 	user.GET("/agents", s.listAgents)
+	user.GET("/agents/stats", s.agentsStats)
 
 	admin := user.Group("", s.requireAdmin)
 	admin.POST("/streams", s.createStream)

@@ -554,3 +554,23 @@ export interface Captures {
   captures: Capture[]
   usage?: { captures: number; bytes: number; max_bytes: number; made: number; refused: number }
 }
+
+/** What a vantage point did over the last minutes. */
+export interface AgentStats {
+  ok: number
+  warn: number
+  fail: number
+  incidents_crit: number
+  incidents_warn: number
+  traffic_bps: number
+  segments_per_min: number
+  segment_errors: number
+  check_p95_seconds: number
+  lag_max_seconds: number
+}
+
+export interface AgentsStats {
+  window_seconds: number
+  agents: Record<string, AgentStats>
+  metrics: boolean
+}

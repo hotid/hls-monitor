@@ -248,3 +248,30 @@ func (s *Store) OpenIncidentCounts(ctx context.Context) (map[int64]map[string]in
 	}
 	return out, rows.Err()
 }
+
+// OpenIncidentsByAgent counts the open incidents found from every vantage
+// point: failures and warnings, in that order. Events are not counted.
+func (s *Store) OpenIncidentsByAgent(ctx context.Context) (map[int64][2]int, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT agent_id, severity, COUNT(*) FROM incidents WHERE ended_at IS NULL AND severity <> 'info' GROUP BY agent_id, severity")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64][2]int{}
+	for rows.Next() {
+		var id int64
+		var severity string
+		var n int
+		if err := rows.Scan(&id, &severity, &n); err != nil {
+			return nil, err
+		}
+		c := out[id]
+		if severity == "crit" {
+			c[0] += n
+		} else {
+			c[1] += n
+		}
+		out[id] = c
+	}
+	return out, rows.Err()
+}

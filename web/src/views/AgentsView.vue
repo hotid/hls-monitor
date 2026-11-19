@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { api } from '@/api'
-import { fmtAgo, fmtBytes, fmtDuration, fmtFull, fmtMs, fmtNumber } from '@/format'
+import { fmtAgo, fmtBits, fmtBytes, fmtDuration, fmtFull, fmtMs, fmtNumber, fmtSeconds } from '@/format'
+import { usePolling } from '@/poll'
 import { t } from '@/i18n'
 import { timeValue, useSort } from '@/sort'
 import { useLive } from '@/stores/live'
 import { useSession } from '@/stores/session'
 import { useToasts } from '@/stores/toasts'
-import type { Agent, Enrollment } from '@/types'
+import type { Agent, AgentStats, AgentsStats, Enrollment } from '@/types'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import FilterEmpty from '@/components/FilterEmpty.vue'
 import ModalDialog from '@/components/ModalDialog.vue'
@@ -17,6 +18,26 @@ const live = useLive()
 const session = useSession()
 const toasts = useToasts()
 const agents = computed(() => live.overview?.agents ?? [])
+
+// What every vantage point did over the last minutes.
+const stats = ref<AgentsStats | null>(null)
+usePolling(async (signal) => {
+  stats.value = await api.get<AgentsStats>('/api/v1/agents/stats', signal)
+}, 15_000)
+const none: AgentStats = { ok: 0, warn: 0, fail: 0, incidents_crit: 0, incidents_warn: 0, traffic_bps: 0, segments_per_min: 0, segment_errors: 0, check_p95_seconds: 0, lag_max_seconds: 0 }
+const statsOf = (a: Agent): AgentStats => ({ ...none, ...stats.value?.agents[String(a.id)] })
+const totals = computed(() => {
+  const sum = { ...none }
+  for (const a of agents.value) {
+    const s = statsOf(a)
+    sum.traffic_bps += s.traffic_bps
+    sum.segments_per_min += s.segments_per_min
+    sum.segment_errors += s.segment_errors
+    sum.incidents_crit += s.incidents_crit
+    sum.incidents_warn += s.incidents_warn
+  }
+  return sum
+})
 
 const creating = ref(false)
 const newName = ref('')
@@ -212,6 +233,59 @@ function localOnly(url: string): boolean {
       </div>
     </div>
 
+    <div class="section-title"><h2>{{ t('agents.statsTitle') }}</h2></div>
+    <p class="muted lead">{{ t('agents.statsLead') }}</p>
+    <div class="panel stats">
+      <div v-if="!stats" class="empty">{{ t('common.loading') }}</div>
+      <div v-else class="table-wrap">
+        <div v-if="!stats.metrics" class="notice" style="margin: 10px 14px">{{ t('agents.statsNoMetrics') }}</div>
+        <table class="table">
+          <thead>
+            <tr>
+              <th>{{ t('common.agent') }}</th>
+              <th class="right" :title="t('agents.statsStreamsHint')">{{ t('agents.statsStreams') }}</th>
+              <th class="right" :title="t('agents.statsIncidentsHint')">{{ t('agents.statsIncidents') }}</th>
+              <th class="right" :title="t('agents.statsTrafficHint')">{{ t('agents.statsTraffic') }}</th>
+              <th class="right">{{ t('agents.statsSegments') }}</th>
+              <th class="right" :title="t('agents.statsErrorsHint')">{{ t('agents.statsErrors') }}</th>
+              <th class="right hide-narrow" :title="t('agents.statsCheckHint')">{{ t('agents.statsCheck') }}</th>
+              <th class="right hide-narrow" :title="t('agents.statsLagHint')">{{ t('agents.statsLag') }}</th>
+              <th class="right hide-narrow">{{ t('agents.statsCPU') }}</th>
+              <th class="right hide-narrow">{{ t('agents.statsMemory') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="a in agents" :key="a.id">
+              <td class="strong">{{ a.kind === 'local' ? t('common.serverLocal') : a.name }}</td>
+              <td class="mono right nowrap">
+                <span class="ok-text">{{ statsOf(a).ok }}</span> / <span :class="{ 'warn-text': statsOf(a).warn }">{{ statsOf(a).warn }}</span> /
+                <span :class="{ 'fail-text': statsOf(a).fail }">{{ statsOf(a).fail }}</span>
+              </td>
+              <td class="mono right nowrap">
+                <span :class="{ 'fail-text': statsOf(a).incidents_crit }">{{ statsOf(a).incidents_crit }}</span> / <span :class="{ 'warn-text': statsOf(a).incidents_warn }">{{ statsOf(a).incidents_warn }}</span>
+              </td>
+              <td class="mono right">{{ fmtBits(statsOf(a).traffic_bps) }}</td>
+              <td class="mono right">{{ fmtNumber(statsOf(a).segments_per_min, 0) }}</td>
+              <td class="mono right" :class="{ 'fail-text': statsOf(a).segment_errors }">{{ fmtNumber(statsOf(a).segment_errors, 0) }}</td>
+              <td class="mono right hide-narrow">{{ fmtSeconds(statsOf(a).check_p95_seconds) }}</td>
+              <td class="mono right hide-narrow">{{ fmtSeconds(statsOf(a).lag_max_seconds) }}</td>
+              <td class="mono right hide-narrow">{{ a.status ? fmtNumber(a.status.cpu_cores, 2) + (a.status.cpu_limit ? ' / ' + fmtNumber(a.status.cpu_limit, 0) : '') : '—' }}</td>
+              <td class="mono right hide-narrow">{{ a.status?.memory_bytes ? fmtBytes(a.status.memory_bytes) : '—' }}</td>
+            </tr>
+            <tr v-if="agents.length > 1" class="total">
+              <td class="strong">{{ t('agents.statsTotal') }}</td>
+              <td />
+              <td class="mono right nowrap">{{ totals.incidents_crit }} / {{ totals.incidents_warn }}</td>
+              <td class="mono right">{{ fmtBits(totals.traffic_bps) }}</td>
+              <td class="mono right">{{ fmtNumber(totals.segments_per_min, 0) }}</td>
+              <td class="mono right">{{ fmtNumber(totals.segment_errors, 0) }}</td>
+              <td class="hide-narrow" colspan="4" />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
     <ModalDialog v-if="creating" :title="t('agents.addAgent')" @close="creating = false">
       <form @submit.prevent="create">
         <div class="modal-body">
@@ -263,6 +337,18 @@ function localOnly(url: string): boolean {
 </template>
 
 <style scoped>
+.ok-text {
+  color: var(--ok, #4ade80);
+}
+.warn-text {
+  color: var(--accent-warm, #f5b942);
+}
+.fail-text {
+  color: #ff7a85;
+}
+tr.total td {
+  border-top: 1px solid var(--border, #24324a);
+}
 .lead {
   max-width: 78ch;
   margin: -6px 0 14px;
