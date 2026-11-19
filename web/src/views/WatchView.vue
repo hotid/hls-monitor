@@ -86,6 +86,7 @@ function resetHistory() {
   counted = {}
   totals = {}
   sent = { origin: [], link: [], client: [] }
+  for (const k of Object.keys(tooFast)) delete tooFast[k]
   pings = []
   kernelClient = false
   startedAt.value = Math.floor(Date.now() / 1000)
@@ -212,6 +213,9 @@ async function ping() {
 
 // Shorter than this, the time a segment took says nothing of the speed.
 const minSpeedTime = 0.02
+// The hops whose latest segment went through faster than that: there is
+// no speed to draw for them, and the line says why it is not there.
+const tooFast: Record<string, boolean> = {}
 
 interface ChartDef {
   id: string
@@ -295,7 +299,7 @@ const charts = computed(() => {
       ...c,
       from,
       to: Math.max(to, from + 60),
-      lines: c.lines.filter((l) => viaAgent || !l.agent).map((l): ChartLine => ({ label: l.label, points: series[l.key] ?? [] })),
+      lines: c.lines.filter((l) => viaAgent || !l.agent).map((l): ChartLine => ({ label: tooFast[l.key] ? t('watch.tooFastToMeasure', { line: l.label }) : l.label, points: series[l.key] ?? [] })),
     }))
     // What cannot be measured here is not shown at all: neither a line
     // without a single point, nor a chart without lines.
@@ -459,12 +463,14 @@ async function start() {
       latest.originBody = Math.max(o.total_ms - o.ttfb_ms, 0) / 1000
       const fromOrigin = speed(o.bytes, o.total_ms / 1000)
       if (fromOrigin !== undefined) latest.speedOrigin = fromOrigin
+      tooFast.speedOrigin = o.bytes > 0 && fromOrigin === undefined
     }
     if (info?.relay) {
       latest.relayWait = info.relay.wait_ms / 1000
       latest.relayUpload = info.relay.upload_ms / 1000
       const through = speed(info.relay.bytes, info.relay.upload_ms / 1000)
       if (through !== undefined) latest.speedRelay = through
+      tooFast.speedRelay = info.relay.bytes > 0 && through === undefined
     }
   })
   player.on(HlsLib.Events.ERROR, (_e, data) => {

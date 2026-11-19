@@ -75,6 +75,7 @@
   "stateStalled": "Waiting for data",
   "stateStopped": "Stopped",
   "title": "Watch",
+  "tooFastToMeasure": "{line}: faster than can be measured",
   "unsupportedHint": "The browser has no decoder for this stream. H.264 video with AAC audio plays everywhere; MPEG-2 video, AC-3 audio and HEVC depend on the browser and the system. This says nothing about the stream itself.",
   "vantage": "Watch from",
   "vantageAgentHint": "The agent requests the stream from where it stands and hands it over to the server: browser → server → agent → origin.",
