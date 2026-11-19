@@ -538,8 +538,9 @@ func TestMoreIsFetchedWhereTheSoundComesLate(t *testing.T) {
 
 func TestStreamWithNoSound(t *testing.T) {
 	// The picture and no sound, and no playlist of sound either: told for
-	// information, after a few looks.
-	f := newFixture(t, hlstest.Options{}, "/master.m3u8", LevelContainer)
+	// information, after a few looks. (The container of the fixture's
+	// segments has sound in it, and is not read at this level.)
+	f := newFixture(t, hlstest.Options{}, "/master.m3u8", LevelSegments)
 	s := &stubLooker{frame: liveFrame}
 	s.frame.HasAudio, s.frame.NoSound = false, true
 	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
@@ -557,6 +558,16 @@ func TestStreamWithNoSound(t *testing.T) {
 	watch(f, 6*time.Minute, ProbAudioAbsent)
 	if hasProblem(f.step(1), ProbAudioAbsent) != nil {
 		t.Error("still told after sound was heard")
+	}
+
+	// A decoder that found no sound where the container has it was given
+	// too little: that is not a stream without sound.
+	f = newFixture(t, hlstest.Options{}, "/master.m3u8", LevelContainer)
+	s = &stubLooker{frame: liveFrame}
+	s.frame.HasAudio, s.frame.NoSound = false, true
+	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
+	if n, _ := watch(f, 15*time.Minute, ProbAudioAbsent); n != 0 {
+		t.Errorf("told %d times of a stream whose container has sound", n)
 	}
 
 	// A stream that keeps its sound in a playlist of its own has sound.

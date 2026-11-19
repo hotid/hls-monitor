@@ -369,7 +369,9 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 	if f.NoSound {
 		// Nobody took up the look before either: the stream has no
 		// playlist of sound, and no sound.
-		l.unheard.note(l.listen, at)
+		// Where the container was read it must say the same: a
+		// decoder alone may have been given too little to find it in.
+		l.unheard.note(l.listen && (info == nil || audio == nil), at)
 		l.listen = true
 	} else {
 		l.unheard = run{}
