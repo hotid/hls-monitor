@@ -227,6 +227,7 @@ func (r *Runner) loop(ctx context.Context, j *job, c *probe.Checker, startDelay 
 	for {
 		lag := max(time.Since(next), 0)
 		start := time.Now()
+		late := overran
 		r.mu.Lock()
 		// overran is how much of the lag the previous check explains by
 		// having taken longer than the interval.
@@ -256,7 +257,11 @@ func (r *Runner) loop(ctx context.Context, j *job, c *probe.Checker, startDelay 
 		if res.Overloaded != "" {
 			r.unreliable.Add(1)
 		}
-		res.Metrics = append(res.Metrics, probe.Metric{Name: "hls_check_lag_seconds", Value: lag.Seconds()})
+		// How late the cycle started for reasons of the runner's own: not
+		// counting what the check before it took. A stream that does not
+		// answer takes its whole timeout at every check, and that is told
+		// as its problem, not as a monitor that cannot keep up.
+		res.Metrics = append(res.Metrics, probe.Metric{Name: "hls_check_lag_seconds", Value: max(lag-late, 0).Seconds()})
 		r.sink(ctx, res)
 
 		// The interval counts from the start of a cycle; a cycle that took
