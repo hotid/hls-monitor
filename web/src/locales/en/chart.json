@@ -1,5 +1,11 @@
 {
+  "atCursor": "cursor",
+  "avg": "avg",
+  "last": "last",
   "legendHint": "a click leaves only this line, another brings all back; with Ctrl or Shift, add or remove one",
+  "max": "max",
+  "min": "min",
   "noChecks": "no checks",
-  "noDataForThisPeriod": "No data for this period"
+  "noDataForThisPeriod": "No data for this period",
+  "statsHint": "over the period shown; with the pointer on the chart the last column is the value under it"
 }

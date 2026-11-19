@@ -61,21 +61,37 @@ const aligned = computed(() => {
 
 const hasData = computed(() => aligned.value.ys.some((col) => col.some((v) => v !== null)))
 
+// What the legend tells of every line: the least, the most, the mean and the
+// last value of the period shown. A state has no mean and its least says
+// nothing, so it keeps the worst and the last.
+type Stat = 'min' | 'max' | 'avg' | 'last'
+const stats = computed<Stat[]>(() => (props.unit === 'status' ? ['max', 'last'] : ['min', 'max', 'avg', 'last']))
+const statName: Record<Stat, () => string> = {
+  min: () => t('chart.min'),
+  max: () => t('chart.max'),
+  avg: () => t('chart.avg'),
+  last: () => t('chart.last'),
+}
 const legend = computed(() =>
   props.lines.map((line, i) => {
     const col = aligned.value.ys[i] ?? []
-    let v: number | null = null
-    if (hoverIdx.value !== null) {
-      v = col[hoverIdx.value] ?? null
-    } else {
-      for (let j = col.length - 1; j >= 0; j--) {
-        if (col[j] != null) {
-          v = col[j]!
-          break
-        }
-      }
+    let min: number | null = null
+    let max: number | null = null
+    let last: number | null = null
+    let sum = 0
+    let n = 0
+    for (const v of col) {
+      if (v == null) continue
+      if (min === null || v < min) min = v
+      if (max === null || v > max) max = v
+      last = v
+      sum += v
+      n++
     }
-    return { id: idOf(line), label: line.label, color: color(i), value: fmtUnit(v, props.unit), off: hidden.value.has(idOf(line)) }
+    // With the pointer on the chart the last column is the value under it.
+    if (hoverIdx.value !== null) last = col[hoverIdx.value] ?? null
+    const of: Record<Stat, number | null> = { min, max, avg: n ? sum / n : null, last }
+    return { id: idOf(line), label: line.label, color: color(i), values: stats.value.map((k) => ({ k, text: fmtUnit(of[k], props.unit) })), off: hidden.value.has(idOf(line)) }
   }),
 )
 
@@ -249,16 +265,19 @@ onBeforeUnmount(() => {
       <div ref="host" class="chart-host" @mouseleave="hoverIdx = null" />
       <div v-if="!hasData" class="chart-empty muted">{{ loading ? t('common.loading') : (emptyHint ?? t('chart.noDataForThisPeriod')) }}</div>
     </div>
-    <ul class="chart-legend" :class="{ focusing: focused !== null }" @mouseleave="focus(null)">
+    <ul class="chart-legend" :class="[{ focusing: focused !== null }, 'n' + stats.length]" @mouseleave="focus(null)">
+      <li class="head" :title="t('chart.statsHint')" aria-hidden="true">
+        <span />
+        <b v-for="k in stats" :key="k" :class="'c-' + k">{{ k === 'last' && hoverIdx !== null ? t('chart.atCursor') : statName[k]() }}</b>
+      </li>
       <li
         v-for="l in legend" :key="l.id" :class="{ off: l.off, focused: focused === l.id }" :title="l.label + ' — ' + t('chart.legendHint')"
         role="button" tabindex="0" :aria-pressed="!l.off"
         @mouseenter="focus(l.id)" @focus="focus(l.id)" @blur="focus(null)"
         @click="pick(l.id, $event)" @keydown.enter.prevent="pick(l.id, $event)" @keydown.space.prevent="pick(l.id, $event)"
       >
-        <i :style="{ background: l.color }" />
-        <span class="truncate">{{ l.label }}</span>
-        <b class="mono">{{ l.value }}</b>
+        <span class="name"><i :style="{ background: l.color }" /><span class="truncate">{{ l.label }}</span></span>
+        <b v-for="v in l.values" :key="v.k" class="mono" :class="'c-' + v.k">{{ v.text }}</b>
       </li>
     </ul>
   </div>
@@ -304,38 +323,76 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
+/* One row for one line, the figures in columns of their own: the legend
+   takes the same room whatever the data are. */
+.chart {
+  container-type: inline-size;
+}
 .chart-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 14px;
+  display: grid;
+  grid-template-columns: minmax(60px, 1fr) repeat(4, auto);
+  gap: 2px 12px;
   margin: 6px 0 0;
   padding: 0;
   list-style: none;
-  max-height: 58px;
+  max-height: 236px;
   overflow-y: auto;
   font-size: 12px;
 }
+.chart-legend.n2 {
+  grid-template-columns: minmax(60px, 1fr) repeat(2, auto);
+}
 
 .chart-legend li {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: 1 / -1;
+  align-items: center;
+  color: var(--text-muted);
+}
+.chart-legend .name {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  max-width: 100%;
+}
+.chart-legend li.head {
+  cursor: help;
+  font-size: 11px;
+}
+.chart-legend li.head b {
   color: var(--text-muted);
 }
 
-.chart-legend li {
+/* A narrow chart keeps what matters most: first the mean goes, then the least. */
+@container (max-width: 470px) {
+  .chart-legend.n4 {
+    grid-template-columns: minmax(60px, 1fr) repeat(3, auto);
+  }
+  .chart-legend.n4 .c-avg {
+    display: none;
+  }
+}
+@container (max-width: 380px) {
+  .chart-legend.n4 {
+    grid-template-columns: minmax(60px, 1fr) repeat(2, auto);
+  }
+  .chart-legend.n4 .c-min {
+    display: none;
+  }
+}
+
+.chart-legend li:not(.head) {
   cursor: pointer;
   user-select: none;
 }
-.chart-legend li:hover span {
+.chart-legend li:not(.head):hover span {
   color: var(--text);
 }
 .chart-legend li {
   transition: opacity 0.1s;
 }
-.chart-legend.focusing li:not(.focused) {
+.chart-legend.focusing li:not(.focused):not(.head) {
   opacity: 0.45;
 }
 .chart-legend li.focused span {
@@ -360,5 +417,6 @@ onBeforeUnmount(() => {
   color: var(--text-strong);
   font-weight: 400;
   white-space: nowrap;
+  text-align: right;
 }
 </style>
