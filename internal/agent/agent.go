@@ -96,6 +96,7 @@ func (a *Agent) status() agentproto.Status {
 	st.QueueFailing = a.writeFailed.Load()
 	st.Link = a.link.report()
 	st.Fetches = true
+	st.Diagnoses = true
 	load := a.load.Status()
 	if load.Overloaded {
 		st.Overloaded = load.Reason

@@ -5,6 +5,7 @@ import { kindLabel, problemName } from '@/catalog'
 import { fmtBytes, fmtDuration, fmtMs, fmtSeconds } from '@/format'
 import { dateLocale, t } from '@/i18n'
 import { conclusion } from '@/incident'
+import { useLive } from '@/stores/live'
 import type { DiagnoseEvent, Endpoint, Incident, Level, ProbeProblem, SegmentDetail, StreamDetail } from '@/types'
 import IncidentDetails from '@/components/IncidentDetails.vue'
 import PlaylistPair from '@/components/PlaylistPair.vue'
@@ -23,6 +24,22 @@ const info = ref<StreamDetail | null>(null)
 const missing = ref(false)
 const level = ref<Level>('header')
 const minutes = ref(Number(localStorage.getItem('diagnose-minutes')) || 2)
+
+// Where the diagnosis is made from: the server itself (1), or an agent.
+const live = useLive()
+const vantage = ref(1)
+const vantages = computed(() =>
+  (live.overview?.agents ?? []).map((a) => ({
+    id: a.id,
+    label: a.kind === 'local' ? t('common.serverLocal') : a.name,
+    // An agent must be there and new enough to take such work.
+    available: a.kind === 'local' || (a.enabled && a.online && !!a.status?.diagnoses),
+    checks: info.value?.agent_ids.includes(a.id) ?? false,
+  })),
+)
+function setVantage() {
+  void start()
+}
 
 // ── What the run has shown so far ─────────────────────────────────────
 interface PlaylistRow {
@@ -64,7 +81,9 @@ interface Finding extends ProbeProblem {
 
 const running = ref(false)
 const error = ref<string | null>(null)
-const ended = ref<'' | 'time' | 'stopped' | 'lost'>('')
+const ended = ref<'' | 'time' | 'stopped' | 'lost' | 'agent'>('')
+// What an agent said when its diagnosis ended for another reason than time.
+const endedWhy = ref('')
 const startedAt = ref(0)
 const now = ref(Date.now())
 const total = ref(0)
@@ -175,10 +194,14 @@ async function start() {
   planned.value = minutes.value * 60
   localStorage.setItem('diagnose-minutes', String(minutes.value))
   try {
-    await readStream<DiagnoseEvent>(`/api/v1/streams/${props.id}/diagnose?level=${level.value}&seconds=${planned.value}`, mine.signal, (ev) => {
+    const from = vantage.value !== 1 ? `&agent=${vantage.value}` : ''
+    await readStream<DiagnoseEvent>(`/api/v1/streams/${props.id}/diagnose?level=${level.value}&seconds=${planned.value}${from}`, mine.signal, (ev) => {
       if (ev.type === 'start') startedAt.value = Date.now()
       else if (ev.type === 'cycle') onCycle(ev)
-      else if (ev.type === 'end') ended.value = 'time'
+      else if (ev.type === 'end') {
+        ended.value = ev.reason === 'time' || !ev.reason ? 'time' : 'agent'
+        endedWhy.value = ev.reason ?? ''
+      }
     })
     if (!ended.value) ended.value = 'lost'
   } catch (e) {
@@ -212,6 +235,13 @@ onMounted(async () => {
   try {
     info.value = await api.get<StreamDetail>(`/api/v1/streams/${props.id}`)
     level.value = info.value.level
+    // A stream the server does not check itself is diagnosed from the
+    // first of its vantage points that can do it.
+    if (!info.value.agent_ids.includes(1)) {
+      if (!live.overview) await live.refresh().catch(() => {})
+      const first = vantages.value.find((v) => v.checks && v.available && v.id !== 1)
+      if (first) vantage.value = first.id
+    }
     void start()
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) missing.value = true
@@ -248,6 +278,7 @@ const state = computed(() => {
   if (ended.value === 'time') return t('diagnose.finishedTimeIsUp')
   if (ended.value === 'stopped') return t('diagnose.stopped')
   if (ended.value === 'lost') return t('diagnose.interruptedConnectionToTheServerLost')
+  if (ended.value === 'agent') return t('diagnose.interruptedByAgent', { why: endedWhy.value })
   return ''
 })
 
@@ -319,6 +350,9 @@ function asIncident(f: Finding): Incident {
         </div>
         <span v-if="total" class="badge" :class="worst">{{ worst === 'fail' ? t('diagnose.thereWereFailures') : worst === 'warn' ? t('diagnose.thereWereWarnings') : t('diagnose.noProblems') }}</span>
         <span class="spacer" />
+        <select v-if="vantages.length > 1" v-model.number="vantage" class="input compact" :aria-label="t('diagnose.vantage')" :title="t('diagnose.vantageHint')" @change="setVantage">
+          <option v-for="v in vantages" :key="v.id" :value="v.id" :disabled="!v.available">{{ v.label }}{{ v.checks ? '' : ' ' + t('diagnose.vantageNotAssigned') }}{{ v.available ? '' : ' ' + t('diagnose.vantageUnavailable') }}</option>
+        </select>
         <div class="seg" role="group" :aria-label="t('diagnose.checkDepth')">
           <button v-for="l in levels" :key="l.id" type="button" :aria-pressed="level === l.id" :title="l.hint" @click="setLevel(l.id)">{{ l.label }}</button>
         </div>
@@ -338,7 +372,7 @@ function asIncident(f: Finding): Incident {
           <span class="muted">{{ state }}</span>
         </div>
         <p class="muted">
-          {{ t('diagnose.aSeparateCheckEverySecondFrom') }}
+          {{ vantage === 1 ? t('diagnose.aSeparateCheckEverySecondFrom') : t('diagnose.aSeparateCheckEverySecondFromAgent', { agent: vantages.find((v) => v.id === vantage)?.label ?? '' }) }}
         </p>
         <p v-if="info" class="mono muted url">{{ info.url }}</p>
       </div>

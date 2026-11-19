@@ -42,6 +42,9 @@ type Status struct {
 	// Fetches tells that the agent takes requests to fetch something for
 	// the server (see FetchRequest); older agents do not.
 	Fetches bool `json:"fetches,omitempty"`
+	// Diagnoses tells that the agent takes requests to check a stream
+	// every second for a while (see DiagnoseJob); older agents do not.
+	Diagnoses bool `json:"diagnoses,omitempty"`
 }
 
 // Link describes the way from an agent to the server, as the agent sees
@@ -124,6 +127,36 @@ type FetchRequest struct {
 	RangeOffset int64 `json:"range_offset,omitempty"`
 	RangeLength int64 `json:"range_length,omitempty"`
 	MaxBody     int64 `json:"max_body"`
+	// Diagnose, when set, makes the request another kind of work
+	// altogether: nothing is fetched for the server, a stream is checked.
+	Diagnose *DiagnoseJob `json:"diagnose,omitempty"`
+}
+
+// A live diagnosis from where an agent stands comes to it the way a fetch
+// does, as the answer to one of its requests for work. The agent checks
+// the stream every second for the time it is given and posts what every
+// check found to the address a fetch is answered at, one check a request:
+// the body is a DiagnoseCycle as JSON and the FetchResult that goes with
+// it has ContentType DiagnoseCycleType. A last request with
+// DiagnoseEndType and no body tells that the time is up. The server
+// answers 404 once nobody watches, and the agent stops.
+const (
+	DiagnoseCycleType = "application/x-hls-monitor-diagnose-cycle"
+	DiagnoseEndType   = "application/x-hls-monitor-diagnose-end"
+)
+
+// DiagnoseJob is a stream to check and for how long.
+type DiagnoseJob struct {
+	Target  probe.Target `json:"target"`
+	Seconds int          `json:"seconds"`
+}
+
+// DiagnoseCycle is one check of a diagnosis: its number from one, how long
+// it took and everything it found.
+type DiagnoseCycle struct {
+	N      int           `json:"n"`
+	TookMs float64       `json:"took_ms"`
+	Result *probe.Result `json:"result"`
 }
 
 // FetchResult is what came of a FetchRequest.

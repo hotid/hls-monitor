@@ -28,6 +28,13 @@ definitions:
           $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Target'
         type: array
     type: object
+  github_com_hotid_hls-monitor_internal_agentproto.DiagnoseJob:
+    properties:
+      seconds:
+        type: integer
+      target:
+        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Target'
+    type: object
   github_com_hotid_hls-monitor_internal_agentproto.EnrollRequest:
     properties:
       token:
@@ -46,6 +53,12 @@ definitions:
     type: object
   github_com_hotid_hls-monitor_internal_agentproto.FetchRequest:
     properties:
+      diagnose:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.DiagnoseJob'
+        description: |-
+          Diagnose, when set, makes the request another kind of work
+          altogether: nothing is fetched for the server, a stream is checked.
       entry:
         description: |-
           Entry marks the stream's own address; Inside tells that it was not
@@ -137,6 +150,11 @@ definitions:
         type: number
       cpu_limit:
         type: number
+      diagnoses:
+        description: |-
+          Diagnoses tells that the agent takes requests to check a stream
+          every second for a while (see DiagnoseJob); older agents do not.
+        type: boolean
       fetches:
         description: |-
           Fetches tells that the agent takes requests to fetch something for
@@ -1354,7 +1372,9 @@ definitions:
           it found.'
         type: integer
       reason:
-        description: 'End: "time" when the requested duration has passed.'
+        description: |-
+          End: "time" when the requested duration has passed; from an agent
+          it may instead say what went wrong.
         type: string
       result:
         $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Result'
@@ -3226,12 +3246,12 @@ paths:
       - streams
   /api/v1/streams/{id}/diagnose:
     get:
-      description: 'Runs a separate checker from the server itself, apart from the
-        regular checks: nothing it finds is stored, raises incidents or reaches the
-        charts. The response is newline-delimited JSON, one event per line: "start",
-        then a "cycle" per check with the full result, then "end". It lasts until
-        the duration passes or the client disconnects. At most three diagnoses run
-        at once.'
+      description: 'Runs a separate checker from the server itself, or with agent
+        set from where that agent stands, apart from the regular checks: nothing it
+        finds is stored, raises incidents or reaches the charts. The response is newline-delimited
+        JSON, one event per line: "start", then a "cycle" per check with the full
+        result, then "end". It lasts until the duration passes or the client disconnects.
+        At most three diagnoses run at once.'
       parameters:
       - description: Stream ID
         in: path
@@ -3246,6 +3266,10 @@ paths:
       - description: How long to run (default 120, max 600)
         in: query
         name: seconds
+        type: integer
+      - description: The agent to check from; the server itself by default
+        in: query
+        name: agent
         type: integer
       produces:
       - application/x-ndjson

@@ -194,6 +194,8 @@ export interface AgentStatus {
   memory_bytes: number
   link?: AgentLink
   fetches?: boolean
+  /** The agent can run a live diagnosis from where it stands. */
+  diagnoses?: boolean
 }
 
 export interface Enrollment {

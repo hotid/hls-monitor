@@ -34,6 +34,9 @@ type fetchJob struct {
 	agent int64
 	req   agentproto.FetchRequest
 	done  chan fetchDone
+	// stream is set for work an agent answers many times over, a live
+	// diagnosis: every answer goes there, in order.
+	stream chan fetchDone
 }
 
 type fetchDone struct {
@@ -173,9 +176,82 @@ func (s *Server) agentFetchResult(c *gin.Context) {
 	if err != nil {
 		res.Error = "the agent's answer broke off: " + err.Error()
 	}
+	if job.stream != nil {
+		// One answer of many: it waits its turn, but not for ever — a
+		// reader that went away must not hold the agent.
+		wait := time.NewTimer(5 * time.Second)
+		defer wait.Stop()
+		select {
+		case job.stream <- fetchDone{res: res, body: body}:
+			c.Status(http.StatusNoContent)
+		case <-wait.C:
+			fail(c, http.StatusNotFound, "not_found", "nobody waits for this any more")
+		}
+		return
+	}
 	select {
 	case job.done <- fetchDone{res: res, body: body, upload: time.Since(began)}:
 	default:
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// diagnoseThroughAgent has an agent check a stream every second and calls
+// cycle with what every check found, until the time is up, the reader
+// stops (cycle returns false) or ctx is done. It tells why it ended:
+// "time", or what went wrong.
+func (s *Server) diagnoseThroughAgent(ctx context.Context, agent int64, d agentproto.DiagnoseJob, cycle func(agentproto.DiagnoseCycle) bool) string {
+	var id [12]byte
+	_, _ = rand.Read(id[:])
+	job := &fetchJob{agent: agent, req: agentproto.FetchRequest{ID: hex.EncodeToString(id[:]), Diagnose: &d}, stream: make(chan fetchDone, 2)}
+	q := s.relays.queue(agent)
+	s.relays.mu.Lock()
+	s.relays.pending[job.req.ID] = job
+	s.relays.mu.Unlock()
+	// Once nobody is listed as waiting the agent is told so at its next
+	// answer, and stops.
+	defer func() {
+		s.relays.mu.Lock()
+		delete(s.relays.pending, job.req.ID)
+		s.relays.mu.Unlock()
+	}()
+	hand := time.NewTimer(s.fetchHandOver)
+	defer hand.Stop()
+	select {
+	case q <- job:
+	case <-hand.C:
+		return "the agent is not taking requests: it is out of contact or busy"
+	case <-ctx.Done():
+		return ""
+	}
+	// A check takes its timeout at the most; an agent silent for much
+	// longer than that is gone.
+	quiet := time.Duration(max(d.Target.TimeoutSec, 10)*3)*time.Second + 15*time.Second
+	for {
+		silence := time.NewTimer(quiet)
+		select {
+		case got := <-job.stream:
+			silence.Stop()
+			switch {
+			case got.res.Error != "":
+				return got.res.Error
+			case got.res.ContentType == agentproto.DiagnoseEndType:
+				return "time"
+			case got.res.ContentType != agentproto.DiagnoseCycleType:
+				return "the agent is too old for this"
+			}
+			var c agentproto.DiagnoseCycle
+			if json.Unmarshal(got.body, &c) != nil || c.Result == nil {
+				return "the agent sent something that cannot be read"
+			}
+			if !cycle(c) {
+				return ""
+			}
+		case <-silence.C:
+			return "the agent stopped answering"
+		case <-ctx.Done():
+			silence.Stop()
+			return ""
+		}
+	}
 }

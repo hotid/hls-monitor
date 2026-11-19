@@ -1761,7 +1761,7 @@ const docTemplate = `{
         },
         "/api/v1/streams/{id}/diagnose": {
             "get": {
-                "description": "Runs a separate checker from the server itself, apart from the regular checks: nothing it finds is stored, raises incidents or reaches the charts. The response is newline-delimited JSON, one event per line: \"start\", then a \"cycle\" per check with the full result, then \"end\". It lasts until the duration passes or the client disconnects. At most three diagnoses run at once.",
+                "description": "Runs a separate checker from the server itself, or with agent set from where that agent stands, apart from the regular checks: nothing it finds is stored, raises incidents or reaches the charts. The response is newline-delimited JSON, one event per line: \"start\", then a \"cycle\" per check with the full result, then \"end\". It lasts until the duration passes or the client disconnects. At most three diagnoses run at once.",
                 "produces": [
                     "application/x-ndjson"
                 ],
@@ -1787,6 +1787,12 @@ const docTemplate = `{
                         "type": "integer",
                         "description": "How long to run (default 120, max 600)",
                         "name": "seconds",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "description": "The agent to check from; the server itself by default",
+                        "name": "agent",
                         "in": "query"
                     }
                 ],
@@ -2679,6 +2685,17 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_hotid_hls-monitor_internal_agentproto.DiagnoseJob": {
+            "type": "object",
+            "properties": {
+                "seconds": {
+                    "type": "integer"
+                },
+                "target": {
+                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Target"
+                }
+            }
+        },
         "github_com_hotid_hls-monitor_internal_agentproto.EnrollRequest": {
             "type": "object",
             "properties": {
@@ -2707,6 +2724,14 @@ const docTemplate = `{
         "github_com_hotid_hls-monitor_internal_agentproto.FetchRequest": {
             "type": "object",
             "properties": {
+                "diagnose": {
+                    "description": "Diagnose, when set, makes the request another kind of work\naltogether: nothing is fetched for the server, a stream is checked.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.DiagnoseJob"
+                        }
+                    ]
+                },
                 "entry": {
                     "description": "Entry marks the stream's own address; Inside tells that it was not\na public one. The agent applies its own policy on private networks.",
                     "type": "boolean"
@@ -2817,6 +2842,10 @@ const docTemplate = `{
                 },
                 "cpu_limit": {
                     "type": "number"
+                },
+                "diagnoses": {
+                    "description": "Diagnoses tells that the agent takes requests to check a stream\nevery second for a while (see DiagnoseJob); older agents do not.",
+                    "type": "boolean"
                 },
                 "fetches": {
                     "description": "Fetches tells that the agent takes requests to fetch something for\nthe server (see FetchRequest); older agents do not.",
@@ -4429,7 +4458,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "reason": {
-                    "description": "End: \"time\" when the requested duration has passed.",
+                    "description": "End: \"time\" when the requested duration has passed; from an agent\nit may instead say what went wrong.",
                     "type": "string"
                 },
                 "result": {

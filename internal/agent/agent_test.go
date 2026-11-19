@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -395,5 +396,72 @@ func TestWatchThroughAgent(t *testing.T) {
 	// What the origin does not have is its answer, passed on.
 	if code, _, _ := get("/api/v1/play/" + first(master) + "x"); code != http.StatusForbidden {
 		t.Errorf("a damaged token: %d", code)
+	}
+}
+
+func TestDiagnosisFromAnAgent(t *testing.T) {
+	e := newEnv(t)
+	var en enrollment
+	e.call(http.StatusCreated, "POST", "/api/v1/agents", map[string]string{"name": "edge-1"}, &en)
+	e.call(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{
+		"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "header", "agent_ids": []int64{en.Agent.ID},
+	}, nil)
+	path := fmt.Sprintf("/api/v1/streams/1/diagnose?seconds=3&agent=%d", en.Agent.ID)
+	// An agent that is not there cannot be asked.
+	e.call(http.StatusConflict, "GET", path, nil, nil)
+	e.call(http.StatusNotFound, "GET", "/api/v1/streams/1/diagnose?agent=77", nil, nil)
+
+	e.start(en.Token, filepath.Join(t.TempDir(), "agent.key"))
+	waitFor(t, "the agent to say what it can do", func() bool {
+		req, _ := http.NewRequest("GET", e.server.URL+path, nil)
+		resp, err := e.admin.Do(req)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
+		// The agent checks the stream every second and the server passes
+		// on what each check found, then says that the time is up.
+		var types []string
+		cycles := 0
+		dec := json.NewDecoder(resp.Body)
+		for {
+			var ev struct {
+				Type   string `json:"type"`
+				N      int    `json:"n"`
+				Reason string `json:"reason"`
+				Result *struct {
+					TargetID int64  `json:"target_id"`
+					Status   string `json:"status"`
+					Variants []any  `json:"variants"`
+				} `json:"result"`
+			}
+			if dec.Decode(&ev) != nil {
+				break
+			}
+			types = append(types, ev.Type)
+			switch ev.Type {
+			case "cycle":
+				cycles++
+				if ev.N != cycles || ev.Result == nil || ev.Result.TargetID != 1 || len(ev.Result.Variants) == 0 {
+					t.Fatalf("cycle %d: %+v", cycles, ev)
+				}
+			case "end":
+				if ev.Reason != "time" {
+					t.Fatalf("ended because of %q", ev.Reason)
+				}
+			}
+		}
+		if cycles < 2 || len(types) < 4 || types[0] != "start" || types[len(types)-1] != "end" {
+			t.Fatalf("%d cycles, events %v", cycles, types)
+		}
+		return true
+	})
+	// Nothing of it was stored: the agent's own checks are another matter,
+	// and what a diagnosis finds is for the one who watches it.
+	if got := e.state(1, en.Agent.ID); got != nil && got.Status == "" {
+		t.Errorf("state = %+v", got)
 	}
 }
