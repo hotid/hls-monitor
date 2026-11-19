@@ -518,3 +518,39 @@ export interface Aggregate {
   step: number
   series: Record<string, [number, number][]>
 }
+
+/** One file of a capture: a segment, the bytes the check read, a playlist. */
+export interface CaptureFile {
+  role: 'evidence' | 'segment' | 'init' | 'playlist' | 'master'
+  name: string
+  seq?: number
+  position: number
+  bytes: number
+  whole: boolean
+  after_detection: boolean
+  error?: string
+  decode_errors?: string
+}
+
+/** Segments saved around a finding. */
+export interface Capture {
+  id: string
+  stream_id: number
+  variant: string
+  kinds: string[]
+  confirmed?: string[]
+  manual?: boolean
+  state: 'pending' | 'kept' | 'found'
+  at: string
+  done: boolean
+  bytes: number
+  playable: boolean
+  files: CaptureFile[]
+  notes?: string[]
+}
+
+export interface Captures {
+  enabled: boolean
+  captures: Capture[]
+  usage?: { captures: number; bytes: number; max_bytes: number; made: number; refused: number }
+}

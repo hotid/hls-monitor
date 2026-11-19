@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/api"
 	"github.com/hotid/hls-monitor/internal/auth"
+	"github.com/hotid/hls-monitor/internal/capture"
 	"github.com/hotid/hls-monitor/internal/envflag"
 	"github.com/hotid/hls-monitor/internal/ingest"
 	"github.com/hotid/hls-monitor/internal/metrics"
@@ -53,6 +55,9 @@ type config struct {
 	privateNetworks                                string
 	pictureCheck                                   time.Duration
 	ffmpeg                                         string
+	capture                                        string
+	captureMaxMB                                   int
+	captureKeep                                    time.Duration
 	snapshotRetention                              time.Duration
 	incidentRetention                              time.Duration
 }
@@ -81,6 +86,9 @@ func parseConfig() config {
 	envflag.String(fs, &c.privateNetworks, "private-networks", "HLSMON_PRIVATE_NETWORKS", "same", "whether local checks may connect to addresses that are not public: same (only for streams whose own address is such), allow or deny")
 	envflag.Duration(fs, &c.pictureCheck, "picture-check", "HLSMON_PICTURE_CHECK", 0, "how often the picture and the sound of every stream are looked at, e.g. 5m: a black screen, a picture that stopped, silence; needs ffmpeg; 0 does not look")
 	envflag.String(fs, &c.ffmpeg, "ffmpeg", "HLSMON_FFMPEG", "ffmpeg", "the ffmpeg program to decode with, for picture-check")
+	envflag.String(fs, &c.capture, "capture", "HLSMON_CAPTURE", "off", "on saves the segments around a finding of the server's own checks, next to the database: the one in question, a few before and after, the playlists; off does not")
+	envflag.Int(fs, &c.captureMaxMB, "capture-max-mb", "HLSMON_CAPTURE_MAX_MB", 2048, "MiB of disk all captures may take, those not confirmed yet included; beyond it the oldest are dropped")
+	envflag.Duration(fs, &c.captureKeep, "capture-keep", "HLSMON_CAPTURE_KEEP", 7*24*time.Hour, "how long a capture is kept")
 	envflag.Duration(fs, &c.eventRetention, "event-retention", "HLSMON_EVENT_RETENTION", 7*24*time.Hour, "how long closed informational incidents are kept")
 	envflag.Duration(fs, &c.snapshotRetention, "snapshot-retention", "HLSMON_SNAPSHOT_RETENTION", 7*24*time.Hour, "how long playlist snapshots are kept")
 	envflag.Duration(fs, &c.incidentRetention, "incident-retention", "HLSMON_INCIDENT_RETENTION", 90*24*time.Hour, "how long closed incidents are kept")
@@ -174,6 +182,14 @@ func run(cfg config, log *slog.Logger) error {
 	if d := picture.Setup(cfg.pictureCheck, cfg.ffmpeg, log); d != nil {
 		local.SetLooker(d, cfg.pictureCheck)
 	}
+	captures, err := openCaptures(cfg, log)
+	if err != nil {
+		return err
+	}
+	if captures != nil {
+		local.SetCapturer(captures)
+		go captures.Run(bg)
+	}
 
 	var proxies []string
 	for _, p := range strings.Split(cfg.trustedProxies, ",") {
@@ -194,6 +210,7 @@ func run(cfg config, log *slog.Logger) error {
 		BasePath:       basePath,
 		TrustedProxies: proxies,
 		Load:           load,
+		Captures:       captures,
 		PlayKey:        playKey(filepath.Join(filepath.Dir(cfg.dbPath), "play.key"), log),
 	}, st, mx, ing, local, webui.Handler(basePath), log)
 	local.SetSlates(srv.Slates)
@@ -325,4 +342,30 @@ func housekeeping(ctx context.Context, st *store.Store, srv *api.Server, cfg con
 			srv.PurgeSeries(ctx)
 		}
 	}
+}
+
+// openCaptures opens the place the segments around findings are saved
+// in; nil when captures are off.
+func openCaptures(cfg config, log *slog.Logger) (*capture.Store, error) {
+	switch strings.ToLower(strings.TrimSpace(cfg.capture)) {
+	case "", "off", "false", "0", "no":
+		return nil, nil
+	case "on", "true", "1", "yes":
+	default:
+		return nil, fmt.Errorf("capture must be on or off, got %q", cfg.capture)
+	}
+	o := capture.Options{Dir: filepath.Join(filepath.Dir(cfg.dbPath), "captures"), MaxBytes: int64(cfg.captureMaxMB) << 20, Keep: cfg.captureKeep, Log: log}
+	// What ffprobe and a decoder say of a segment goes with it, where they are.
+	if p, err := exec.LookPath("ffprobe"); err == nil {
+		o.FFprobe = p
+	}
+	if p, err := exec.LookPath(cfg.ffmpeg); err == nil {
+		o.FFmpeg = p
+	}
+	s, err := capture.Open(o)
+	if err != nil {
+		return nil, fmt.Errorf("captures: %w", err)
+	}
+	log.Info("segments around findings are captured", "dir", o.Dir, "max_mb", cfg.captureMaxMB, "keep", cfg.captureKeep.String(), "ffprobe", o.FFprobe != "")
+	return s, nil
 }

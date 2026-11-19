@@ -51,6 +51,12 @@ services:
       # How often the picture and the sound of every stream are looked at,
       # e.g. 5m; empty does not look.
       HLSMON_PICTURE_CHECK: ${HLSMON_PICTURE_CHECK:-}
+      # on saves the segments around a finding, next to the database, for
+      # taking apart afterwards; off (the default) does not. The limit is
+      # of disk, in MiB, for all captures together.
+      HLSMON_CAPTURE: ${HLSMON_CAPTURE:-off}
+      HLSMON_CAPTURE_MAX_MB: ${HLSMON_CAPTURE_MAX_MB:-2048}
+      HLSMON_CAPTURE_KEEP: ${HLSMON_CAPTURE_KEEP:-168h}
     ports:
       # Ports published by Docker bypass the host's INPUT firewall rules, so
       # the port stays on the loopback until HLSMON_BIND opens it on purpose.

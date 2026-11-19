@@ -784,6 +784,118 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/captures": {
+            "get": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "description": "A capture is the segment a check suspected, a few before it and a few after, with the playlists they came from, what ffprobe says of them and a playlist that plays them with no stream to ask. It is made at the first suspicion and kept only when an incident came of it (state kept), somebody asked for it, or a decoder found fault with its segment (state found). Only the server's own checks capture, and only when HLSMON_CAPTURE is set.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "captures"
+                ],
+                "summary": "Segments saved around findings",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Only the captures of this stream",
+                        "name": "stream",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.capturesResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/captures/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "tags": [
+                    "captures"
+                ],
+                "summary": "Delete a capture",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Capture ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/captures/{id}/archive": {
+            "get": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "description": "Everything of the capture in one zip: capture.json describes the files, index.m3u8 plays the whole segments. Administrators only: playlists and addresses are in it as they were.",
+                "produces": [
+                    "application/zip"
+                ],
+                "tags": [
+                    "captures"
+                ],
+                "summary": "A capture as an archive",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Capture ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/incidents": {
             "get": {
                 "produces": [
@@ -1534,6 +1646,49 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/streams/{id}/capture": {
+            "post": {
+                "security": [
+                    {
+                        "SessionCookie": []
+                    },
+                    {
+                        "BearerToken": []
+                    }
+                ],
+                "description": "The stream is checked at once and the segments of its picture are saved whatever the check finds: for what an operator sees or hears before the checks do. The capture appears in the list a moment later. At most one a minute for a stream.",
+                "tags": [
+                    "captures"
+                ],
+                "summary": "Capture the segments of a stream now",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Stream ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted"
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/internal_api.apiError"
                         }
@@ -2674,6 +2829,151 @@ const docTemplate = `{
                 },
                 "streams": {
                     "description": "Streams is how many streams the agent checks, Behind how many of\nthem it checks later than it should.",
+                    "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_capture.Capture": {
+            "type": "object",
+            "properties": {
+                "at": {
+                    "type": "string"
+                },
+                "bytes": {
+                    "type": "integer"
+                },
+                "confirmed": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "done": {
+                    "description": "Done tells that nothing more is being added to it.",
+                    "type": "boolean"
+                },
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_capture.File"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "kinds": {
+                    "description": "Kinds are the problems it was made on suspicion of; Confirmed\nthose of them that were then reported. Manual tells that somebody\nasked for it.",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "manual": {
+                    "type": "boolean"
+                },
+                "notes": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "playable": {
+                    "description": "Playable tells that index.m3u8 in it plays without the stream.",
+                    "type": "boolean"
+                },
+                "seq": {
+                    "type": "integer"
+                },
+                "state": {
+                    "type": "string"
+                },
+                "stream_id": {
+                    "type": "integer"
+                },
+                "variant": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_capture.File": {
+            "type": "object",
+            "properties": {
+                "after_detection": {
+                    "description": "AfterDetection tells that the file was fetched after the check\nmade its finding, by a request of its own: the server may have\nanswered differently that time. Evidence is never that.",
+                    "type": "boolean"
+                },
+                "bytes": {
+                    "type": "integer"
+                },
+                "decode_errors": {
+                    "type": "string"
+                },
+                "duration": {
+                    "type": "number"
+                },
+                "error": {
+                    "type": "string"
+                },
+                "fetched_at": {
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name is where it is in the capture.",
+                    "type": "string"
+                },
+                "position": {
+                    "type": "integer"
+                },
+                "probe": {
+                    "description": "Probe names the file with what ffprobe says of it, DecodeErrors the\none with what a decoder complained of, when it did.",
+                    "type": "string"
+                },
+                "role": {
+                    "description": "Role is what it is: \"evidence\" (the bytes the check read),\n\"segment\", \"init\", \"playlist\" or \"master\".",
+                    "type": "string"
+                },
+                "seq": {
+                    "description": "Seq and Duration are those of a segment in its playlist; Position\nis where it stands to the one the finding is about: 0, before (\u003c0)\nor after (\u003e0).",
+                    "type": "integer"
+                },
+                "server": {
+                    "type": "string"
+                },
+                "sha256": {
+                    "type": "string"
+                },
+                "software": {
+                    "type": "string"
+                },
+                "status": {
+                    "type": "integer"
+                },
+                "url": {
+                    "type": "string"
+                },
+                "whole": {
+                    "description": "Whole tells that all of the segment is there, not its beginning.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_capture.Usage": {
+            "type": "object",
+            "properties": {
+                "bytes": {
+                    "type": "integer"
+                },
+                "captures": {
+                    "type": "integer"
+                },
+                "made": {
+                    "description": "Made counts the captures made since the start, Refused those that\nwere not: too many at a time, or too soon after the one before.",
+                    "type": "integer"
+                },
+                "max_bytes": {
+                    "type": "integer"
+                },
+                "refused": {
                     "type": "integer"
                 }
             }
@@ -3991,6 +4291,24 @@ const docTemplate = `{
                 },
                 "error": {
                     "type": "string"
+                }
+            }
+        },
+        "internal_api.capturesResponse": {
+            "type": "object",
+            "properties": {
+                "captures": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_capture.Capture"
+                    }
+                },
+                "enabled": {
+                    "description": "Enabled tells whether captures are made at all (HLSMON_CAPTURE).",
+                    "type": "boolean"
+                },
+                "usage": {
+                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_capture.Usage"
                 }
             }
         },

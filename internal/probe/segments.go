@@ -67,9 +67,17 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 			t := s.seg.ProgramDateTime
 			rec.ProgramTime = &t
 		}
+		// suspected is what makes the segment worth capturing, and got
+		// the answer it came in, once there is one.
+		var suspected []string
+		var got *httpx.Response
+		var segURL string
 		flag := func(kind, sev, format string, args ...any) {
 			cy.problem(kind, sev, v.Key, format, args...)
 			rec.Problems = append(rec.Problems, kind)
+			if Capturable(kind) {
+				suspected = append(suspected, kind)
+			}
 			// Whether the playlist announced a break is the question here,
 			// so its text, now and before, belongs to the finding.
 			if (kind == ProbPTSDiscontinuity || kind == ProbMediaParamsChanged) && plResp != nil {
@@ -88,6 +96,16 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 				}
 			}
 			cy.segment(rec)
+			if c.Capturer == nil || got == nil || s.encrypted {
+				return
+			}
+			// Somebody asked for a capture: the first segment of the
+			// picture, or of the stream itself, will do.
+			manual := (v.Kind == KindVideo || v.Kind == KindMedia) && c.captureNow.CompareAndSwap(true, false)
+			if len(suspected) > 0 || manual {
+				whole := !header || (got.TotalSize > 0 && int64(len(got.Body)) >= got.TotalSize)
+				c.capture(v, plURL, plResp, entry, st, s, segURL, got, suspected, manual, whole && got.OK() && !got.Truncated)
+			}
 		}
 
 		u, err := resolve(plURL, s.seg.URI)
@@ -101,6 +119,7 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 			continue
 		}
 		rec.URL = u
+		segURL = u
 
 		// Initialization section for fMP4, fetched once per URL.
 		var init *media.Init
@@ -138,6 +157,7 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 			}
 		}
 		resp, err := c.get(ctx, rq, timeout)
+		got = resp
 		if resp != nil && held > 0 && resp.Size > held {
 			bodies.grow(resp.Size - held)
 			held = resp.Size
@@ -264,6 +284,9 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 		}
 		if listen && err == nil && resp != nil && resp.OK() {
 			c.listen(ctx, cy, v, resp.Body, st.initRaw, info, c.now())
+		}
+		if look || listen {
+			suspected = append(suspected, c.suspicions()...)
 		}
 		emit()
 	}

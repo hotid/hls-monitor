@@ -174,6 +174,120 @@ definitions:
           them it checks later than it should.
         type: integer
     type: object
+  github_com_hotid_hls-monitor_internal_capture.Capture:
+    properties:
+      at:
+        type: string
+      bytes:
+        type: integer
+      confirmed:
+        items:
+          type: string
+        type: array
+      done:
+        description: Done tells that nothing more is being added to it.
+        type: boolean
+      files:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_capture.File'
+        type: array
+      id:
+        type: string
+      kinds:
+        description: |-
+          Kinds are the problems it was made on suspicion of; Confirmed
+          those of them that were then reported. Manual tells that somebody
+          asked for it.
+        items:
+          type: string
+        type: array
+      manual:
+        type: boolean
+      notes:
+        items:
+          type: string
+        type: array
+      playable:
+        description: Playable tells that index.m3u8 in it plays without the stream.
+        type: boolean
+      seq:
+        type: integer
+      state:
+        type: string
+      stream_id:
+        type: integer
+      variant:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_capture.File:
+    properties:
+      after_detection:
+        description: |-
+          AfterDetection tells that the file was fetched after the check
+          made its finding, by a request of its own: the server may have
+          answered differently that time. Evidence is never that.
+        type: boolean
+      bytes:
+        type: integer
+      decode_errors:
+        type: string
+      duration:
+        type: number
+      error:
+        type: string
+      fetched_at:
+        type: string
+      name:
+        description: Name is where it is in the capture.
+        type: string
+      position:
+        type: integer
+      probe:
+        description: |-
+          Probe names the file with what ffprobe says of it, DecodeErrors the
+          one with what a decoder complained of, when it did.
+        type: string
+      role:
+        description: |-
+          Role is what it is: "evidence" (the bytes the check read),
+          "segment", "init", "playlist" or "master".
+        type: string
+      seq:
+        description: |-
+          Seq and Duration are those of a segment in its playlist; Position
+          is where it stands to the one the finding is about: 0, before (<0)
+          or after (>0).
+        type: integer
+      server:
+        type: string
+      sha256:
+        type: string
+      software:
+        type: string
+      status:
+        type: integer
+      url:
+        type: string
+      whole:
+        description: Whole tells that all of the segment is there, not its beginning.
+        type: boolean
+    type: object
+  github_com_hotid_hls-monitor_internal_capture.Usage:
+    properties:
+      bytes:
+        type: integer
+      captures:
+        type: integer
+      made:
+        description: |-
+          Made counts the captures made since the start, Refused those that
+          were not: too many at a time, or too soon after the one before.
+        type: integer
+      max_bytes:
+        type: integer
+      refused:
+        type: integer
+    type: object
   github_com_hotid_hls-monitor_internal_httpx.Hop:
     properties:
       remote_addr:
@@ -1158,6 +1272,18 @@ definitions:
         type: string
       error:
         type: string
+    type: object
+  internal_api.capturesResponse:
+    properties:
+      captures:
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_capture.Capture'
+        type: array
+      enabled:
+        description: Enabled tells whether captures are made at all (HLSMON_CAPTURE).
+        type: boolean
+      usage:
+        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_capture.Usage'
     type: object
   internal_api.createdToken:
     properties:
@@ -2413,6 +2539,79 @@ paths:
       summary: Change own password
       tags:
       - auth
+  /api/v1/captures:
+    get:
+      description: A capture is the segment a check suspected, a few before it and
+        a few after, with the playlists they came from, what ffprobe says of them
+        and a playlist that plays them with no stream to ask. It is made at the first
+        suspicion and kept only when an incident came of it (state kept), somebody
+        asked for it, or a decoder found fault with its segment (state found). Only
+        the server's own checks capture, and only when HLSMON_CAPTURE is set.
+      parameters:
+      - description: Only the captures of this stream
+        in: query
+        name: stream
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.capturesResponse'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: Segments saved around findings
+      tags:
+      - captures
+  /api/v1/captures/{id}:
+    delete:
+      parameters:
+      - description: Capture ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: Delete a capture
+      tags:
+      - captures
+  /api/v1/captures/{id}/archive:
+    get:
+      description: 'Everything of the capture in one zip: capture.json describes the
+        files, index.m3u8 plays the whole segments. Administrators only: playlists
+        and addresses are in it as they were.'
+      parameters:
+      - description: Capture ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/zip
+      responses:
+        "200":
+          description: OK
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: A capture as an archive
+      tags:
+      - captures
   /api/v1/incidents:
     get:
       parameters:
@@ -2905,6 +3104,35 @@ paths:
       summary: Change a stream
       tags:
       - streams
+  /api/v1/streams/{id}/capture:
+    post:
+      description: 'The stream is checked at once and the segments of its picture
+        are saved whatever the check finds: for what an operator sees or hears before
+        the checks do. The capture appears in the list a moment later. At most one
+        a minute for a stream.'
+      parameters:
+      - description: Stream ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "202":
+          description: Accepted
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      security:
+      - SessionCookie: []
+      - BearerToken: []
+      summary: Capture the segments of a stream now
+      tags:
+      - captures
   /api/v1/streams/{id}/check:
     post:
       description: Starts the next local check cycle immediately. Remote agents follow

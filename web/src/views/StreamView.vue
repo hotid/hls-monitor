@@ -12,6 +12,7 @@ import { useToasts } from '@/stores/toasts'
 import { t } from '@/i18n'
 import type { Endpoint, Incident, MediaTrack, SegmentRecord, SeriesResponse, Snapshot, SourceSeen, StreamDetail, Variant } from '@/types'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import StreamCaptures from '@/components/StreamCaptures.vue'
 import StreamPictures from '@/components/StreamPictures.vue'
 import FilterEmpty from '@/components/FilterEmpty.vue'
 import IncidentTable from '@/components/IncidentTable.vue'
@@ -594,6 +595,7 @@ function trackParams(tr: MediaTrack): string {
 
       <!-- Segment journal -->
       <section v-if="stream.level !== 'playlist'" class="section">
+        <StreamCaptures :id="stream.id" />
         <div class="section-title">
           <h2>{{ t('stream.segmentJournal') }}</h2>
           <label class="check"><input v-model="onlyProblems" type="checkbox" /> {{ t('stream.onlyWithProblems') }}</label>

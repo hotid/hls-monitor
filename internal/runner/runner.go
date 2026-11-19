@@ -36,6 +36,8 @@ type Runner struct {
 	looker    probe.Looker
 	lookEvery time.Duration
 	slates    func() []probe.Slate
+	// capturer is given to every checker; see SetCapturer.
+	capturer probe.Capturer
 
 	mu   sync.Mutex
 	jobs map[int64]*job
@@ -46,6 +48,7 @@ type Runner struct {
 
 type job struct {
 	target  probe.Target
+	checker *probe.Checker
 	cancel  context.CancelFunc
 	trigger chan struct{}
 
@@ -115,6 +118,28 @@ func (r *Runner) SetOverloaded(f func(since time.Time) string) { r.overloaded = 
 // stream and listen to its sound, once in every period. Call it before Sync.
 func (r *Runner) SetLooker(l probe.Looker, every time.Duration) { r.looker, r.lookEvery = l, every }
 
+// SetCapturer gives the checkers what saves the segments around a finding.
+// Call it before Sync.
+func (r *Runner) SetCapturer(c probe.Capturer) { r.capturer = c }
+
+// Capture has the segments of a stream captured at its next cycle, which
+// is made now. It tells whether the stream is one the runner checks and
+// captures are made at all.
+func (r *Runner) Capture(streamID int64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	j, ok := r.jobs[streamID]
+	if !ok || r.capturer == nil || j.checker == nil {
+		return false
+	}
+	j.checker.CaptureNow()
+	select {
+	case j.trigger <- struct{}{}:
+	default:
+	}
+	return true
+}
+
 // SetSlates tells the checkers where to learn which pictures are slates.
 // Call it before Sync.
 func (r *Runner) SetSlates(f func() []probe.Slate) { r.slates = f }
@@ -129,6 +154,9 @@ func (r *Runner) checker(t probe.Target) *probe.Checker {
 	if r.looker != nil && r.lookEvery > 0 {
 		c.Looker, c.PictureEvery = r.looker, r.lookEvery
 		c.Slates = r.slates
+	}
+	if r.capturer != nil {
+		c.Capturer = r.capturer
 	}
 	return c
 }
@@ -179,6 +207,7 @@ func (r *Runner) start(t probe.Target, startDelay time.Duration) {
 	j := &job{target: t, cancel: cancel, trigger: make(chan struct{}, 1)}
 	r.jobs[t.ID] = j
 	c := r.checker(t)
+	j.checker = c
 	r.wg.Add(1)
 	go func() {
 		defer r.wg.Done()

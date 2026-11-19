@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { api, basePath } from '@/api'
-import { fmtFull } from '@/format'
+import { fmtBytes, fmtFull } from '@/format'
 import { t } from '@/i18n'
 import { useSession } from '@/stores/session'
 import MarkSlate from '@/components/MarkSlate.vue'
 import { calculationRows, circumstanceRows, conclusion, problemAbout, type Details } from '@/incident'
-import type { Incident, IncidentScope } from '@/types'
+import type { Capture, Captures, Incident, IncidentScope } from '@/types'
 
 const props = defineProps<{ incident: Incident }>()
 const details = computed<Details>(() => props.incident.details ?? {})
@@ -25,8 +25,22 @@ const context = computed(() => circumstanceRows(details.value))
 // Who else sees the problem. A finding of a live diagnosis has no id and
 // nothing to compare with.
 const scope = ref<IncidentScope | null>(null)
+// The segments saved when the problem was first suspected, or while it
+// went on: those made on suspicion of it within the time of the incident.
+const captures = ref<Capture[]>([])
 onMounted(async () => {
   if (!props.incident.id) return
+  api
+    .get<Captures>(`/api/v1/captures?stream=${props.incident.stream_id}`)
+    .then((all) => {
+      const from = new Date(props.incident.started_at).getTime() - 15 * 60_000
+      const to = new Date(props.incident.ended_at ?? props.incident.last_seen).getTime() + 5 * 60_000
+      captures.value = all.captures.filter((c) => {
+        const at = new Date(c.at).getTime()
+        return c.done && at >= from && at <= to && (c.manual || c.kinds.includes(props.incident.kind))
+      })
+    })
+    .catch(() => {})
   try {
     scope.value = await api.get<IncidentScope>(`/incidents/${props.incident.id}/scope`)
   } catch {
@@ -77,6 +91,14 @@ const scopeLines = computed(() => {
         v-if="pictured && (!noPicture || clip) && session.isAdmin && incident.kind !== 'picture_slate'"
         :incident-id="incident.id" :picture="!noPicture" :clip="clip" :stream-name="incident.stream_name" style="margin-bottom: 10px"
       />
+      <template v-if="captures.length">
+        <h3>{{ t('incidents.captures') }}</h3>
+        <p v-for="c in captures" :key="c.id">
+          <a v-if="session.isAdmin" :href="`${basePath}/api/v1/captures/${c.id}/archive`" download>{{ t('incidents.captureDownload', { at: fmtFull(c.at) }) }}</a>
+          <template v-else>{{ fmtFull(c.at) }}</template>
+          <span class="muted"> · {{ t('incidents.captureSummary', { n: c.files.filter((f) => f.role === 'segment' && f.whole).length, size: fmtBytes(c.bytes) }) }}</span>
+        </p>
+      </template>
       <template v-if="verdict.length">
         <h3>{{ t('incidents.conclusion') }}</h3>
         <p v-for="(line, i) in verdict" :key="i">{{ line }}</p>

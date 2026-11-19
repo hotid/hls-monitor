@@ -19,6 +19,7 @@ The interface is available in English and Russian: the switch is in the top bar,
 - **The network by server:** round trip time, loss and the share of requests for every server that answers, the time of the balancer's redirects, and connection setup measured on a connection made for it.
 - **Watching through the monitor:** a player in the stream's page, fed by the server or by an agent — browser → server → agent → origin — with the choice of one particular server behind a balancer, and charts of every hop: speed, delay, round trip time and the share of packets lost.
 - **Looks at the picture, on request:** a black screen, a picture that stopped, silence, a silent channel of the sound, sound far too quiet, a known slate and a stream whose sound, or nothing at all, can be decoded are found by decoding one frame and a little sound of every stream every few minutes; the latest picture is on the stream's page and in the list of streams.
+- **Keeps the segments a finding was made in, on request:** at the first suspicion the segment, its neighbours and the playlists are saved, with what ffprobe says of them and a playlist that plays them offline; kept if an incident comes of it, thrown away if not.
 - **A clip going round instead of the programme** is found with no decoding at all: its keyframes come round again byte for byte, and those of a live encoder never do. The clip can then be named a slate, to be known at once next time, or the channel's own, to be left alone.
 - **A list of streams that says what is wrong:** a picture of each, the reasons of those not in order, the size of the picture and the bitrate.
 - **Live diagnosis:** a separate check once a second with the result shown at once.
@@ -147,6 +148,22 @@ The clip is known afterwards by what it was found by. In the incident an adminis
 
 What this does not do: the picture is not seen between looks, so a black screen shorter than the period may be missed; encrypted streams are not looked at, nor those checked at the "playlists only" level. A stream that shows a still picture by design — radio, a test card — can be told so in its settings, or not looked at at all. One look costs about a tenth of a second of processor time; at the "beginning of every segment" level it also fetches up to 512 KB of one segment instead of 130.
 
+### Captured segments
+
+What a check finds is in the incident as figures; what it was found in leaves the playlist a few seconds later. With `HLSMON_CAPTURE=on` the server saves it. A capture is made at the first suspicion — the first black picture, the first silent look, the first break in the timestamps — and not when the incident opens a minute later, by which time the segment is gone. It holds:
+
+- the bytes the check itself read of the segment, as they were (`evidence/`);
+- the segment fetched whole, then up to four before it, the latest first, then up to four that follow (`segments/`), each marked as fetched after the finding: a second request need not get the same bytes;
+- the playlists as they were (`source/`), and `index.m3u8`, which plays the whole segments with no stream to ask (`ffplay index.m3u8`);
+- what ffprobe says of every whole segment, and what a decoder could not decode in the one in question (`ffprobe/`);
+- `capture.json`, which describes all of it: addresses, servers, statuses, sizes, checksums, what could not be had.
+
+A capture waits ten minutes to be confirmed by a problem of the kind it was made on suspicion of. Confirmed, it is kept and listed on the stream's page and in the incident, to be downloaded as one archive by an administrator; not confirmed, it is deleted — unless a decoder found errors in its segment, in which case it stays for a while within a limit of 200 MB. "Capture now" on the stream's page saves the segments whatever the checks find, for what an operator sees before the monitor does.
+
+Captures are made for what is in the segments: the picture, the sound, the container, the timestamps. A playlist that cannot be reached leaves nothing to save but what its incident already has. Encrypted segments are not captured.
+
+It is bounded on every side, and checks never wait for it: `HLSMON_CAPTURE_MAX_MB` (2048) is all the disk captures may take, unconfirmed ones included — beyond it the unconfirmed go first, then the oldest; one capture takes 96 MB at the most; two are made at a time, and one from any one server; a stream is captured once in half an hour, and for a problem a kept capture of it already stands for, once a day — a stream with the same thing wrong in every segment is not captured over and over. When room has to be made among kept captures, the oldest of whatever there is most of goes first, so that a common problem does not push out the one capture of a rare one. A capture that does not fit these is not made. So far only the server's own checks capture, not the agents'.
+
 ## Agents
 
 An agent checks streams from its own network and sends the results to the server itself. No incoming connections to the agent are needed. One stream can be checked from several vantage points, which can then be compared.
@@ -201,6 +218,9 @@ Every setting is given as a flag or an environment variable.
 | `HLSMON_EVENT_RETENTION` | `-event-retention` | `168h` | Retention of closed events (informational incidents) |
 | `HLSMON_PICTURE_CHECK` | `-picture-check` | — | How often the picture and the sound of every stream are looked at, e.g. `5m`; empty does not look. The agent has the same setting |
 | `HLSMON_FFMPEG` | `-ffmpeg` | `ffmpeg` | The ffmpeg program the looks decode with |
+| `HLSMON_CAPTURE` | `-capture` | `off` | `on` saves the segments around a finding, in `captures` next to the database |
+| `HLSMON_CAPTURE_MAX_MB` | `-capture-max-mb` | `2048` | Disk all captures may take, MiB; beyond it the oldest are dropped |
+| `HLSMON_CAPTURE_KEEP` | `-capture-keep` | `168h` | How long a capture is kept |
 | `HLSMON_LOG_LEVEL` | `-log-level` | `info` | `debug`, `info`, `warn`, `error` |
 
 Retention of time series is set in VictoriaMetrics (`HLSMON_METRICS_RETENTION` in compose, 7 days by default, the same as the longest chart range).

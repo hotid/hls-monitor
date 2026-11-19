@@ -54,6 +54,10 @@ type Checker struct {
 	// Slates, when set, returns the pictures known to be slates.
 	Slates func() []Slate
 	looks  looks
+	// Capturer, when set, saves the segments around a finding (see
+	// capture.go). Set it before Run.
+	Capturer   Capturer
+	captureNow atomic.Bool
 	// loops are the playlists that show the same pictures over and over.
 	loops map[string]standingProblem
 	// signs is what the sizes of coded frames tell: a picture that does
@@ -259,6 +263,7 @@ func (c *Checker) finish(cy *cycle, start time.Time) *Result {
 	// What the check itself cost the network: playlists, and as much of
 	// the segments as its level downloads.
 	c.reportLooks(cy)
+	c.confirmCaptures(cy)
 	cy.metric("hls_check_bytes", "", float64(c.received.Swap(0)))
 	if c.Overloaded != nil {
 		if reason := c.Overloaded(start); reason != "" {

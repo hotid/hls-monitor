@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/hotid/hls-monitor/internal/capture"
 	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/ingest"
 	"github.com/hotid/hls-monitor/internal/metrics"
@@ -27,7 +28,10 @@ import (
 
 // Config holds the settings of the HTTP layer.
 type Config struct {
-	Version    string
+	Version string
+	// Captures is where the segments around findings are saved; nil when
+	// none are.
+	Captures   *capture.Store
 	SessionTTL time.Duration
 	// CookieSecure is "true", "false" or "auto" (follow the request scheme).
 	CookieSecure string
@@ -64,7 +68,9 @@ type Server struct {
 	log   *slog.Logger
 	// slates are the pictures known to be slates, as the checks need them.
 	slates atomic.Pointer[[]probe.Slate]
-	now    func() time.Time
+	// captures is nil when no captures are made.
+	captures *capture.Store
+	now      func() time.Time
 
 	logins *loginLimiter
 	// diagnoses holds one slot per live diagnosis allowed at a time.
@@ -100,7 +106,7 @@ func New(cfg Config, st *store.Store, mx *metrics.Client, ing *ingest.Ingester, 
 	if cfg.EnrollTTL <= 0 {
 		cfg.EnrollTTL = 24 * time.Hour
 	}
-	s := &Server{cfg: cfg, st: st, mx: mx, ing: ing, local: local, log: log, now: time.Now, logins: newLoginLimiter(), diagnoses: make(chan struct{}, maxDiagnoses), reports: map[int64]agentReport{}}
+	s := &Server{cfg: cfg, st: st, mx: mx, ing: ing, local: local, captures: cfg.Captures, log: log, now: time.Now, logins: newLoginLimiter(), diagnoses: make(chan struct{}, maxDiagnoses), reports: map[int64]agentReport{}}
 
 	s.fetchPoll, s.fetchHandOver = fetchPoll, fetchHandOver
 	s.playKey = cfg.PlayKey
@@ -160,6 +166,7 @@ func (s *Server) routes(ui http.Handler) {
 	user.GET("/incidents/:id/scope", s.incidentScope)
 	user.GET("/incidents/:id/picture", s.incidentPicture)
 	user.GET("/slates", s.listSlates)
+	user.GET("/captures", s.listCaptures)
 	user.GET("/slates/frames/:id", s.slateFrame)
 	user.GET("/server-incidents", s.listServerIncidents)
 	user.GET("/agents", s.listAgents)
@@ -167,6 +174,9 @@ func (s *Server) routes(ui http.Handler) {
 	admin := user.Group("", s.requireAdmin)
 	admin.POST("/streams", s.createStream)
 	admin.POST("/slates", s.markSlate)
+	admin.GET("/captures/:id/archive", s.captureArchive)
+	admin.DELETE("/captures/:id", s.deleteCapture)
+	admin.POST("/streams/:id/capture", s.captureNow)
 	admin.DELETE("/slates/:id", s.deleteSlate)
 	admin.DELETE("/slates/frames/:id", s.deleteSlateFrame)
 	admin.PUT("/streams/:id", s.updateStream)

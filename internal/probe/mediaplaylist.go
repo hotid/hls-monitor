@@ -28,8 +28,12 @@ type variantState struct {
 	signature      string
 	lastChange     time.Time
 	targetDuration float64
-	closed         bool
-	vodCursor      int
+	// window is the playlist's segments as last read, and windowTD its
+	// target duration: what a capture is handed.
+	window    []plSegment
+	windowTD  float64
+	closed    bool
+	vodCursor int
 
 	// segSource is the server that answered for the last segment.
 	segSource *Endpoint
@@ -260,6 +264,7 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 	cy.metric("hls_playlist_new_segments", v.Key, float64(len(fresh)))
 
 	failed := map[uint64]bool{}
+	st.window, st.windowTD = segs, td
 	if c.t.Level != LevelPlaylist {
 		c.checkKeys(ctx, cy, v, plURL, selected, st)
 		c.checkSegments(ctx, cy, v, plURL, selected, st, resp, entry, failed)
