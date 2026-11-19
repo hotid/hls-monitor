@@ -114,7 +114,7 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 		look := !s.encrypted && c.wantsLook(v)
 		// And one of a playlist of sound alone is listened to, where the
 		// look found the picture without its sound.
-		listen := !s.encrypted && !look && c.wantsListen(v)
+		listen := !look && c.wantsListen(v, s.encrypted)
 		if header {
 			// A server that ignores Range answers with the whole segment;
 			// MaxBody then stops the download at the same point. A look

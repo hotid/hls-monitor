@@ -1,6 +1,7 @@
 {
   "aPlayerWouldStallForBuffering": "A player would stall for buffering",
   "above1TheSegmentDownloadsSlower": "Above 1 the segment downloads slower than it plays",
+  "audioAbsent": "The stream has no sound",
   "audioChannelSilent": "One channel of the sound is silent",
   "audioLoop": "Sound going round",
   "audioQuiet": "Sound far too quiet",

@@ -535,3 +535,36 @@ func TestMoreIsFetchedWhereTheSoundComesLate(t *testing.T) {
 		t.Errorf("told of the sound: %+v", c.looks.soundProblems)
 	}
 }
+
+func TestStreamWithNoSound(t *testing.T) {
+	// The picture and no sound, and no playlist of sound either: told for
+	// information, after a few looks.
+	f := newFixture(t, hlstest.Options{}, "/master.m3u8", LevelContainer)
+	s := &stubLooker{frame: liveFrame}
+	s.frame.HasAudio, s.frame.NoSound = false, true
+	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
+	// One look says nothing yet: the sound may be listened to next.
+	if r := f.step(1); hasProblem(r, ProbAudioAbsent) != nil || s.looks != 1 {
+		t.Fatalf("told after %d looks", s.looks)
+	}
+	watch(f, 6*time.Minute, ProbAudioAbsent)
+	p := hasProblem(f.step(1), ProbAudioAbsent)
+	if p == nil || p.Severity != SevInfo || s.listens != 0 {
+		t.Fatalf("problem = %+v, %d listens", p, s.listens)
+	}
+	// Sound that came with the picture ends it.
+	s.frame = liveFrame
+	watch(f, 6*time.Minute, ProbAudioAbsent)
+	if hasProblem(f.step(1), ProbAudioAbsent) != nil {
+		t.Error("still told after sound was heard")
+	}
+
+	// A stream that keeps its sound in a playlist of its own has sound.
+	f = newFixture(t, hlstest.Options{SoundApart: true}, "/master.m3u8", LevelContainer)
+	s = &stubLooker{frame: liveFrame, heard: &picture.Frame{HasAudio: true, AudioDB: -20}}
+	s.frame.HasAudio, s.frame.NoSound = false, true
+	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
+	if n, _ := watch(f, 20*time.Minute, ProbAudioAbsent); n != 0 || s.listens < 3 {
+		t.Errorf("sound in a playlist of its own: told as missing %d times, %d listens", n, s.listens)
+	}
+}

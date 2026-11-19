@@ -152,6 +152,9 @@ const (
 	ProbAudioChannelSilent = "audio_channel_silent"
 	ProbAudioQuiet         = "audio_quiet"
 	ProbAudioUndecodable   = "audio_undecodable"
+	// ProbAudioAbsent: the stream has no sound at all, neither with the
+	// picture nor in a playlist of its own. For information.
+	ProbAudioAbsent = "audio_absent"
 	// ProbMediaUndecodable: a decoder makes nothing of the segments.
 	ProbMediaUndecodable = "media_undecodable"
 )

@@ -3,6 +3,8 @@
   "aSegmentFromThePlaylistCould": "A segment from the playlist could not be downloaded.",
   "aViewerWouldSeeAStall": "A viewer would see a stall for buffering: video arrives slower than it plays.",
   "allowed": "Allowed",
+  "audioAbsentHow": "At a look the decoder got the picture and found no sound track in the segment, and the stream has no playlist of sound to listen to next either. It is told after three such looks in a row.",
+  "audioAbsentWhat": "The stream has no sound track: neither with the picture nor in a playlist of its own. This is told for information — the stream may never have had any sound.",
   "audioChannelSilentHow": "At every look the monitor decodes a couple of seconds of sound and measures every channel by itself. When one of the first two channels (left and right) is silent and the other plainly is not — no quieter than −50 dB — at three looks in a row, over a minute at least, the same channel each time, it is a finding. The other channels of multichannel sound are not counted: they are often silent with nothing wrong.",
   "audioChannelSilentWhat": "The sound of the stream has two channels and one of them is silent: the viewer hears the sound on the left alone, or on the right. It is usually a broken or wrongly patched connection on the way to the encoder.",
   "audioFrameBytes": "Size of a frame of sound, bytes",

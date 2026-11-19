@@ -214,6 +214,9 @@ type looks struct {
 	// is the look that is shown, for the sound to be added to.
 	listen bool
 	shown  *Picture
+	// unheard counts looks that found no sound in the data after which
+	// no playlist of sound was listened to either.
+	unheard run
 	// more tells to fetch more of a segment for a look.
 	more bool
 }
@@ -231,7 +234,7 @@ func (c *Checker) beginLook(start time.Time) {
 	l := &c.looks
 	l.due, l.taken = false, false
 	if c.Looker == nil || c.PictureEvery <= 0 || c.t.Picture == PictureOff || c.t.Level == LevelPlaylist {
-		l.problems, l.soundProblems = nil, nil
+		l.problems, l.soundProblems, l.unheard = nil, nil, run{}
 		return
 	}
 	if l.at.IsZero() {
@@ -364,8 +367,12 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 	// a playlist of its own, in a segment of that one, listened to next.
 	audio := audioOf(info)
 	if f.NoSound {
+		// Nobody took up the look before either: the stream has no
+		// playlist of sound, and no sound.
+		l.unheard.note(l.listen, at)
 		l.listen = true
 	} else {
+		l.unheard = run{}
 		suspect = c.hear(cy, v, f, audio, at) || suspect
 		// The beginning of a segment of many megabits has the picture and
 		// next to none of the sound: more of it is asked for from now on.
@@ -446,15 +453,17 @@ func (c *Checker) hear(cy *cycle, v Variant, f *picture.Frame, audio *media.Trac
 // wantsListen tells whether the segment about to be fetched is the one to
 // listen to: one of a playlist of sound alone, after a look that found
 // the picture and no sound with it.
-func (c *Checker) wantsListen(v Variant) bool {
+func (c *Checker) wantsListen(v Variant, encrypted bool) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	l := &c.looks
 	if !l.listen || v.Kind != KindAudio || c.Looker == nil {
 		return false
 	}
-	l.listen = false
-	return true
+	// Sound that is there and encrypted is not listened to, and is not
+	// said to be missing.
+	l.listen, l.unheard = false, run{}
+	return !encrypted
 }
 
 // lookSize is how much of a segment is fetched for a look.
@@ -523,6 +532,12 @@ func videoOf(info *media.Info) *media.Track {
 func (c *Checker) reportLooks(cy *cycle) {
 	c.mu.Lock()
 	standing := append(append([]standingProblem(nil), c.looks.problems...), c.looks.soundProblems...)
+	// A stream with no sound in it is told for information: it may never
+	// have had any.
+	if u := c.looks.unheard; u.n >= 2 && c.looks.shown != nil {
+		standing = append(standing, standingProblem{kind: ProbAudioAbsent, severity: SevInfo, variant: c.looks.shown.Variant,
+			message: "the stream has no sound", details: []any{"looks_in_a_row", u.n + 1, "since", u.since.UTC().Format(time.RFC3339)}})
+	}
 	slate := false
 	for _, p := range standing {
 		slate = slate || p.kind == ProbPictureSlate

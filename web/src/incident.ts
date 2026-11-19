@@ -62,6 +62,7 @@ export const problemAbout = perLocale((): Record<string, { what: string; how: st
   audio_channel_silent: { what: t('incident.audioChannelSilentWhat'), how: t('incident.audioChannelSilentHow') },
   audio_quiet: { what: t('incident.audioQuietWhat'), how: t('incident.audioQuietHow') },
   audio_undecodable: { what: t('incident.audioUndecodableWhat'), how: t('incident.audioUndecodableHow') },
+  audio_absent: { what: t('incident.audioAbsentWhat'), how: t('incident.audioAbsentHow') },
   media_undecodable: { what: t('incident.mediaUndecodableWhat'), how: t('incident.mediaUndecodableHow') },
   no_keyframe_start: {
     what: t('incident.theSegmentDoesNotStartWith'),
