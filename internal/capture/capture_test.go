@@ -246,16 +246,24 @@ func TestCaptureLimits(t *testing.T) {
 	third := st.request(4, probe.ProbPictureBlack)
 	third.Playlist, third.Server = nil, "192.0.2.3"
 	s.Capture(third)
+	// What somebody asked for is made all the same.
+	asked := st.request(5)
+	asked.Playlist, asked.Manual = nil, true
+	s.Capture(asked)
+	if len(s.List(5)) != 1 {
+		t.Fatal("a capture that was asked for was turned away for those being made")
+	}
 	close(block)
 	s.Wait()
 	if len(s.List(1)) != 1 || len(s.List(2)) != 0 || len(s.List(3)) != 1 || len(s.List(4)) != 0 {
 		t.Fatalf("captures of streams 1 to 4: %d %d %d %d", len(s.List(1)), len(s.List(2)), len(s.List(3)), len(s.List(4)))
 	}
-	if u := s.Usage(); u.Refused != 2 || u.Made != 2 || u.Bytes == 0 {
+	if u := s.Usage(); u.Refused != 2 || u.Made != 3 || u.Bytes == 0 {
 		t.Errorf("usage: %+v", u)
 	}
 
 	// When there is too much, what nobody confirmed goes first.
+	s.Delete(s.List(5)[0].ID)
 	s.Confirm(3, []string{probe.ProbPictureBlack})
 	s.mu.Lock()
 	s.o.MaxBytes = s.captures[s.listID(3)].Bytes + 1

@@ -460,7 +460,9 @@ func (s *Store) Capture(rq probe.CaptureRequest) {
 	case !rq.Manual && s.have(rq):
 		s.mu.Unlock()
 		return
-	case s.running >= Parallel || (server != "" && s.busy[server]) || !s.fit(captureMax):
+	// What somebody asked for is not turned away for the captures the
+	// checks are making; only for want of room.
+	case (!rq.Manual && (s.running >= Parallel || (server != "" && s.busy[server]))) || !s.fit(captureMax):
 		s.refused++
 		s.mu.Unlock()
 		return
@@ -484,8 +486,12 @@ func (s *Store) Capture(rq probe.CaptureRequest) {
 	}
 	s.captures[c.ID] = c
 	s.last[rq.StreamID] = s.now()
-	s.running++
 	s.made++
+	if rq.Manual {
+		server = ""
+	} else {
+		s.running++
+	}
 	if server != "" {
 		s.busy[server] = true
 	}
@@ -499,8 +505,12 @@ func (s *Store) Capture(rq probe.CaptureRequest) {
 				s.o.Log.Error("a capture failed", "capture", c.ID, "panic", r)
 			}
 			s.mu.Lock()
-			s.running--
-			delete(s.busy, server)
+			if !rq.Manual {
+				s.running--
+			}
+			if server != "" {
+				delete(s.busy, server)
+			}
 			c.Done = true
 			s.write(c)
 			s.fit(0)
