@@ -51,6 +51,7 @@
   "lineSpeedOrigin": "From the origin",
   "lineSpeedRelay": "Agent → server",
   "nowPlaying": "Playing now",
+  "offTheScale": "{line}: {speed}, off the scale",
   "passedOn": "{asked} did not serve the stream itself: it passed the request on to {got}.",
   "play": "Play",
   "playlistAnswered": "Playlist: HTTP {code}",

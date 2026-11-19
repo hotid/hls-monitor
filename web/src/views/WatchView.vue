@@ -213,9 +213,12 @@ async function ping() {
 
 // Shorter than this, the time a segment took says nothing of the speed.
 const minSpeedTime = 0.02
-// The hops whose latest segment went through faster than that: there is
-// no speed to draw for them, and the line says why it is not there.
-const tooFast: Record<string, boolean> = {}
+// The hops whose latest segment went through faster than that, and at
+// what speed: gigabits, next to which the megabits of the other hops
+// would be a flat line at the bottom. It is not drawn, and the line says
+// what it was; zero where the time was too short to tell even that.
+const tooFast: Record<string, number | undefined> = {}
+const fastSpeed = (size: number, seconds: number) => (size > 0 && seconds < minSpeedTime ? (seconds >= 0.0005 ? (size * 8) / seconds : 0) : undefined)
 
 interface ChartDef {
   id: string
@@ -299,7 +302,7 @@ const charts = computed(() => {
       ...c,
       from,
       to: Math.max(to, from + 60),
-      lines: c.lines.filter((l) => viaAgent || !l.agent).map((l): ChartLine => ({ label: tooFast[l.key] ? t('watch.tooFastToMeasure', { line: l.label }) : l.label, points: series[l.key] ?? [] })),
+      lines: c.lines.filter((l) => viaAgent || !l.agent).map((l): ChartLine => ({ label: tooFast[l.key] === undefined ? l.label : tooFast[l.key] ? t('watch.offTheScale', { line: l.label, speed: fmtBits(tooFast[l.key]) }) : t('watch.tooFastToMeasure', { line: l.label }), points: series[l.key] ?? [] })),
     }))
     // What cannot be measured here is not shown at all: neither a line
     // without a single point, nor a chart without lines.
@@ -463,14 +466,14 @@ async function start() {
       latest.originBody = Math.max(o.total_ms - o.ttfb_ms, 0) / 1000
       const fromOrigin = speed(o.bytes, o.total_ms / 1000)
       if (fromOrigin !== undefined) latest.speedOrigin = fromOrigin
-      tooFast.speedOrigin = o.bytes > 0 && fromOrigin === undefined
+      tooFast.speedOrigin = fastSpeed(o.bytes, o.total_ms / 1000)
     }
     if (info?.relay) {
       latest.relayWait = info.relay.wait_ms / 1000
       latest.relayUpload = info.relay.upload_ms / 1000
       const through = speed(info.relay.bytes, info.relay.upload_ms / 1000)
       if (through !== undefined) latest.speedRelay = through
-      tooFast.speedRelay = info.relay.bytes > 0 && through === undefined
+      tooFast.speedRelay = fastSpeed(info.relay.bytes, info.relay.upload_ms / 1000)
     }
   })
   player.on(HlsLib.Events.ERROR, (_e, data) => {

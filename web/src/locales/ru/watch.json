@@ -51,6 +51,7 @@
   "lineSpeedOrigin": "От стримера",
   "lineSpeedRelay": "Агент → сервер",
   "nowPlaying": "Сейчас играет",
+  "offTheScale": "{line}: {speed}, за шкалой",
   "passedOn": "{asked} сам поток не отдал: он перенаправил запрос на {got}.",
   "play": "Смотреть",
   "playlistAnswered": "Плейлист: HTTP {code}",
