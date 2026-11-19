@@ -302,7 +302,7 @@ const charts = computed(() => {
       ...c,
       from,
       to: Math.max(to, from + 60),
-      lines: c.lines.filter((l) => viaAgent || !l.agent).map((l): ChartLine => ({ label: tooFast[l.key] === undefined ? l.label : tooFast[l.key] ? t('watch.offTheScale', { line: l.label, speed: fmtBits(tooFast[l.key]) }) : t('watch.tooFastToMeasure', { line: l.label }), points: series[l.key] ?? [] })),
+      lines: c.lines.filter((l) => viaAgent || !l.agent).map((l): ChartLine => ({ key: l.key, label: tooFast[l.key] === undefined ? l.label : tooFast[l.key] ? t('watch.offTheScale', { line: l.label, speed: fmtBits(tooFast[l.key]) }) : t('watch.tooFastToMeasure', { line: l.label }), points: series[l.key] ?? [] })),
     }))
     // What cannot be measured here is not shown at all: neither a line
     // without a single point, nor a chart without lines.

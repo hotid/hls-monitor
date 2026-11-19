@@ -10,7 +10,11 @@ import { t } from '@/i18n'
 export interface ChartLine {
   label: string
   points: [number, number][]
+  /** What the line is, when its label may change while it is on the chart. */
+  key?: string
 }
+// What a line is known by: the choice in the legend must outlive a new label.
+const idOf = (l: ChartLine) => l.key ?? l.label
 
 const props = defineProps<{
   title: string
@@ -71,26 +75,26 @@ const legend = computed(() =>
         }
       }
     }
-    return { label: line.label, color: color(i), value: fmtUnit(v, props.unit), off: hidden.value.has(line.label) }
+    return { id: idOf(line), label: line.label, color: color(i), value: fmtUnit(v, props.unit), off: hidden.value.has(idOf(line)) }
   }),
 )
 
 // The line pointed at in the legend stands out, the others fade.
 const focused = ref<string | null>(null)
-function focus(label: string | null) {
-  if (label !== null && hidden.value.has(label)) label = null
-  focused.value = label
-  const i = label === null ? -1 : props.lines.findIndex((l) => l.label === label)
+function focus(id: string | null) {
+  if (id !== null && hidden.value.has(id)) id = null
+  focused.value = id
+  const i = id === null ? -1 : props.lines.findIndex((l) => idOf(l) === id)
   plot.value?.setSeries(i < 0 ? null : i + 1, { focus: true })
 }
 
-// Which lines are switched off, by label. A click on a label leaves that
+// Which lines are switched off, by what they are known by. A click on a label leaves that
 // line alone on the chart, and a click on the only one left brings all
 // back; with Ctrl, Cmd or Shift a click adds or removes one line. This is
 // what people know from Grafana.
 const hidden = ref(new Set<string>())
 function pick(label: string, e: MouseEvent | KeyboardEvent) {
-  const all = props.lines.map((l) => l.label)
+  const all = props.lines.map(idOf)
   const shown = all.filter((l) => !hidden.value.has(l))
   let next: string[]
   if (e.ctrlKey || e.metaKey || e.shiftKey) {
@@ -101,7 +105,7 @@ function pick(label: string, e: MouseEvent | KeyboardEvent) {
   // Nothing shown is an empty chart: everything comes back instead.
   if (!next.length) next = all
   hidden.value = new Set(all.filter((l) => !next.includes(l)))
-  props.lines.forEach((l, i) => plot.value?.setSeries(i + 1, { show: !hidden.value.has(l.label) }))
+  props.lines.forEach((l, i) => plot.value?.setSeries(i + 1, { show: !hidden.value.has(idOf(l)) }))
   focus(hidden.value.has(label) ? null : label)
 }
 
@@ -161,7 +165,7 @@ function build() {
       {},
       ...props.lines.map((line, i) => ({
         label: line.label,
-        show: !hidden.value.has(line.label),
+        show: !hidden.value.has(idOf(line)),
         stroke: color(i),
         width: 1.5,
         paths,
@@ -210,7 +214,7 @@ function build() {
 
 // Same set of lines: only the data changes. Otherwise the chart is rebuilt.
 watch(
-  () => props.lines.map((l) => l.label).join('\u0000') + '|' + props.unit + '|' + props.steps + '|' + (props.colors ?? []).join(','),
+  () => props.lines.map(idOf).join('\u0000') + '|' + props.unit + '|' + props.steps + '|' + (props.colors ?? []).join(','),
   () => build(),
 )
 watch(aligned, (a) => {
@@ -247,10 +251,10 @@ onBeforeUnmount(() => {
     </div>
     <ul class="chart-legend" :class="{ focusing: focused !== null }" @mouseleave="focus(null)">
       <li
-        v-for="l in legend" :key="l.label" :class="{ off: l.off, focused: focused === l.label }" :title="l.label + ' — ' + t('chart.legendHint')"
+        v-for="l in legend" :key="l.id" :class="{ off: l.off, focused: focused === l.id }" :title="l.label + ' — ' + t('chart.legendHint')"
         role="button" tabindex="0" :aria-pressed="!l.off"
-        @mouseenter="focus(l.label)" @focus="focus(l.label)" @blur="focus(null)"
-        @click="pick(l.label, $event)" @keydown.enter.prevent="pick(l.label, $event)" @keydown.space.prevent="pick(l.label, $event)"
+        @mouseenter="focus(l.id)" @focus="focus(l.id)" @blur="focus(null)"
+        @click="pick(l.id, $event)" @keydown.enter.prevent="pick(l.id, $event)" @keydown.space.prevent="pick(l.id, $event)"
       >
         <i :style="{ background: l.color }" />
         <span class="truncate">{{ l.label }}</span>
