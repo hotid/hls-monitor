@@ -46,7 +46,10 @@ type Options struct {
 	NoDiscontinuity bool
 	// NoProgramDateTime omits EXT-X-PROGRAM-DATE-TIME.
 	NoProgramDateTime bool
-	Start             time.Time
+	// DateFirstOnly dates the first segment of the playlist alone, as
+	// packagers do that leave the rest to be counted from it.
+	DateFirstOnly bool
+	Start         time.Time
 	// PadTo makes every MPEG-TS segment at least this many bytes by adding
 	// null packets, to give load tests segments of a realistic size.
 	PadTo int
@@ -412,7 +415,7 @@ func (o *Origin) media(sound bool) string {
 		if seq%samples == 0 && seq > 0 && !o.opt.NoDiscontinuity {
 			b.WriteString("#EXT-X-DISCONTINUITY\n")
 		}
-		if !o.opt.NoProgramDateTime {
+		if !o.opt.NoProgramDateTime && (!o.opt.DateFirstOnly || seq == first) {
 			t := o.opt.Start.Add(time.Duration(float64(seq) * SegmentDur * float64(time.Second)))
 			fmt.Fprintf(&b, "#EXT-X-PROGRAM-DATE-TIME:%s\n", t.UTC().Format("2006-01-02T15:04:05.000Z"))
 		}

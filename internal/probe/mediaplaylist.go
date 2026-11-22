@@ -109,8 +109,12 @@ type prevSegment struct {
 }
 
 type plSegment struct {
-	seq       uint64
-	seg       *m3u8.MediaSegment
+	seq uint64
+	seg *m3u8.MediaSegment
+	// at is the date and time of the segment: its own
+	// EXT-X-PROGRAM-DATE-TIME, or the one carried on from the segments
+	// before it; zero when the playlist gives none.
+	at        time.Time
 	encrypted bool
 	keys      []m3u8.Key
 	initMap   *m3u8.Map
@@ -136,7 +140,15 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 		if s.Map != nil {
 			curMap = s.Map
 		}
-		segs = append(segs, plSegment{seq: seq, seg: s, keys: curKeys, initMap: curMap, encrypted: isEncrypted(curKeys)})
+		// A playlist may date its first segment alone: the rest follow by
+		// their lengths (RFC 8216, section 4.3.2.6), up to a discontinuity.
+		at := s.ProgramDateTime
+		if at.IsZero() && len(segs) > 0 && !s.Discontinuity {
+			if prev := segs[len(segs)-1]; !prev.at.IsZero() {
+				at = prev.at.Add(time.Duration(prev.seg.Duration * float64(time.Second)))
+			}
+		}
+		segs = append(segs, plSegment{seq: seq, seg: s, at: at, keys: curKeys, initMap: curMap, encrypted: isEncrypted(curKeys)})
 		seq++
 	}
 	n := len(segs)
@@ -301,7 +313,7 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 		}
 	}
 	e.media, e.hasMedia = st.anchor.place(segs)
-	if t := segs[n-1].seg.ProgramDateTime; !t.IsZero() {
+	if t := segs[n-1].at; !t.IsZero() {
 		e.pdt = t.Add(time.Duration(segs[n-1].seg.Duration * float64(time.Second)))
 	}
 	return e
@@ -369,8 +381,8 @@ func (c *Checker) inspectPlaylist(cy *cycle, v Variant, plURL string, p *m3u8.Me
 	}
 
 	lastSeg := segs[n-1].seg
-	if !p.Closed && !lastSeg.ProgramDateTime.IsZero() {
-		edge := lastSeg.ProgramDateTime.Add(time.Duration(lastSeg.Duration * float64(time.Second)))
+	if !p.Closed && !segs[n-1].at.IsZero() {
+		edge := segs[n-1].at.Add(time.Duration(lastSeg.Duration * float64(time.Second)))
 		cy.metric("hls_live_latency_seconds", v.Key, now.Sub(edge).Seconds())
 	}
 

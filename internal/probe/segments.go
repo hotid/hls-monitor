@@ -75,8 +75,8 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 			Duration:      s.seg.Duration,
 			Discontinuity: s.seg.Discontinuity,
 		}
-		if !s.seg.ProgramDateTime.IsZero() {
-			t := s.seg.ProgramDateTime
+		if !s.at.IsZero() {
+			t := s.at
 			rec.ProgramTime = &t
 		}
 		// suspected is what makes the segment worth capturing, and got

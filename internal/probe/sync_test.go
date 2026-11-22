@@ -73,3 +73,20 @@ func TestAnchorPlace(t *testing.T) {
 		t.Error("a discontinuity after the segment starts another timeline")
 	}
 }
+
+// A playlist that dates its first segment alone still tells how far behind
+// real time its end is.
+func TestLatencyFromTheFirstDate(t *testing.T) {
+	f := newFixture(t, hlstest.Options{DateFirstOnly: true, NoDiscontinuity: true, Variants: 2}, "/master.m3u8", LevelPlaylist)
+	f.step(1)
+	r := f.step(1)
+	n := 0
+	for _, m := range r.Metrics {
+		if m.Name == "hls_live_latency_seconds" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Errorf("the lag behind real time was told for %d playlists, want 2", n)
+	}
+}
