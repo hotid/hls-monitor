@@ -157,6 +157,13 @@ const (
 	ProbAudioAbsent = "audio_absent"
 	// ProbMediaUndecodable: a decoder makes nothing of the segments.
 	ProbMediaUndecodable = "media_undecodable"
+	// ProbDeclaredMismatch: the segments are not what the master playlist
+	// says of the variant: another coding, profile, level, size or rate.
+	ProbDeclaredMismatch = "declared_mismatch"
+	// ProbTSClock: the program clock of MPEG-TS segments comes too seldom,
+	// jumps unannounced, or frames come after their time by it. A set-top
+	// box plays by this clock.
+	ProbTSClock = "ts_clock_error"
 )
 
 // Problem is one kind of trouble found for one variant in a cycle.

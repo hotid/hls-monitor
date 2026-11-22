@@ -64,6 +64,8 @@ export const problemAbout = perLocale((): Record<string, { what: string; how: st
   audio_undecodable: { what: t('incident.audioUndecodableWhat'), how: t('incident.audioUndecodableHow') },
   audio_absent: { what: t('incident.audioAbsentWhat'), how: t('incident.audioAbsentHow') },
   media_undecodable: { what: t('incident.mediaUndecodableWhat'), how: t('incident.mediaUndecodableHow') },
+  declared_mismatch: { what: t('incident.declaredMismatchWhat'), how: t('incident.declaredMismatchHow') },
+  ts_clock_error: { what: t('incident.tsClockWhat'), how: t('incident.tsClockHow') },
   no_keyframe_start: {
     what: t('incident.theSegmentDoesNotStartWith'),
     how: t('incident.theFirstVideoFrameOfThe'),

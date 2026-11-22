@@ -74,6 +74,8 @@ export const problemTitle = perLocale((): Record<string, string> => ({
   audio_undecodable: t('catalog.audioUndecodable'),
   audio_absent: t('catalog.audioAbsent'),
   media_undecodable: t('catalog.mediaUndecodable'),
+  declared_mismatch: t('catalog.declaredMismatch'),
+  ts_clock_error: t('catalog.tsClockError'),
   media_params_changed: t('catalog.videoParametersChanged'),
   playlist_source_changed: t('catalog.playlistServedByADifferentServer'),
   segment_source_changed: t('catalog.segmentsServedByADifferentServer'),
@@ -324,6 +326,17 @@ export const chartGroups = perLocale((): ChartGroup[] => [
           { metric: 'hls_media_cc_errors', label: t('catalog.continuity') },
           { metric: 'hls_media_sync_errors', label: t('catalog.sync') },
         ],
+      },
+      {
+        id: 'ts-clock', title: t('catalog.programClock'), hint: t('catalog.programClockHint'), unit: 's', agg: 'max', levels: ['header', 'container'],
+        series: [
+          { metric: 'hls_ts_pcr_gap_seconds', label: t('catalog.pcrGap') },
+          { metric: 'hls_ts_decode_lead_seconds', label: t('catalog.decodeLead') },
+        ],
+      },
+      {
+        id: 'variant-offset', title: t('catalog.variantOffset'), hint: t('catalog.variantOffsetHint'), unit: 's', agg: 'avg', levels: ['header', 'container'],
+        series: [{ metric: 'hls_variant_offset_seconds', label: t('catalog.offsetFromVideo') }],
       },
     ],
   },

@@ -36,6 +36,7 @@ func analyzeTS(data []byte, info *Info) {
 		info.Error = "no MPEG-TS sync found"
 		return
 	}
+	info.Clock = scanTSClock(data[start:])
 	demuxTS(data[start:], info)
 }
 

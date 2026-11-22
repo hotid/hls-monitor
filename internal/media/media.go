@@ -101,6 +101,8 @@ type Info struct {
 	HasPAT          bool `json:"has_pat,omitempty"`
 	HasPMT          bool `json:"has_pmt,omitempty"`
 	Scrambled       bool `json:"scrambled,omitempty"`
+	// Clock is what the program clock of the segment says.
+	Clock *TSClock `json:"clock,omitempty"`
 
 	// FirstCC and LastCC are the continuity counters of the first and the
 	// last packet with a payload on every PID: what the joints with the
@@ -177,6 +179,15 @@ func Analyze(data []byte, init *Init) *Info {
 		analyzePackedAAC(data, info)
 	}
 	return info
+}
+
+// ProfileName names the profile of H.264 ("h264") or HEVC ("hevc") by its
+// number, the way a parsed track has it.
+func ProfileName(codec string, idc uint32) string {
+	if codec == "hevc" {
+		return hevcProfile(idc)
+	}
+	return h264Profile(idc)
 }
 
 func h264Profile(idc uint32) string {

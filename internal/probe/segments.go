@@ -2,7 +2,9 @@ package probe
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/httpx"
@@ -33,6 +35,10 @@ type segAgg struct {
 	maxGOP, fps, vBitrate, aBitrate              float64
 	width, height                                int
 	aTracks                                      int
+	// What the program clock of MPEG-TS said: the longest time between
+	// two references and the least lead of a frame over the clock.
+	clocked, hasLead bool
+	pcrGap, lead     float64
 }
 
 func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL string, selected []plSegment, st *variantState, plResp, entry *httpx.Response, failed map[uint64]bool) {
@@ -357,6 +363,28 @@ func (c *Checker) judgeMedia(v Variant, s plSegment, info *media.Info, st *varia
 		if info.TransportErrors > 0 {
 			flag(ProbTSTransport, SevWarn, "segment %d: %d packets flagged with transport errors", s.seq, info.TransportErrors)
 		}
+		if k := info.Clock; k != nil && k.PCRs >= 2 {
+			agg.clocked = true
+			agg.pcrGap = max(agg.pcrGap, k.MaxPCRGap)
+			var wrong []string
+			if k.MaxPCRGap > pcrGapLimit {
+				wrong = append(wrong, fmt.Sprintf("%.0f ms between two program clock references, %.0f ms allowed", k.MaxPCRGap*1000, pcrGapLimit*1000))
+			}
+			if k.PCRJumps > 0 {
+				wrong = append(wrong, fmt.Sprintf("the program clock jumps %d times with no discontinuity announced", k.PCRJumps))
+			}
+			if k.HasLead {
+				if !agg.hasLead || k.MinLead < agg.lead {
+					agg.lead, agg.hasLead = k.MinLead, true
+				}
+				if k.MinLead < 0 {
+					wrong = append(wrong, fmt.Sprintf("a frame comes %.0f ms after the program clock passed the time to decode it", -k.MinLead*1000))
+				}
+			}
+			if len(wrong) > 0 {
+				flag(ProbTSClock, SevWarn, "segment %d: %s", s.seq, strings.Join(wrong, "; "))
+			}
+		}
 		if !info.HasPAT || !info.HasPMT {
 			flag(ProbTSNoTables, SevWarn, "segment %d has no PAT/PMT, it cannot be decoded on its own", s.seq)
 		}
@@ -400,6 +428,12 @@ func (c *Checker) judgeMedia(v Variant, s plSegment, info *media.Info, st *varia
 			if guessEnd {
 				cur.aEnd = at.StartPTS + s.seg.Duration
 			}
+		}
+	}
+
+	if v.Kind == KindVideo {
+		if diff := declaredDiffers(v, vt, at, partial); len(diff) > 0 {
+			flag(ProbDeclaredMismatch, SevWarn, "segment %d: %s", s.seq, strings.Join(diff, "; "))
 		}
 	}
 
@@ -526,6 +560,12 @@ func (c *Checker) emitSegmentMetrics(cy *cycle, v Variant, a *segAgg) {
 	cy.metric("hls_media_pts_gap_seconds", k, a.ptsGap)
 	cy.metric("hls_media_sync_errors", k, float64(a.syncErrors))
 	cy.metric("hls_media_cc_errors", k, float64(a.ccErrors))
+	if a.clocked {
+		cy.metric("hls_ts_pcr_gap_seconds", k, a.pcrGap)
+		if a.hasLead {
+			cy.metric("hls_ts_decode_lead_seconds", k, a.lead)
+		}
+	}
 	if a.hasAV {
 		cy.metric("hls_media_av_offset_seconds", k, a.avOffset)
 	}

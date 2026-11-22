@@ -33,6 +33,9 @@ type inStep struct {
 }
 
 const (
+	// pcrGapLimit is how long MPEG-TS may go without a program clock
+	// reference: TR 101 290 asks for 40 ms and takes 100 ms for an error.
+	pcrGapLimit = 0.1
 	// stepRuns checks in a row must find a playlist apart: the playlists of
 	// one check are not read at one moment.
 	stepRuns = 2
