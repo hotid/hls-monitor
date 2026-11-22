@@ -124,7 +124,11 @@ func (s *Server) agentConfig(c *gin.Context) {
 		Targets: targets, PollSec: agentPollSec, ServerTime: now.UnixMilli(),
 	}
 	cfg.Slates = s.Slates()
+	cfg.Captures = s.captures != nil
 	cfg.Revision = targetsRevision(targets) + slatesRevision(cfg.Slates)
+	if cfg.Captures {
+		cfg.Revision += "c"
+	}
 	if c.Query("revision") == cfg.Revision {
 		c.Status(http.StatusNotModified)
 		return

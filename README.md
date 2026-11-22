@@ -176,7 +176,7 @@ A capture waits ten minutes to be confirmed by a problem of the kind it was made
 
 Captures are made for what is in the segments: the picture, the sound, the container, the timestamps. A playlist that cannot be reached leaves nothing to save but what its incident already has. Encrypted segments are not captured.
 
-It is bounded on every side, and checks never wait for it: `HLSMON_CAPTURE_MAX_MB` (2048) is all the disk captures may take, unconfirmed ones included — beyond it the unconfirmed go first, then the oldest; one capture takes 96 MB at the most; two are made at a time, and one from any one server; a stream is captured once in half an hour, and for a problem a kept capture of it already stands for, once a day — a stream with the same thing wrong in every segment is not captured over and over. When room has to be made among kept captures, the oldest of whatever there is most of goes first, so that a common problem does not push out the one capture of a rare one. A capture that does not fit these is not made. So far only the server's own checks capture, not the agents'.
+It is bounded on every side, and checks never wait for it: `HLSMON_CAPTURE_MAX_MB` (2048) is all the disk captures may take, unconfirmed ones included — beyond it the unconfirmed go first, then the oldest; one capture takes 96 MB at the most; two are made at a time, and one from any one server; a stream is captured once in half an hour, and for a problem a kept capture of it already stands for, once a day — a stream with the same thing wrong in every segment is not captured over and over. When room has to be made among kept captures, the oldest of whatever there is most of goes first, so that a common problem does not push out the one capture of a rare one. A capture that does not fit these is not made. Agents capture too, when the server has captures on: from where they stand, on their own disk, by the same rules. A capture worth keeping (confirmed, asked for, or one a decoder found fault with) is sent to the server as an archive and removed from the agent once the server has it; in the list it says which agent made it. “Capture now” on a stream that only agents check is passed to the first of them in contact.
 
 ## Agents
 
@@ -239,7 +239,7 @@ Every setting is given as a flag or an environment variable.
 
 Retention of time series is set in VictoriaMetrics (`HLSMON_METRICS_RETENTION` in compose, 7 days by default, the same as the longest chart range).
 
-Agent settings: `HLSMON_SERVER_URL`, `HLSMON_ENROLL_TOKEN`, `HLSMON_KEY_FILE` (`data/agent.key` by default; in the container it is in a volume), `HLSMON_QUEUE_DIR` (undelivered results; `queue` next to the key by default), `HLSMON_QUEUE_MAX_MB` (`1024`), `HLSMON_BODY_MEMORY_MB`, `HLSMON_PRIVATE_NETWORKS`, `HLSMON_LOG_LEVEL`.
+Agent settings: `HLSMON_SERVER_URL`, `HLSMON_ENROLL_TOKEN`, `HLSMON_KEY_FILE` (`data/agent.key` by default; in the container it is in a volume), `HLSMON_QUEUE_DIR` (undelivered results; `queue` next to the key by default), `HLSMON_QUEUE_MAX_MB` (`1024`), `HLSMON_BODY_MEMORY_MB`, `HLSMON_PRIVATE_NETWORKS`, `HLSMON_LOG_LEVEL`, `HLSMON_CAPTURE` (`off` keeps the agent from capturing even when the server asks; empty follows the server), `HLSMON_CAPTURE_DIR` (captures not sent yet; `captures` next to the key by default), `HLSMON_CAPTURE_MAX_MB` (`1024`).
 
 The server does not terminate TLS itself: put a reverse proxy in front of it and specify the proxy's address in `HLSMON_TRUSTED_PROXIES`.
 

@@ -45,6 +45,9 @@ type Status struct {
 	// Diagnoses tells that the agent takes requests to check a stream
 	// every second for a while (see DiagnoseJob); older agents do not.
 	Diagnoses bool `json:"diagnoses,omitempty"`
+	// Captures tells that the agent captures the segments around what it
+	// finds when the server asks it to, and sends them.
+	Captures bool `json:"captures,omitempty"`
 }
 
 // Link describes the way from an agent to the server, as the agent sees
@@ -130,6 +133,9 @@ type FetchRequest struct {
 	// Diagnose, when set, makes the request another kind of work
 	// altogether: nothing is fetched for the server, a stream is checked.
 	Diagnose *DiagnoseJob `json:"diagnose,omitempty"`
+	// Capture, when set, asks for a capture of a stream at its next
+	// check. The answer has Status 202 when one will be made, 409 when not.
+	Capture *CaptureJob `json:"capture,omitempty"`
 }
 
 // A live diagnosis from where an agent stands comes to it the way a fetch
@@ -202,10 +208,18 @@ type Config struct {
 	// Slates are the pictures known to be slates, for the looks at the
 	// streams.
 	Slates []probe.Slate `json:"slates,omitempty"`
+	// Captures asks the agent to capture the segments around what it
+	// finds and send the captures worth keeping to /captures.
+	Captures bool `json:"captures,omitempty"`
 	// PollSec is how often to ask for the configuration again.
 	PollSec int `json:"poll_sec"`
 	// ServerTime is the server's clock in Unix milliseconds.
 	ServerTime int64 `json:"server_time"`
+}
+
+// CaptureJob asks for a capture of one stream the agent checks.
+type CaptureJob struct {
+	StreamID int64 `json:"stream_id"`
 }
 
 // ResultsRequest delivers a batch of check results.

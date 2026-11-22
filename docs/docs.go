@@ -15,6 +15,65 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/agent/v1/captures": {
+            "post": {
+                "description": "The body is the capture as a zip archive, the way /api/v1/captures/{id}/archive gives it. A capture sent again is taken once.",
+                "consumes": [
+                    "application/zip"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "agent"
+                ],
+                "summary": "Take a capture an agent made",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Bearer agent key",
+                        "name": "Authorization",
+                        "in": "header",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    },
+                    "507": {
+                        "description": "Insufficient Storage",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/agent/v1/config": {
             "get": {
                 "description": "Doubles as the agent's heartbeat. Answers 304 when the revision passed in the query is still current.",
@@ -2686,11 +2745,23 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "github_com_hotid_hls-monitor_internal_agentproto.CaptureJob": {
+            "type": "object",
+            "properties": {
+                "stream_id": {
+                    "type": "integer"
+                }
+            }
+        },
         "github_com_hotid_hls-monitor_internal_agentproto.Config": {
             "type": "object",
             "properties": {
                 "agent_id": {
                     "type": "integer"
+                },
+                "captures": {
+                    "description": "Captures asks the agent to capture the segments around what it\nfinds and send the captures worth keeping to /captures.",
+                    "type": "boolean"
                 },
                 "enabled": {
                     "type": "boolean"
@@ -2764,6 +2835,14 @@ const docTemplate = `{
         "github_com_hotid_hls-monitor_internal_agentproto.FetchRequest": {
             "type": "object",
             "properties": {
+                "capture": {
+                    "description": "Capture, when set, asks for a capture of a stream at its next\ncheck. The answer has Status 202 when one will be made, 409 when not.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.CaptureJob"
+                        }
+                    ]
+                },
                 "diagnose": {
                     "description": "Diagnose, when set, makes the request another kind of work\naltogether: nothing is fetched for the server, a stream is checked.",
                     "allOf": [
@@ -2876,6 +2955,10 @@ const docTemplate = `{
                 "behind": {
                     "type": "integer"
                 },
+                "captures": {
+                    "description": "Captures tells that the agent captures the segments around what it\nfinds when the server asks it to, and sends them.",
+                    "type": "boolean"
+                },
                 "cpu_cores": {
                     "description": "CPUCores and CPULimit: processors used and available; MemoryBytes.",
                     "type": "number"
@@ -2933,6 +3016,10 @@ const docTemplate = `{
         "github_com_hotid_hls-monitor_internal_capture.Capture": {
             "type": "object",
             "properties": {
+                "agent_id": {
+                    "description": "AgentID is the agent that made it, for a capture an agent sent; 0\nfor one the server made itself.",
+                    "type": "integer"
+                },
                 "at": {
                     "type": "string"
                 },
@@ -3249,6 +3336,10 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "profile": {
+                    "type": "string"
+                },
+                "range": {
+                    "description": "Range is the dynamic range of the picture when it is a high one:\n\"PQ\" (HDR10, Dolby Vision) or \"HLG\"; empty for standard.",
                     "type": "string"
                 },
                 "sample_rate": {

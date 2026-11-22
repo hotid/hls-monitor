@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -40,6 +41,11 @@ func main() {
 	var ffmpeg string
 	envflag.Duration(fs, &pictureCheck, "picture-check", "HLSMON_PICTURE_CHECK", 0, "how often the picture and the sound of every stream are looked at, e.g. 5m; needs ffmpeg; 0 does not look")
 	envflag.String(fs, &ffmpeg, "ffmpeg", "HLSMON_FFMPEG", "ffmpeg", "the ffmpeg program to decode with, for picture-check")
+	var captureMode, captureDir string
+	var captureMaxMB int
+	envflag.String(fs, &captureMode, "capture", "HLSMON_CAPTURE", "", "off keeps the agent from capturing segments around findings even when the server asks it to; empty follows the server")
+	envflag.String(fs, &captureDir, "capture-dir", "HLSMON_CAPTURE_DIR", "", "directory for captures not sent yet; \"captures\" next to the key file when empty")
+	envflag.Int(fs, &captureMaxMB, "capture-max-mb", "HLSMON_CAPTURE_MAX_MB", 1024, "MiB of disk the captures not sent yet may take")
 	showVersion := fs.Bool("version", false, "print the version and exit")
 	_ = fs.Parse(os.Args[1:])
 	if *showVersion {
@@ -63,7 +69,8 @@ func main() {
 		os.Exit(1)
 	}
 	err := agent.Run(ctx, agent.Options{QueueDir: queueDir, QueueBytes: int64(queueMaxMB) << 20, ServerURL: serverURL, EnrollToken: token, KeyFile: keyFile, Version: version, Log: log,
-		PictureEvery: pictureCheck, FFmpeg: ffmpeg})
+		PictureEvery: pictureCheck, FFmpeg: ffmpeg,
+		NoCapture: strings.EqualFold(strings.TrimSpace(captureMode), "off"), CaptureDir: captureDir, CaptureBytes: int64(captureMaxMB) << 20})
 	if err != nil {
 		log.Error("fatal", "error", err)
 		os.Exit(1)

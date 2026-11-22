@@ -44,6 +44,8 @@ func (a *Agent) fetchLoop(ctx context.Context) {
 			return
 		case err == nil && status == http.StatusOK && job.ID != "" && job.Diagnose != nil:
 			a.diagnose(ctx, job)
+		case err == nil && status == http.StatusOK && job.ID != "" && job.Capture != nil:
+			a.captureNow(ctx, job)
 		case err == nil && status == http.StatusOK && job.ID != "":
 			a.fetch(ctx, job)
 		case err == nil && status == http.StatusNoContent:

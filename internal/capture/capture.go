@@ -113,7 +113,10 @@ type File struct {
 type Capture struct {
 	ID       string `json:"id"`
 	StreamID int64  `json:"stream_id"`
-	Variant  string `json:"variant"`
+	// AgentID is the agent that made it, for a capture an agent sent; 0
+	// for one the server made itself.
+	AgentID int64  `json:"agent_id,omitempty"`
+	Variant string `json:"variant"`
 	// Kinds are the problems it was made on suspicion of; Confirmed
 	// those of them that were then reported. Manual tells that somebody
 	// asked for it.

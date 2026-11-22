@@ -56,6 +56,12 @@ type Options struct {
 	// when zero: beyond it the oldest results are dropped.
 	QueueDir   string
 	QueueBytes int64
+	// CaptureDir is where captures are made, "captures" next to the key
+	// file when empty; CaptureBytes bounds them. NoCapture keeps the agent
+	// from capturing even when the server asks.
+	CaptureDir   string
+	CaptureBytes int64
+	NoCapture    bool
 	// PollInterval overrides the configuration poll period the server suggests.
 	PollInterval time.Duration
 }
@@ -76,6 +82,8 @@ type Agent struct {
 	revision string
 	// slates are the pictures the server knows to be slates.
 	slates atomic.Pointer[[]probe.Slate]
+	// captures are the agent's own captures; nil when it makes none.
+	captures *gated
 
 	spool *spool.Spool
 	// writeFailed is set while results cannot be written to the queue, so
@@ -97,6 +105,7 @@ func (a *Agent) status() agentproto.Status {
 	st.Link = a.link.report()
 	st.Fetches = true
 	st.Diagnoses = true
+	st.Captures = a.captures != nil
 	load := a.load.Status()
 	if load.Overloaded {
 		st.Overloaded = load.Reason
@@ -153,6 +162,15 @@ func Run(ctx context.Context, opt Options) error {
 	})
 	if d := picture.Setup(opt.PictureEvery, opt.FFmpeg, a.log); d != nil {
 		a.run.SetLooker(d, opt.PictureEvery)
+	}
+	if !opt.NoCapture {
+		if err := a.openCaptures(); err != nil {
+			a.log.Warn("captures cannot be made", "error", err)
+		} else {
+			go a.captures.store.Run(ctx)
+			go a.captureLoop(ctx)
+			a.run.SetCapturer(a.captures)
+		}
 	}
 
 	sendDone := make(chan struct{})
@@ -328,6 +346,9 @@ func (a *Agent) configLoop(ctx context.Context) error {
 				targets = nil
 			}
 			a.slates.Store(&cfg.Slates)
+			if a.captures != nil && a.captures.on.Swap(cfg.Captures) != cfg.Captures {
+				a.log.Info("capturing segments around findings", "on", cfg.Captures)
+			}
 			a.run.Sync(targets)
 			a.revision = cfg.Revision
 			a.log.Info("configuration applied", "streams", len(targets), "enabled", cfg.Enabled)

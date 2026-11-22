@@ -205,6 +205,7 @@ func (s *Server) routes(ui http.Handler) {
 	agAuth.POST("/results", s.agentResults)
 	agAuth.GET("/fetch", s.agentFetchPoll)
 	agAuth.POST("/fetch/:id", s.agentFetchResult)
+	agAuth.POST("/captures", s.agentCapture)
 
 	ext := r.Group("/api/ext/v1", noStore, s.requireAPIToken)
 	ext.GET("/discovery/streams", s.extDiscoverStreams)

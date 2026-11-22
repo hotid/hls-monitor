@@ -540,6 +540,8 @@ export interface CaptureFile {
 export interface Capture {
   id: string
   stream_id: number
+  /** The agent that made it; absent for one the server made. */
+  agent_id?: number
   variant: string
   kinds: string[]
   confirmed?: string[]

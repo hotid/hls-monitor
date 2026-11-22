@@ -39,11 +39,16 @@ type env struct {
 	server *httptest.Server
 	origin *httptest.Server
 	admin  *http.Client
+	fake   *hlstest.Origin
 	// down makes the server answer 503 to everything, as a broken proxy would.
 	down atomic.Bool
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvWith(t, nil) }
+
+// newEnvWith makes the environment with the server's configuration
+// changed by change.
+func newEnvWith(t *testing.T, change func(*api.Config)) *env {
 	t.Helper()
 	ctx := context.Background()
 	st, err := store.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
@@ -56,7 +61,11 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	mx := metrics.New("", nil)
-	srv := api.New(api.Config{Version: "test"}, st, mx, ingest.New(st, mx, quiet), nil, nil, quiet)
+	cfg := api.Config{Version: "test"}
+	if change != nil {
+		change(&cfg)
+	}
+	srv := api.New(cfg, st, mx, ingest.New(st, mx, quiet), nil, nil, quiet)
 
 	e := &env{t: t, st: st}
 	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,6 +79,7 @@ func newEnv(t *testing.T) *env {
 
 	fake := hlstest.New(hlstest.Options{})
 	fake.Publish(4)
+	e.fake = fake
 	e.origin = httptest.NewServer(fake.Handler())
 	t.Cleanup(e.origin.Close)
 

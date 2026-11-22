@@ -1,8 +1,18 @@
 definitions:
+  github_com_hotid_hls-monitor_internal_agentproto.CaptureJob:
+    properties:
+      stream_id:
+        type: integer
+    type: object
   github_com_hotid_hls-monitor_internal_agentproto.Config:
     properties:
       agent_id:
         type: integer
+      captures:
+        description: |-
+          Captures asks the agent to capture the segments around what it
+          finds and send the captures worth keeping to /captures.
+        type: boolean
       enabled:
         type: boolean
       name:
@@ -53,6 +63,12 @@ definitions:
     type: object
   github_com_hotid_hls-monitor_internal_agentproto.FetchRequest:
     properties:
+      capture:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.CaptureJob'
+        description: |-
+          Capture, when set, asks for a capture of a stream at its next
+          check. The answer has Status 202 when one will be made, 409 when not.
       diagnose:
         allOf:
         - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.DiagnoseJob'
@@ -145,6 +161,11 @@ definitions:
     properties:
       behind:
         type: integer
+      captures:
+        description: |-
+          Captures tells that the agent captures the segments around what it
+          finds when the server asks it to, and sends them.
+        type: boolean
       cpu_cores:
         description: 'CPUCores and CPULimit: processors used and available; MemoryBytes.'
         type: number
@@ -194,6 +215,11 @@ definitions:
     type: object
   github_com_hotid_hls-monitor_internal_capture.Capture:
     properties:
+      agent_id:
+        description: |-
+          AgentID is the agent that made it, for a capture an agent sent; 0
+          for one the server made itself.
+        type: integer
       at:
         type: string
       bytes:
@@ -442,6 +468,11 @@ definitions:
           the tail after the last keyframe.
         type: number
       profile:
+        type: string
+      range:
+        description: |-
+          Range is the dynamic range of the picture when it is a high one:
+          "PQ" (HDR10, Dolby Vision) or "HLG"; empty for standard.
         type: string
       sample_rate:
         type: integer
@@ -2193,6 +2224,46 @@ info:
   title: hls-monitor API
   version: "1.0"
 paths:
+  /api/agent/v1/captures:
+    post:
+      consumes:
+      - application/zip
+      description: The body is the capture as a zip archive, the way /api/v1/captures/{id}/archive
+        gives it. A capture sent again is taken once.
+      parameters:
+      - description: Bearer agent key
+        in: header
+        name: Authorization
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+        "507":
+          description: Insufficient Storage
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Take a capture an agent made
+      tags:
+      - agent
   /api/agent/v1/config:
     get:
       description: Doubles as the agent's heartbeat. Answers 304 when the revision

@@ -7,6 +7,7 @@ import { problemName } from '@/catalog'
 import { fmtBytes, fmtFull } from '@/format'
 import { t } from '@/i18n'
 import { usePolling } from '@/poll'
+import { useLive } from '@/stores/live'
 import { useSession } from '@/stores/session'
 import { useToasts } from '@/stores/toasts'
 import type { Capture, Captures } from '@/types'
@@ -51,6 +52,9 @@ async function remove() {
   }
 }
 
+const live = useLive()
+// Where the capture was made: by the server itself or by an agent.
+const where = (c: Capture) => (c.agent_id ? live.agentName(c.agent_id) : t('common.serverLocal'))
 const why = (c: Capture) => (c.manual ? t('stream.captureManual') : c.kinds.map(problemName).join(', '))
 const state = (c: Capture) =>
   !c.done ? t('stream.captureGoing') : c.state === 'kept' ? t('stream.captureKept') : c.state === 'found' ? t('stream.captureFound') : t('stream.capturePending')
@@ -70,6 +74,7 @@ const whole = (c: Capture) => c.files.filter((f) => f.role === 'segment' && f.wh
           <tr>
             <th>{{ t('stream.captureAt') }}</th>
             <th>{{ t('stream.captureWhy') }}</th>
+            <th>{{ t('stream.captureWhere') }}</th>
             <th>{{ t('stream.captureState') }}</th>
             <th class="right">{{ t('stream.captureSegments') }}</th>
             <th class="right">{{ t('stream.captureSize') }}</th>
@@ -83,6 +88,7 @@ const whole = (c: Capture) => c.files.filter((f) => f.role === 'segment' && f.wh
               {{ why(c) }}
               <div v-for="(n, i) in c.notes ?? []" :key="i" class="muted note">{{ n }}</div>
             </td>
+            <td>{{ where(c) }}</td>
             <td :title="c.state === 'pending' ? t('stream.capturePendingHint') : c.state === 'found' ? t('stream.captureFoundHint') : ''">{{ state(c) }}</td>
             <td class="right mono">{{ whole(c) }}</td>
             <td class="right mono">{{ fmtBytes(c.bytes) }}</td>
