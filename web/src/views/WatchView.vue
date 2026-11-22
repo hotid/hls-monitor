@@ -32,6 +32,9 @@ const qualities = ref<Quality[]>([])
 /** -1 lets the player choose. */
 const quality = ref(-1)
 const audios = ref<{ index: number; label: string }[]>([])
+// Subtitles the stream has, and the one shown: -1 for none.
+const subtitles = ref<{ index: number; label: string }[]>([])
+const subtitle = ref(-1)
 const audio = ref(0)
 
 // ── What the player observes ──────────────────────────────────────────
@@ -378,6 +381,8 @@ function stop() {
   playing.value = null
   qualities.value = []
   audios.value = []
+  subtitles.value = []
+  subtitle.value = -1
   upstream.value = ''
   buffer.value = 0
   latency.value = null
@@ -415,6 +420,12 @@ async function start() {
     el.play().catch(() => {
       /* the browser wants a click first: the controls are there */
     })
+  })
+  player.on(HlsLib.Events.SUBTITLE_TRACKS_UPDATED, () => {
+    subtitles.value = player.subtitleTracks.map((s, index) => ({ index, label: [s.name, s.lang].filter(Boolean).join(' · ') || String(index + 1) }))
+    // Shown when asked for: a stream that marks its subtitles as default
+    // would otherwise put them over the picture unasked.
+    player.subtitleTrack = subtitle.value
   })
   player.on(HlsLib.Events.AUDIO_TRACKS_UPDATED, () => {
     audios.value = player.audioTracks.map((a, index) => ({ index, label: [a.name, a.lang].filter(Boolean).join(' · ') || String(index + 1) }))
@@ -560,6 +571,11 @@ watch(quality, (q) => {
 watch(audio, (a) => {
   if (hls && hls.audioTrack !== a) hls.audioTrack = a
 })
+watch(subtitle, (n) => {
+  if (!hls) return
+  hls.subtitleDisplay = n >= 0
+  if (hls.subtitleTrack !== n) hls.subtitleTrack = n
+})
 watch(sourceIndex, () => void start())
 
 const stateLabel = computed(() => {
@@ -667,6 +683,13 @@ onBeforeUnmount(stop)
               <label for="watch-audio">{{ t('watch.audioTrack') }}</label>
               <select id="watch-audio" v-model.number="audio" class="input">
                 <option v-for="a in audios" :key="a.index" :value="a.index">{{ a.label }}</option>
+              </select>
+            </div>
+            <div v-if="subtitles.length" class="field">
+              <label for="watch-subtitles">{{ t('watch.subtitles') }}</label>
+              <select id="watch-subtitles" v-model.number="subtitle" class="input">
+                <option :value="-1">{{ t('watch.subtitlesOff') }}</option>
+                <option v-for="s in subtitles" :key="s.index" :value="s.index">{{ s.label }}</option>
               </select>
             </div>
           </div>
