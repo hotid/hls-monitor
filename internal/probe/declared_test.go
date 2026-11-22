@@ -3,6 +3,7 @@ package probe
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hotid/hls-monitor/internal/hlstest"
 	"github.com/hotid/hls-monitor/internal/media"
@@ -60,6 +61,19 @@ func TestSubtitlesAreRead(t *testing.T) {
 		}
 		if cues != 1 {
 			t.Errorf("level %v: %v cues counted in the new segment, want 1", level, cues)
+		}
+		// Empty subtitles are told by a count of none over the last hour.
+		f.origin.SubtitlesBody([]byte("WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:0,LOCAL:00:00:00.000\n\n"))
+		hour := -1.0
+		for end := f.clock.Add(70 * time.Minute); f.clock.Before(end); {
+			for _, m := range f.step(1).Metrics {
+				if m.Name == "hls_subtitle_cues_hour" {
+					hour = m.Value
+				}
+			}
+		}
+		if hour != 0 {
+			t.Errorf("level %v: an hour of empty subtitles counted %v cues", level, hour)
 		}
 		f.origin.SubtitlesBody([]byte("<html>not found</html>"))
 		if p := hasProblem(f.step(1), ProbSubtitlesInvalid); p == nil {

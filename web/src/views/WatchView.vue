@@ -35,6 +35,18 @@ const audios = ref<{ index: number; label: string }[]>([])
 // Subtitles the stream has, and the one shown: -1 for none.
 const subtitles = ref<{ index: number; label: string }[]>([])
 const subtitle = ref(-1)
+// Subtitles the monitor found without a cue for the last hour: every
+// playlist of subtitles of the stream, as the vantage point that saw most.
+const subtitlesEmpty = computed(() => {
+  const subs = info.value?.variants.filter((v) => v.kind === 'subtitles') ?? []
+  const counts = subs.map((v) => Math.max(-1, ...v.states.map((st) => st.metrics.hls_subtitle_cues_hour ?? -1)))
+  return counts.length > 0 && counts.every((n) => n === 0)
+})
+// Cues of the track shown, as the player has them, and since when it is shown.
+const shownCues = ref(0)
+const shownSince = ref(0)
+// Set when the track shown has had no cue for a while.
+const cuesLate = ref(false)
 const audio = ref(0)
 
 // ── What the player observes ──────────────────────────────────────────
@@ -43,6 +55,8 @@ const playing = ref<{ label: string; bitrate: number } | null>(null)
 const buffer = ref(0)
 const latency = ref<number | null>(null)
 const dropped = ref(0)
+// shown is how many frames the browser was given to show.
+const shown = ref(0)
 const upstream = ref('')
 const stalls = ref(0)
 interface Trouble {
@@ -397,6 +411,7 @@ async function start() {
   unsupported.value = false
   stalls.value = 0
   dropped.value = 0
+  shown.value = 0
   quality.value = -1
   state.value = 'loading'
   resetHistory()
@@ -550,7 +565,14 @@ async function start() {
     }
     buffer.value = ahead
     latency.value = Number.isFinite(hls.latency) && hls.latency > 0 ? hls.latency : null
-    dropped.value = el.getVideoPlaybackQuality?.().droppedVideoFrames ?? 0
+    const quality = el.getVideoPlaybackQuality?.()
+    dropped.value = quality?.droppedVideoFrames ?? 0
+    shown.value = quality?.totalVideoFrames ?? 0
+    if (subtitle.value >= 0) {
+      const track = [...el.textTracks].find((tr) => tr.mode === 'showing')
+      shownCues.value = Math.max(shownCues.value, track?.cues?.length ?? 0)
+    }
+    cuesLate.value = subtitle.value >= 0 && !shownCues.value && Date.now() - shownSince.value > 20000
     latest.buffer = ahead
     if (latency.value !== null) latest.latency = latency.value
     if (Number.isFinite(hls.bandwidthEstimate) && hls.bandwidthEstimate > 0) latest.estimate = hls.bandwidthEstimate
@@ -572,6 +594,8 @@ watch(audio, (a) => {
   if (hls && hls.audioTrack !== a) hls.audioTrack = a
 })
 watch(subtitle, (n) => {
+  shownCues.value = 0
+  shownSince.value = n >= 0 ? Date.now() : 0
   if (!hls) return
   hls.subtitleDisplay = n >= 0
   if (hls.subtitleTrack !== n) hls.subtitleTrack = n
@@ -691,6 +715,8 @@ onBeforeUnmount(stop)
                 <option :value="-1">{{ t('watch.subtitlesOff') }}</option>
                 <option v-for="s in subtitles" :key="s.index" :value="s.index">{{ s.label }}</option>
               </select>
+              <span v-if="subtitlesEmpty" class="help" style="color: var(--accent-warm)">{{ t('watch.subtitlesEmpty') }}</span>
+              <span v-else-if="cuesLate" class="help">{{ t('watch.subtitlesNoCuesYet') }}</span>
             </div>
           </div>
 
@@ -707,7 +733,7 @@ onBeforeUnmount(stop)
               <dt>{{ t('watch.stalls') }}</dt>
               <dd class="mono" :style="stalls ? 'color: var(--accent-warm)' : ''">{{ stalls }}</dd>
               <dt :title="t('watch.droppedHint')">{{ t('watch.dropped') }}</dt>
-              <dd class="mono">{{ dropped }}</dd>
+              <dd class="mono">{{ dropped }}<span v-if="shown" class="muted"> {{ t('watch.droppedOf', { n: shown, pct: fmtNumber((100 * dropped) / shown, 1) }) }}</span></dd>
             </dl>
           </div>
 

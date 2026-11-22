@@ -53,6 +53,13 @@ const { error } = usePolling(async (signal) => {
 const activeVariants = computed(() => (stream.value?.variants ?? []).filter((v) => v.active))
 const variantById = computed(() => new Map((stream.value?.variants ?? []).map((v) => [v.id, v])))
 
+// How many cues the subtitles had in the last hour, by the vantage point
+// that saw the most; undefined before an hour was watched enough.
+function cuesHour(v: Variant): number | undefined {
+  const n = v.states.map((st) => st.metrics.hls_subtitle_cues_hour).filter((x): x is number => typeof x === 'number')
+  return n.length ? Math.max(...n) : undefined
+}
+
 function variantLabel(v: Variant | undefined): string {
   if (!v) return '—'
   if (v.kind === 'master') return t('common.multivariantPlaylist')
@@ -485,6 +492,9 @@ function trackParams(tr: MediaTrack): string {
                 <td>
                   <div class="strong">{{ variantLabel(v) }}</div>
                   <div v-if="v.kind !== 'master' && v.kind !== 'media'" class="mono muted truncate" style="max-width: 280px" :title="v.key">{{ kindLabel()[v.kind] }}: {{ v.key }}</div>
+                  <div v-if="v.kind === 'subtitles' && cuesHour(v) !== undefined" class="cues" :class="{ empty: cuesHour(v) === 0 }">
+                    {{ cuesHour(v) === 0 ? t('stream.subtitlesEmpty') : t('stream.subtitleCuesHour', { n: cuesHour(v) }) }}
+                  </div>
                 </td>
                 <td>
                   <span class="states">
@@ -876,5 +886,12 @@ function trackParams(tr: MediaTrack): string {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr));
   gap: 12px;
+}
+.cues {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.cues.empty {
+  color: var(--accent-warm);
 }
 </style>

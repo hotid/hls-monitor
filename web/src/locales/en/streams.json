@@ -24,6 +24,8 @@
   "loudnessHint": "Loudness by EBU R 128 at the last measure (of two seconds of sound, every half hour or more often). The broadcast norm is −23 LUFS; those more than 6 away from it stand out.",
   "mbit": "Mbit/s",
   "streamWillBeDeletedTogetherWith": "Stream “{name}” will be deleted together with its history: metrics, incidents and the segment journal. This cannot be undone.",
+  "subtitlesEmpty": "empty",
+  "subtitlesEmptyHint": "There is a subtitles track, but it had not a single cue in the last hour.",
   "subtitlesN": "subtitles: {n}",
   "subtitlesNo": "no",
   "subtitlesShort": "subtitles",

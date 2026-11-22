@@ -341,7 +341,43 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 	case agg.clocked:
 		st.clockRuns = 0
 	}
+	if agg.subtitles {
+		st.noteCues(cy, v.Key, agg.cues, c.now())
+	}
 	c.emitSegmentMetrics(cy, v, agg)
+}
+
+// cuesSpan is how far back the cues of subtitles are counted, and cuesFrom
+// how much of it must have been seen for the count to say anything: a
+// film has minutes without a word.
+const (
+	cuesSpan = time.Hour
+	cuesFrom = 10 * time.Minute
+)
+
+type cueCount struct {
+	at time.Time
+	n  int
+}
+
+// noteCues counts the cues of subtitles of the last hour: none in all of
+// it are subtitles that are there and empty.
+func (st *variantState) noteCues(cy *cycle, key string, n int, now time.Time) {
+	if st.cuesSince.IsZero() {
+		st.cuesSince = now
+	}
+	keep := st.cues[:0]
+	total := n
+	for _, c := range st.cues {
+		if now.Sub(c.at) < cuesSpan {
+			keep = append(keep, c)
+			total += c.n
+		}
+	}
+	st.cues = append(keep, cueCount{now, n})
+	if now.Sub(st.cuesSince) >= cuesFrom {
+		cy.metric("hls_subtitle_cues_hour", key, float64(total))
+	}
 }
 
 // initSection returns the parsed initialization section a segment refers

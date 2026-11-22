@@ -80,6 +80,10 @@ type variantState struct {
 	epoch  int
 	// clockRuns counts the checks in a row that found the program clock wrong.
 	clockRuns int
+	// cues are the cues of subtitles counted in the last cuesSpan, from
+	// cuesSince on.
+	cues      []cueCount
+	cuesSince time.Time
 }
 
 // failed notes a check that could not read the playlist.

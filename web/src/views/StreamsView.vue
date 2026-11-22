@@ -78,6 +78,8 @@ function anyFigure(s: Stream, key: string): number | undefined {
 }
 const loudness = (s: Stream) => anyFigure(s, 'loudness_lufs')
 const subtitleTracks = (s: Stream) => anyFigure(s, 'subtitles')
+// Subtitles that are there and had not a cue in the last hour.
+const subtitlesEmpty = (s: Stream) => !!subtitleTracks(s) && anyFigure(s, 'subtitle_cues_hour') === 0
 // How far from the EBU R 128 norm of -23 LUFS a stream may be before it
 // stands out in the list: a single measure is of two seconds of sound.
 const loudOff = (v: number) => Math.abs(v + 23) > 6
@@ -96,7 +98,7 @@ const sort = useSort(() => found.value, {
   subtitles: {
     value: (s) => subtitleTracks(s),
     filter: 'choice',
-    label: (s) => (subtitleTracks(s) === undefined ? t('streams.subtitlesUnknown') : subtitleTracks(s) ? t('streams.subtitlesYes') : t('streams.subtitlesNo')),
+    label: (s) => (subtitleTracks(s) === undefined ? t('streams.subtitlesUnknown') : subtitlesEmpty(s) ? t('streams.subtitlesEmpty') : subtitleTracks(s) ? t('streams.subtitlesYes') : t('streams.subtitlesNo')),
   },
   level: { value: (s) => levelLabel()[s.level], filter: 'choice' },
   agents: { value: (s) => s.agents.map((a) => a.agent_name).join(', '), filter: 'choice', label: (s) => s.agents.map((a) => a.agent_name).join(', ') || t('common.notAssigned') },
@@ -188,7 +190,7 @@ async function remove() {
                 <div v-if="loudness(s) !== undefined || subtitleTracks(s)" class="second">
                   <span v-if="loudness(s) !== undefined" :class="{ off: loudOff(loudness(s)!) }" :title="t('streams.loudnessHint')">{{ fmtNumber(loudness(s), 1) }} LUFS</span>
                   <template v-if="loudness(s) !== undefined && subtitleTracks(s)"> · </template>
-                  <span v-if="subtitleTracks(s)">{{ subtitleTracks(s) === 1 ? t('streams.subtitlesShort') : t('streams.subtitlesN', { n: subtitleTracks(s) }) }}</span>
+                  <span v-if="subtitleTracks(s)" :class="{ off: subtitlesEmpty(s) }" :title="subtitlesEmpty(s) ? t('streams.subtitlesEmptyHint') : undefined">{{ subtitleTracks(s) === 1 ? t('streams.subtitlesShort') : t('streams.subtitlesN', { n: subtitleTracks(s) }) }}<template v-if="subtitlesEmpty(s)"> ({{ t('streams.subtitlesEmpty') }})</template></span>
                 </div>
               </td>
               <td v-if="severalAgents" class="hide-narrow">

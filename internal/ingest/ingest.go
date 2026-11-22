@@ -138,6 +138,8 @@ var summaryAggregates = []struct {
 	// Loudness by EBU R 128 of the loudest track, in LUFS: measured now
 	// and then, and kept until measured again.
 	{"loudness_lufs", "hls_audio_loudness_lufs", "max"},
+	// Cues in the subtitles in the last hour; 0 for subtitles that are empty.
+	{"subtitle_cues_hour", "hls_subtitle_cues_hour", "max"},
 }
 
 // ErrStale is returned for a result that is not newer than the newest one

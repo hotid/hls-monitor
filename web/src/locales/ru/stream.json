@@ -104,6 +104,8 @@
   "startPTS": "Начало PTS",
   "statusByAgent": "Состояние по агентам",
   "streamWillBeDeletedTogetherWith": "Поток «{name}» будет удалён вместе с историей: метриками, инцидентами и журналом сегментов.",
+  "subtitleCuesHour": "реплик за час: {n}",
+  "subtitlesEmpty": "пустые: за час ни одной реплики",
   "syncContinuityTransport": "синхронизация {sync}, непрерывность {cc}, транспорт {transport}",
   "tables": "Таблицы",
   "taken": "Снят",

@@ -104,6 +104,8 @@
   "startPTS": "Start PTS",
   "statusByAgent": "Status by agent",
   "streamWillBeDeletedTogetherWith": "Stream “{name}” will be deleted together with its history: metrics, incidents and the segment journal.",
+  "subtitleCuesHour": "cues in an hour: {n}",
+  "subtitlesEmpty": "empty: not a cue in an hour",
   "syncContinuityTransport": "sync {sync}, continuity {cc}, transport {transport}",
   "tables": "Tables",
   "taken": "Taken",
