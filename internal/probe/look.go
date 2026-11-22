@@ -278,35 +278,7 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 	defer c.mu.Unlock()
 	l := &c.looks
 	if err != nil {
-		// Nothing to look at this time: too little of the segment, or
-		// not decodable. The next turn comes at the usual time, and what
-		// stood before stands.
-		if errors.Is(err, picture.ErrNothing) || errors.Is(err, picture.ErrNoDecoder) || ctx.Err() != nil {
-			l.at = at
-		}
-		// A segment nothing can be made of, look after look, is a stream
-		// no player shows: scrambled, or garbage in a valid container.
-		// One such look is a segment that happened to be cut short.
-		if errors.Is(err, picture.ErrNothing) && ctx.Err() == nil {
-			l.nothing.note(true, at)
-			l.at = at.Add(min(lookAgain, c.PictureEvery) - c.PictureEvery)
-			if l.nothing.standing(at) {
-				l.at = at.Add(min(lookStanding, c.PictureEvery) - c.PictureEvery)
-				details := []any{"decoder_says", err.Error(), "looks_in_a_row", l.nothing.n,
-					"since", l.nothing.since.UTC().Format(time.RFC3339), "looked_at", at.UTC().Format(time.RFC3339)}
-				// What the container says of the video narrows it down: a
-				// track with packets in it and next to no pictures among
-				// them is not video that failed to decode, it is not video.
-				if video := videoOf(info); video != nil && video.Bytes > 0 {
-					details = append(details, "video_pictures", video.Frames, "video_packets", video.Packets)
-					if d := video.Duration(); d > 0 {
-						details = append(details, "video_kbit_s", math.Round(float64(video.Bytes)*8/d/1000))
-					}
-				}
-				l.problems = []standingProblem{{kind: ProbMediaUndecodable, severity: SevCrit, variant: v.Key,
-					message: "neither the picture nor the sound can be decoded", details: details}}
-			}
-		}
+		c.sawNothing(ctx, v, err, info, at)
 		return
 	}
 	l.at = at
@@ -316,52 +288,9 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 	cy.picture(l.shown)
 
 	l.problems = nil
-	tell := func(severity, kind, message string, details ...any) {
-		l.problems = append(l.problems, standingProblem{kind: kind, severity: severity, variant: v.Key, message: message,
-			details: append(details, "looked_at", at.UTC().Format(time.RFC3339))})
-	}
-	stand := func(kind, message string, details ...any) { tell(SevCrit, kind, message, details...) }
 	suspect := false
 	if f.HasPicture {
-		black := f.Luma < blackLuma && f.Dark >= blackShare
-		same := picture.Moved(l.cells, f.Cells) <= stillMoves
-		// A film is dark for minutes at a time: a night scene, the
-		// credits. Something moves in it all the same, and nothing does
-		// on a screen that went black: a dark picture that differs from
-		// the one before begins the count anew.
-		if black && !same {
-			l.black = run{}
-		}
-		l.black.note(black, at)
-		l.same.note(same && c.t.Picture != PictureStatic, at)
-		l.cells = f.Cells
-		cy.metric("hls_picture_luma", v.Key, f.Luma)
-		changed := 1.0
-		if same {
-			changed = 0
-		}
-		cy.metric("hls_picture_changed", v.Key, changed)
-		suspect = suspect || l.black.n > 0 || l.same.n > 0
-		if l.black.standing(at) {
-			stand(ProbPictureBlack, "the picture is black", "picture_luma", round1(f.Luma), "picture_dark_share", round3(f.Dark),
-				"looks_in_a_row", l.black.n, "since", l.black.since.UTC().Format(time.RFC3339))
-		}
-		// A picture somebody marked as a slate is known at the first
-		// look, and is not told a second time as one that does not change.
-		var slate *Slate
-		if c.Slates != nil {
-			slate = slateOf(c.Slates(), f.Cells)
-		}
-		if slate != nil {
-			stand(ProbPictureSlate, "the stream shows the slate \""+slate.Name+"\"", "slate", slate.Name)
-		}
-		// A black screen does not change either; it is told as black. A
-		// dark notice with something blinking on it is black one look and
-		// not the next, and is told as what it is: a picture that stays.
-		if slate == nil && l.same.standing(at) && !l.black.standing(at) {
-			stand(ProbPictureFrozen, "the picture does not change", "looks_in_a_row", l.same.n+1,
-				"since", l.same.since.UTC().Format(time.RFC3339))
-		}
+		suspect = c.seePicture(cy, v, f, at)
 	}
 	// The sound is in the same segment — or, where the stream keeps it in
 	// a playlist of its own, in a segment of that one, listened to next.
@@ -389,6 +318,91 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 		// Look again soon: what it is shows in a minute, not in five.
 		l.at = at.Add(min(lookAgain, c.PictureEvery) - c.PictureEvery)
 	}
+}
+
+// sawNothing handles a look that got nothing out of the segment: too
+// little of it, or nothing decodable. The next turn comes at the usual
+// time, and what stood before stands. The lock is held.
+func (c *Checker) sawNothing(ctx context.Context, v Variant, err error, info *media.Info, at time.Time) {
+	l := &c.looks
+	if errors.Is(err, picture.ErrNothing) || errors.Is(err, picture.ErrNoDecoder) || ctx.Err() != nil {
+		l.at = at
+	}
+	// A segment nothing can be made of, look after look, is a stream no
+	// player shows: scrambled, or garbage in a valid container. One such
+	// look is a segment that happened to be cut short.
+	if !errors.Is(err, picture.ErrNothing) || ctx.Err() != nil {
+		return
+	}
+	l.nothing.note(true, at)
+	l.at = at.Add(min(lookAgain, c.PictureEvery) - c.PictureEvery)
+	if !l.nothing.standing(at) {
+		return
+	}
+	l.at = at.Add(min(lookStanding, c.PictureEvery) - c.PictureEvery)
+	details := []any{"decoder_says", err.Error(), "looks_in_a_row", l.nothing.n,
+		"since", l.nothing.since.UTC().Format(time.RFC3339), "looked_at", at.UTC().Format(time.RFC3339)}
+	// What the container says of the video narrows it down: a track with
+	// packets in it and next to no pictures among them is not video that
+	// failed to decode, it is not video.
+	if video := videoOf(info); video != nil && video.Bytes > 0 {
+		details = append(details, "video_pictures", video.Frames, "video_packets", video.Packets)
+		if d := video.Duration(); d > 0 {
+			details = append(details, "video_kbit_s", math.Round(float64(video.Bytes)*8/d/1000))
+		}
+	}
+	l.problems = []standingProblem{{kind: ProbMediaUndecodable, severity: SevCrit, variant: v.Key,
+		message: "neither the picture nor the sound can be decoded", details: details}}
+}
+
+// seePicture judges the picture of a look: black, a known slate, or one
+// that does not change. It tells whether something is suspected, for the
+// next look to come soon. The lock is held.
+func (c *Checker) seePicture(cy *cycle, v Variant, f *picture.Frame, at time.Time) bool {
+	l := &c.looks
+	stand := func(kind, message string, details ...any) {
+		l.problems = append(l.problems, standingProblem{kind: kind, severity: SevCrit, variant: v.Key, message: message,
+			details: append(details, "looked_at", at.UTC().Format(time.RFC3339))})
+	}
+	black := f.Luma < blackLuma && f.Dark >= blackShare
+	same := picture.Moved(l.cells, f.Cells) <= stillMoves
+	// A film is dark for minutes at a time: a night scene, the credits.
+	// Something moves in it all the same, and nothing does on a screen
+	// that went black: a dark picture that differs from the one before
+	// begins the count anew.
+	if black && !same {
+		l.black = run{}
+	}
+	l.black.note(black, at)
+	l.same.note(same && c.t.Picture != PictureStatic, at)
+	l.cells = f.Cells
+	cy.metric("hls_picture_luma", v.Key, f.Luma)
+	changed := 1.0
+	if same {
+		changed = 0
+	}
+	cy.metric("hls_picture_changed", v.Key, changed)
+	if l.black.standing(at) {
+		stand(ProbPictureBlack, "the picture is black", "picture_luma", round1(f.Luma), "picture_dark_share", round3(f.Dark),
+			"looks_in_a_row", l.black.n, "since", l.black.since.UTC().Format(time.RFC3339))
+	}
+	// A picture somebody marked as a slate is known at the first look,
+	// and is not told a second time as one that does not change.
+	var slate *Slate
+	if c.Slates != nil {
+		slate = slateOf(c.Slates(), f.Cells)
+	}
+	if slate != nil {
+		stand(ProbPictureSlate, "the stream shows the slate \""+slate.Name+"\"", "slate", slate.Name)
+	}
+	// A black screen does not change either; it is told as black. A dark
+	// notice with something blinking on it is black one look and not the
+	// next, and is told as what it is: a picture that stays.
+	if slate == nil && l.same.standing(at) && !l.black.standing(at) {
+		stand(ProbPictureFrozen, "the picture does not change", "looks_in_a_row", l.same.n+1,
+			"since", l.same.since.UTC().Format(time.RFC3339))
+	}
+	return l.black.n > 0 || l.same.n > 0
 }
 
 // hear judges the sound a look or a listen found. It tells whether the

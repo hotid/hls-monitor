@@ -128,33 +128,7 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 	st := c.vars[v.Key]
 	now := c.now()
 	td := float64(p.TargetDuration)
-
-	// Carry EXT-X-KEY and EXT-X-MAP forward: each applies until replaced.
-	var segs []plSegment
-	curKeys := p.Keys
-	curMap := p.Map
-	seq := p.SeqNo
-	for _, s := range p.GetAllSegments() {
-		if s == nil {
-			continue
-		}
-		if len(s.Keys) > 0 {
-			curKeys = s.Keys
-		}
-		if s.Map != nil {
-			curMap = s.Map
-		}
-		// A playlist may date its first segment alone: the rest follow by
-		// their lengths (RFC 8216, section 4.3.2.6), up to a discontinuity.
-		at := s.ProgramDateTime
-		if at.IsZero() && len(segs) > 0 && !s.Discontinuity {
-			if prev := segs[len(segs)-1]; !prev.at.IsZero() {
-				at = prev.at.Add(time.Duration(prev.seg.Duration * float64(time.Second)))
-			}
-		}
-		segs = append(segs, plSegment{seq: seq, seg: s, at: at, keys: curKeys, initMap: curMap, encrypted: isEncrypted(curKeys)})
-		seq++
-	}
+	segs := playlistSegments(p)
 	n := len(segs)
 
 	cy.metric("hls_target_duration_seconds", v.Key, td)
@@ -198,74 +172,153 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 	serverBefore := st.lastServer
 	st.lastServer = server
 	if server != serverBefore && serverBefore != "" {
-		// Another server answered. Behind a balancer each may count
-		// segments on its own, often one or two apart: the same number is
-		// then another segment, and what was learned from the previous
-		// server says nothing about this one. Comparing across would
-		// report segments that changed, timestamps that jump back and a
-		// player that ran dry, none of which happened. The change itself
-		// is reported as such.
-		st.recent = nil
-		st.prev, st.anchor = prevSegment{}, anchor{}
-		st.epoch++
-		st.bufInit = false
+		st.anotherServer()
 	}
-
-	// Sequence continuity against the previous cycle.
 	if st.haveSeq {
-		elapsed := now.Sub(st.lastCheck0).Seconds()
-		switch {
-		case renumbered(st.lastSeq, first, last, segs, elapsed, server != serverBefore):
-			// Not a loss and not a rollback: the numbers are not from the
-			// same count. Behind a balancer servers may each keep their own,
-			// and a packager starts over when it is restarted. A player
-			// that follows the numbers loses its place either way.
-			why := "the packager started its numbering over"
-			if server != serverBefore && serverBefore != "" {
-				why = fmt.Sprintf("the playlist came from %s, the previous one from %s, and they number segments differently", server, serverBefore)
-			}
-			cy.problem(ProbSeqRenumbered, SevWarn, v.Key, "media sequence numbering changed from %d to %d: %s", st.lastSeq, last, why)
-			cy.detail(ProbSeqRenumbered, v.Key, "previous_last_sequence", st.lastSeq, "playlist_server_before", serverBefore)
-			cy.snapshot(v.Key, plURL, resp.Body)
-			st.haveSeq = false
-			st.prev, st.anchor = prevSegment{}, anchor{}
-			st.epoch++
-		case last < st.lastSeq:
-			cy.problem(ProbSeqRegression, SevCrit, v.Key, "media sequence went back from %d to %d", st.lastSeq, last)
-			cy.detail(ProbSeqRegression, v.Key, "previous_last_sequence", st.lastSeq)
-			cy.snapshot(v.Key, plURL, resp.Body)
-			st.haveSeq = false
-			st.prev, st.anchor = prevSegment{}, anchor{}
-			st.epoch++
-		case first > st.lastSeq+1:
-			missed := first - st.lastSeq - 1
-			cy.metric("hls_segments_missed", v.Key, float64(missed))
-			// After an outage the gap says nothing new: the outage is reported.
-			sev := SevWarn
-			if failedBetween > 0 {
-				sev = SevInfo
-			}
-			cy.problem(ProbSeqJump, sev, v.Key, "%d segments left the playlist between checks (%d → %d)", missed, st.lastSeq, first)
-			cy.doubt(ProbSeqJump, v.Key) // a late check misses segments of a healthy stream as well
-			cy.detail(ProbSeqJump, v.Key, "previous_last_sequence", st.lastSeq, "missed_segments", missed, "previous_playlist_keeps", promised)
-			cy.snapshot(v.Key, plURL, resp.Body)
-		}
-		for _, s := range segs {
-			if old, ok := st.recent[s.seq]; ok && old != s.seg.URI {
-				cy.problem(ProbSegmentChanged, SevWarn, v.Key, "segment %d changed URI from %q to %q", s.seq, old, s.seg.URI)
-				cy.detail(ProbSegmentChanged, v.Key, "segment_sequence", s.seq, "uri_before", old, "uri_now", s.seg.URI)
-				cy.snapshot(v.Key, plURL, resp.Body)
-			}
-		}
+		pl := playlistRead{v: v, url: plURL, resp: resp, segs: segs, server: server, serverBefore: serverBefore, failedBetween: failedBetween, promised: promised}
+		c.sequenceGoesOn(cy, st, pl, now)
 	}
 	if p.Closed && !st.closed && st.seen {
 		cy.problem(ProbStreamEnded, SevWarn, v.Key, "live playlist ended (EXT-X-ENDLIST appeared)")
 	}
 
-	// Which segments to download this cycle.
-	var selected, fresh []plSegment
+	selected, fresh := c.selectSegments(cy, v, st, p.Closed, segs)
+	failed := map[uint64]bool{}
+	st.window, st.windowTD = segs, td
+	if c.t.Level != LevelPlaylist {
+		c.checkKeys(ctx, cy, v, plURL, selected, st)
+		c.checkSegments(ctx, cy, v, plURL, selected, st, resp, entry, failed)
+	}
+
+	if !p.Closed && c.t.Level != LevelPlaylist && v.Kind != KindSubtitles {
+		c.playerModel(cy, v, st, td, fresh, failed)
+	}
+	st.remember(p.Closed, segs, td)
+	return st.edgeOf(v, p, segs, td)
+}
+
+// playlistSegments lists the segments of a playlist with their numbers,
+// dates and keys. EXT-X-KEY and EXT-X-MAP apply until replaced.
+func playlistSegments(p *m3u8.MediaPlaylist) []plSegment {
+	var segs []plSegment
+	curKeys := p.Keys
+	curMap := p.Map
+	seq := p.SeqNo
+	for _, s := range p.GetAllSegments() {
+		if s == nil {
+			continue
+		}
+		if len(s.Keys) > 0 {
+			curKeys = s.Keys
+		}
+		if s.Map != nil {
+			curMap = s.Map
+		}
+		// A playlist may date its first segment alone: the rest follow by
+		// their lengths (RFC 8216, section 4.3.2.6), up to a discontinuity.
+		at := s.ProgramDateTime
+		if at.IsZero() && len(segs) > 0 && !s.Discontinuity {
+			if prev := segs[len(segs)-1]; !prev.at.IsZero() {
+				at = prev.at.Add(time.Duration(prev.seg.Duration * float64(time.Second)))
+			}
+		}
+		segs = append(segs, plSegment{seq: seq, seg: s, at: at, keys: curKeys, initMap: curMap, encrypted: isEncrypted(curKeys)})
+		seq++
+	}
+	return segs
+}
+
+// anotherServer forgets what was learnt of the playlist from the server
+// that answered before. Behind a balancer each may count segments on its
+// own, often one or two apart: the same number is then another segment.
+// Comparing across would report segments that changed, timestamps that
+// jump back and a player that ran dry, none of which happened. The change
+// itself is reported as such.
+func (st *variantState) anotherServer() {
+	st.recent = nil
+	st.prev, st.anchor = prevSegment{}, anchor{}
+	st.epoch++
+	st.bufInit = false
+}
+
+// playlistRead is a media playlist as read in this cycle, with what is
+// needed to judge it against the one before.
+type playlistRead struct {
+	v                    Variant
+	url                  string
+	resp                 *httpx.Response
+	segs                 []plSegment
+	server, serverBefore string
+	// failedBetween counts the checks since the last one that read the
+	// playlist; promised is how long that one said its segments stay.
+	failedBetween int
+	promised      float64
+}
+
+// sequenceGoesOn judges the numbers of the segments against the previous
+// cycle: renumbered, gone back, jumped over, or a number given to another
+// segment.
+func (c *Checker) sequenceGoesOn(cy *cycle, st *variantState, pl playlistRead, now time.Time) {
+	v, segs := pl.v, pl.segs
+	first, last := segs[0].seq, segs[len(segs)-1].seq
+	elapsed := now.Sub(st.lastCheck0).Seconds()
 	switch {
-	case p.Closed:
+	case renumbered(st.lastSeq, first, last, segs, elapsed, pl.server != pl.serverBefore):
+		// Not a loss and not a rollback: the numbers are not from the same
+		// count. Behind a balancer servers may each keep their own, and a
+		// packager starts over when it is restarted. A player that follows
+		// the numbers loses its place either way.
+		why := "the packager started its numbering over"
+		if pl.server != pl.serverBefore && pl.serverBefore != "" {
+			why = fmt.Sprintf("the playlist came from %s, the previous one from %s, and they number segments differently", pl.server, pl.serverBefore)
+		}
+		cy.problem(ProbSeqRenumbered, SevWarn, v.Key, "media sequence numbering changed from %d to %d: %s", st.lastSeq, last, why)
+		cy.detail(ProbSeqRenumbered, v.Key, "previous_last_sequence", st.lastSeq, "playlist_server_before", pl.serverBefore)
+		cy.snapshot(v.Key, pl.url, pl.resp.Body)
+		st.lostCount()
+	case last < st.lastSeq:
+		cy.problem(ProbSeqRegression, SevCrit, v.Key, "media sequence went back from %d to %d", st.lastSeq, last)
+		cy.detail(ProbSeqRegression, v.Key, "previous_last_sequence", st.lastSeq)
+		cy.snapshot(v.Key, pl.url, pl.resp.Body)
+		st.lostCount()
+	case first > st.lastSeq+1:
+		missed := first - st.lastSeq - 1
+		cy.metric("hls_segments_missed", v.Key, float64(missed))
+		// After an outage the gap says nothing new: the outage is reported.
+		sev := SevWarn
+		if pl.failedBetween > 0 {
+			sev = SevInfo
+		}
+		cy.problem(ProbSeqJump, sev, v.Key, "%d segments left the playlist between checks (%d → %d)", missed, st.lastSeq, first)
+		cy.doubt(ProbSeqJump, v.Key) // a late check misses segments of a healthy stream as well
+		cy.detail(ProbSeqJump, v.Key, "previous_last_sequence", st.lastSeq, "missed_segments", missed, "previous_playlist_keeps", pl.promised)
+		cy.snapshot(v.Key, pl.url, pl.resp.Body)
+	}
+	for _, s := range segs {
+		if old, ok := st.recent[s.seq]; ok && old != s.seg.URI {
+			cy.problem(ProbSegmentChanged, SevWarn, v.Key, "segment %d changed URI from %q to %q", s.seq, old, s.seg.URI)
+			cy.detail(ProbSegmentChanged, v.Key, "segment_sequence", s.seq, "uri_before", old, "uri_now", s.seg.URI)
+			cy.snapshot(v.Key, pl.url, pl.resp.Body)
+		}
+	}
+}
+
+// lostCount forgets the count of segments followed so far: what comes
+// now is numbered anew.
+func (st *variantState) lostCount() {
+	st.haveSeq = false
+	st.prev, st.anchor = prevSegment{}, anchor{}
+	st.epoch++
+}
+
+// selectSegments picks the segments to download this cycle: of a finished
+// playlist one at a time in turn, at the first sight of a live one its
+// newest, and then those that are new, as many as allowed. fresh are all
+// the new ones.
+func (c *Checker) selectSegments(cy *cycle, v Variant, st *variantState, closed bool, segs []plSegment) (selected, fresh []plSegment) {
+	n := len(segs)
+	switch {
+	case closed:
 		selected = []plSegment{segs[st.vodCursor%n]}
 		st.vodCursor++
 	case !st.haveSeq:
@@ -287,30 +340,27 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 		}
 	}
 	cy.metric("hls_playlist_new_segments", v.Key, float64(len(fresh)))
+	return selected, fresh
+}
 
-	failed := map[uint64]bool{}
-	st.window, st.windowTD = segs, td
-	if c.t.Level != LevelPlaylist {
-		c.checkKeys(ctx, cy, v, plURL, selected, st)
-		c.checkSegments(ctx, cy, v, plURL, selected, st, resp, entry, failed)
-	}
-
-	if !p.Closed && c.t.Level != LevelPlaylist && v.Kind != KindSubtitles {
-		c.playerModel(cy, v, st, td, fresh, failed)
-	}
-
-	// Remember the state for the next cycle.
+// remember keeps what the next cycle judges the playlist against.
+func (st *variantState) remember(closed bool, segs []plSegment, td float64) {
 	st.seen = true
-	st.closed = p.Closed
+	st.closed = closed
 	st.haveSeq = true
-	st.lastSeq = last
+	st.lastSeq = segs[len(segs)-1].seq
 	st.targetDuration = td
-	st.recent = make(map[uint64]string, n)
+	st.recent = make(map[uint64]string, len(segs))
 	for _, s := range segs {
 		st.recent[s.seq] = s.seg.URI
 	}
+}
 
-	e := edge{ok: true, key: v.Key, kind: v.Kind, targetDuration: td, live: !p.Closed, seq: last, epoch: st.epoch, disc: uint64(p.DiscontinuitySeq), wrap: st.anchor.wrap}
+// edgeOf tells where the playlist ends, for it to be compared with the
+// other playlists of the stream.
+func (st *variantState) edgeOf(v Variant, p *m3u8.MediaPlaylist, segs []plSegment, td float64) edge {
+	n := len(segs)
+	e := edge{ok: true, key: v.Key, kind: v.Kind, targetDuration: td, live: !p.Closed, seq: segs[n-1].seq, epoch: st.epoch, disc: uint64(p.DiscontinuitySeq), wrap: st.anchor.wrap}
 	for _, s := range segs {
 		if s.seg.Discontinuity {
 			e.disc++

@@ -70,44 +70,9 @@ func (s *Server) diagnose(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
-	level := probe.Level(st.Level)
-	if q := c.Query("level"); q != "" {
-		if level = probe.Level(q); !probe.ValidLevel(level) {
-			badRequest(c, "level must be playlist, header, segments or container")
-			return
-		}
-	}
-	length := time.Duration(queryInt(c, "seconds")) * time.Second
-	if length <= 0 {
-		length = 2 * time.Minute
-	}
-	length = min(length, 10*time.Minute)
-	// Where from: the server itself, or an agent that takes such work.
-	agentID := store.LocalAgentID
-	if q := c.Query("agent"); q != "" {
-		n, err := strconv.ParseInt(q, 10, 64)
-		if err != nil || n <= 0 {
-			badRequest(c, "agent must be the ID of an agent")
-			return
-		}
-		agentID = n
-	}
-	switch {
-	case agentID == store.LocalAgentID && s.local == nil:
-		fail(c, http.StatusConflict, "not_local", "this server does not run checks itself")
+	level, length, agentID, ok := diagnoseAsked(c, st)
+	if !ok || !s.canDiagnoseFrom(c, agentID) {
 		return
-	case agentID != store.LocalAgentID:
-		a, err := s.st.GetAgent(c.Request.Context(), agentID)
-		if s.storeError(c, err) {
-			return
-		}
-		s.reportsMu.Lock()
-		rep, ok := s.reports[agentID]
-		s.reportsMu.Unlock()
-		if !a.Enabled || !ok || s.now().Sub(rep.at) > s.cfg.AgentOfflineAfter || !rep.status.Diagnoses {
-			fail(c, http.StatusConflict, "agent_unavailable", "the agent is out of contact, disabled or too old to run a diagnosis")
-			return
-		}
 	}
 	select {
 	case s.diagnoses <- struct{}{}:
@@ -128,8 +93,6 @@ func (s *Server) diagnose(c *gin.Context) {
 		Insecure:    st.Insecure,
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), length)
-	defer cancel()
 	c.Header("Content-Type", "application/x-ndjson")
 	// A reverse proxy must pass every line on as it is written.
 	c.Header("X-Accel-Buffering", "no")
@@ -159,15 +122,78 @@ func (s *Server) diagnose(c *gin.Context) {
 		}
 		return
 	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), length)
+	defer cancel()
+	if s.diagnoseHere(ctx, target, send) && c.Request.Context().Err() == nil {
+		send(diagnoseEvent{Type: "end", Time: s.now(), Reason: "time"})
+	}
+}
+
+// diagnoseAsked reads what a diagnosis is asked for: at what level, for how
+// long and from where. It answers the request itself when that cannot be.
+func diagnoseAsked(c *gin.Context, st *store.Stream) (level probe.Level, length time.Duration, agentID int64, ok bool) {
+	level = probe.Level(st.Level)
+	if q := c.Query("level"); q != "" {
+		if level = probe.Level(q); !probe.ValidLevel(level) {
+			badRequest(c, "level must be playlist, header, segments or container")
+			return level, 0, 0, false
+		}
+	}
+	length = time.Duration(queryInt(c, "seconds")) * time.Second
+	if length <= 0 {
+		length = 2 * time.Minute
+	}
+	length = min(length, 10*time.Minute)
+	// Where from: the server itself, or an agent that takes such work.
+	agentID = store.LocalAgentID
+	if q := c.Query("agent"); q != "" {
+		n, err := strconv.ParseInt(q, 10, 64)
+		if err != nil || n <= 0 {
+			badRequest(c, "agent must be the ID of an agent")
+			return level, 0, 0, false
+		}
+		agentID = n
+	}
+	return level, length, agentID, true
+}
+
+// canDiagnoseFrom tells whether a diagnosis can be run from a vantage
+// point, and answers the request when it cannot.
+func (s *Server) canDiagnoseFrom(c *gin.Context, agentID int64) bool {
+	if agentID == store.LocalAgentID {
+		if s.local == nil {
+			fail(c, http.StatusConflict, "not_local", "this server does not run checks itself")
+			return false
+		}
+		return true
+	}
+	a, err := s.st.GetAgent(c.Request.Context(), agentID)
+	if s.storeError(c, err) {
+		return false
+	}
+	s.reportsMu.Lock()
+	rep, ok := s.reports[agentID]
+	s.reportsMu.Unlock()
+	if !a.Enabled || !ok || s.now().Sub(rep.at) > s.cfg.AgentOfflineAfter || !rep.status.Diagnoses {
+		fail(c, http.StatusConflict, "agent_unavailable", "the agent is out of contact, disabled or too old to run a diagnosis")
+		return false
+	}
+	return true
+}
+
+// diagnoseHere checks the stream from the server itself, once a second,
+// until ctx is over, and sends every check. It tells false when the one
+// it sends to is gone.
+func (s *Server) diagnoseHere(ctx context.Context, target probe.Target, send func(diagnoseEvent) bool) bool {
 	checker := s.local.Checker(target)
 	for n := 1; ; n++ {
 		start := time.Now()
 		res := checker.Run(ctx)
 		if ctx.Err() != nil {
-			break // a cancelled cycle reports failures that are not real
+			return true // a cancelled cycle reports failures that are not real
 		}
 		if !send(diagnoseEvent{Type: "cycle", Time: res.Time, N: n, TookMs: float64(time.Since(start).Microseconds()) / 1000, Result: res}) {
-			return
+			return false
 		}
 		t := time.NewTimer(time.Until(start.Add(checker.Interval())))
 		select {
@@ -176,10 +202,7 @@ func (s *Server) diagnose(c *gin.Context) {
 		}
 		t.Stop()
 		if ctx.Err() != nil {
-			break
+			return true
 		}
-	}
-	if c.Request.Context().Err() == nil {
-		send(diagnoseEvent{Type: "end", Time: s.now(), Reason: "time"})
 	}
 }

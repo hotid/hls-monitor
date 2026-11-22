@@ -127,33 +127,53 @@ func (s *Server) readyz(c *gin.Context) {
 //	@Router			/metrics [get]
 func (s *Server) selfMetrics(c *gin.Context) {
 	ctx := c.Request.Context()
-	var b strings.Builder
-	metric := func(name, typ, help string, v float64, labels ...string) {
-		if help != "" {
-			fmt.Fprintf(&b, "# HELP %s %s\n# TYPE %s %s\n", name, help, name, typ)
-		}
-		b.WriteString(name)
-		if len(labels) > 0 {
-			b.WriteByte('{')
-			for i := 0; i+1 < len(labels); i += 2 {
-				if i > 0 {
-					b.WriteByte(',')
-				}
-				fmt.Fprintf(&b, "%s=%q", labels[i], labels[i+1])
+	w := &promText{}
+	w.metric("hlsmon_build_info", "gauge", "Version of the server.", 1, "version", s.cfg.Version)
+	s.processMetrics(w)
+	s.storageMetrics(ctx, w)
+	agents, err := s.st.ListAgents(ctx)
+	if s.storeError(c, err) {
+		return
+	}
+	s.agentMetrics(w, agents)
+	c.Data(http.StatusOK, "text/plain; version=0.0.4; charset=utf-8", []byte(w.b.String()))
+}
+
+// promText writes metrics in the text format of Prometheus.
+type promText struct{ b strings.Builder }
+
+// metric writes one sample; help and typ go before the first sample of a
+// name, and are empty for the rest.
+func (w *promText) metric(name, typ, help string, v float64, labels ...string) {
+	b := &w.b
+	if help != "" {
+		fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s %s\n", name, help, name, typ)
+	}
+	b.WriteString(name)
+	if len(labels) > 0 {
+		b.WriteByte('{')
+		for i := 0; i+1 < len(labels); i += 2 {
+			if i > 0 {
+				b.WriteByte(',')
 			}
-			b.WriteByte('}')
+			fmt.Fprintf(b, "%s=%q", labels[i], labels[i+1])
 		}
-		fmt.Fprintf(&b, " %g\n", v)
+		b.WriteByte('}')
 	}
-	flag := func(v bool) float64 {
-		if v {
-			return 1
-		}
-		return 0
+	fmt.Fprintf(b, " %g\n", v)
+}
+
+func flag(v bool) float64 {
+	if v {
+		return 1
 	}
+	return 0
+}
 
-	metric("hlsmon_build_info", "gauge", "Version of the server.", 1, "version", s.cfg.Version)
-
+// processMetrics tells how the server process fares and how its own
+// checks keep up.
+func (s *Server) processMetrics(w *promText) {
+	metric := w.metric
 	load := s.cfg.Load.Status()
 	metric("hlsmon_overloaded", "gauge", "1 while the server process does not get the processor time it needs.", flag(load.Overloaded))
 	metric("hlsmon_cpu_cores", "gauge", "Processors used by the server process.", load.CPUCores)
@@ -184,6 +204,12 @@ func (s *Server) selfMetrics(c *gin.Context) {
 		metric("hlsmon_local_checks_unreliable_total", "counter", "Of them, made while the server was overloaded.", float64(rs.Unreliable))
 	}
 
+}
+
+// storageMetrics tells what became of the results and how full the
+// database, the journal and the time series storage are.
+func (s *Server) storageMetrics(ctx context.Context, w *promText) {
+	metric := w.metric
 	res := s.ing.Stats()
 	metric("hlsmon_results_total", "counter", "Check results by what became of them.", float64(res.Stored), "outcome", "stored")
 	metric("hlsmon_results_total", "", "", float64(res.Repeated), "outcome", "repeated")
@@ -206,10 +232,11 @@ func (s *Server) selfMetrics(c *gin.Context) {
 	metric("hlsmon_time_series_disk_bytes", "gauge", "Samples waiting on disk, compressed: it is, or was until now, away.", float64(mx.DiskBytes))
 	metric("hlsmon_time_series_dropped_batches_total", "counter", "Batches of samples given up.", float64(mx.DroppedBatches))
 
-	agents, err := s.st.ListAgents(ctx)
-	if s.storeError(c, err) {
-		return
-	}
+}
+
+// agentMetrics tells how every agent that is expected to be in contact fares.
+func (s *Server) agentMetrics(w *promText, agents []*store.Agent) {
+	metric := w.metric
 	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
 	now := s.now()
 	type row struct {
@@ -280,5 +307,4 @@ func (s *Server) selfMetrics(c *gin.Context) {
 	series("hlsmon_agent_cpu_cores", "gauge", "Processors used by the agent.", func(st *agentproto.Status) float64 { return st.CPUCores })
 	series("hlsmon_agent_memory_bytes", "gauge", "Memory of the agent.", func(st *agentproto.Status) float64 { return float64(st.MemoryBytes) })
 
-	c.Data(http.StatusOK, "text/plain; version=0.0.4; charset=utf-8", []byte(b.String()))
 }

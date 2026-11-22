@@ -162,205 +162,31 @@ func (in *Ingester) apply(ctx context.Context, agentID int64, r *probe.Result) e
 		r.Time = now
 	}
 	in.compareVantages(agentID, r, now)
-	t := r.Time
-	var samples []metrics.Sample
-	var journal []store.JournalEntry
+	a := &applying{in: in, ctx: ctx, agentID: agentID, r: r, t: r.Time}
 
 	err := in.st.Tx(ctx, func(tx *store.Tx) error {
+		a.tx = tx
 		last, err := tx.StreamCheckedAt(ctx, r.TargetID, agentID)
 		if err != nil {
 			return err
 		}
-		if last != 0 && t.UnixMilli() <= last {
+		if last != 0 && a.t.UnixMilli() <= last {
 			return ErrStale
 		}
-		var ids map[string]int64
 		if r.Variants != nil {
-			ids, err = tx.SyncVariants(ctx, r.TargetID, r.Variants, t)
+			a.ids, err = tx.SyncVariants(ctx, r.TargetID, r.Variants, a.t)
 		} else {
-			ids, err = tx.VariantIDs(ctx, r.TargetID)
+			a.ids, err = tx.VariantIDs(ctx, r.TargetID)
 		}
 		if err != nil {
 			return err
 		}
-		active := map[string]bool{}
+		a.active = map[string]bool{}
 		for _, v := range r.Variants {
-			active[v.Key] = true
+			a.active[v.Key] = true
 		}
-		variantID := func(key string) (int64, error) {
-			if id, ok := ids[key]; ok {
-				return id, nil
-			}
-			id, err := tx.EnsureVariant(ctx, r.TargetID, key, t)
-			if err == nil {
-				ids[key] = id
-			}
-			return id, err
-		}
-
-		// Metrics: time series plus the latest values per variant.
-		perVariant := map[string]map[string]float64{}
-		streamLevel := map[string]float64{}
-		up := map[string]bool{}
-		for _, m := range r.Metrics {
-			if !metrics.ValidName(m.Name) || math.IsNaN(m.Value) || math.IsInf(m.Value, 0) {
-				continue
-			}
-			var vid int64
-			if m.Server != "" {
-				// About a server, not a playlist: a series only.
-			} else if m.Variant == "" {
-				streamLevel[m.Name] = m.Value
-			} else {
-				if vid, err = variantID(m.Variant); err != nil {
-					return err
-				}
-				if perVariant[m.Variant] == nil {
-					perVariant[m.Variant] = map[string]float64{}
-				}
-				perVariant[m.Variant][m.Name] = m.Value
-				if m.Name == "hls_up" {
-					up[m.Variant] = m.Value == 1
-				}
-			}
-			samples = append(samples, metrics.Sample{Name: m.Name, Stream: r.TargetID, Agent: agentID, Variant: vid, Server: m.Server, IP: m.IP, Value: m.Value, Time: t})
-		}
-
-		// Segment figures exist only in cycles that found a new segment, which
-		// is roughly every other one. The latest state keeps the last known
-		// value of everything, as long as the variant is still being reached.
-		sources := map[string]probe.Source{}
-		for _, src := range r.Sources {
-			sources[src.Variant] = src
-		}
-		previous, err := tx.VariantMetrics(ctx, r.TargetID, agentID)
-		if err != nil {
-			return err
-		}
-		for key, vals := range perVariant {
-			vid, err := variantID(key)
-			if err != nil {
-				return err
-			}
-			if up[key] {
-				for name, v := range previous[vid] {
-					if _, ok := vals[name]; !ok {
-						vals[name] = v
-					}
-				}
-			}
-			var pl, seg *probe.Endpoint
-			if src, ok := sources[key]; ok {
-				pl, seg = src.Playlist, src.Segment
-			}
-			if err := tx.SaveVariantState(ctx, vid, agentID, statusName(vals["hls_status"]), t, vals, pl, seg); err != nil {
-				return err
-			}
-			for what, e := range map[string]*probe.Endpoint{"playlist": pl, "segment": seg} {
-				if e == nil || e.Host == "" {
-					continue
-				}
-				if err := tx.RecordSource(ctx, vid, agentID, what, e, t); err != nil {
-					return err
-				}
-			}
-		}
-		if err := tx.SaveStreamState(ctx, r.TargetID, agentID, r.Status, t, summarize(r, streamLevel, perVariant)); err != nil {
-			return err
-		}
-
-		journal = journal[:0]
-		for i := range r.Segments {
-			vid, err := variantID(r.Segments[i].Variant)
-			if err != nil {
-				return err
-			}
-			journal = append(journal, store.JournalEntry{VariantID: vid, Segment: &r.Segments[i]})
-		}
-		// Incidents.
-		open, err := tx.OpenIncidents(ctx, r.TargetID, agentID)
-		if err != nil {
-			return err
-		}
-		type key struct {
-			variant int64
-			kind    string
-		}
-		wasOpen := map[key]bool{}
-		for _, inc := range open {
-			wasOpen[key{inc.VariantID, inc.Kind}] = true
-		}
-		present := map[key]bool{}
-		// A playlist is kept only for problems that begin in this cycle: one
-		// that persists would otherwise store the same text again and again.
-		began := map[string][]string{}
-		for _, p := range r.Problems {
-			vid, err := variantID(p.Variant)
-			if err != nil {
-				return err
-			}
-			present[key{vid, p.Kind}] = true
-			if !wasOpen[key{vid, p.Kind}] {
-				began[p.Variant] = append(began[p.Variant], p.Kind)
-				if err := tx.ReopenIncident(ctx, r.TargetID, agentID, vid, p.Kind, t.Add(-in.ReopenWithin), t); err != nil {
-					return err
-				}
-			}
-			if err := tx.ReportIncident(ctx, r.TargetID, agentID, vid, p.Kind, p.Severity, p.Message, p.Details, p.Count, t); err != nil {
-				return err
-			}
-		}
-		// A look at the stream: the latest one is kept to be shown, and
-		// the picture stays with the incidents it is the evidence of.
-		if p := r.Picture; p != nil {
-			if err := tx.SavePicture(ctx, store.StreamPicture{StreamID: r.TargetID, AgentID: agentID, Time: p.Time, Variant: p.Variant,
-				HasPicture: p.HasPicture, Luma: p.Luma, Dark: p.Dark, HasAudio: p.HasAudio, AudioDB: p.AudioDB, JPEG: p.JPEG, Cells: p.Cells}); err != nil {
-				return err
-			}
-			var seen []string
-			for _, pr := range r.Problems {
-				if probe.PictureProblem(pr.Kind) {
-					seen = append(seen, pr.Kind)
-				}
-			}
-			if err := tx.SaveIncidentPictures(ctx, r.TargetID, agentID, seen, p.Time, p.JPEG, p.Cells); err != nil {
-				return err
-			}
-		}
-		for _, sn := range r.Snapshots {
-			if len(began[sn.Variant]) == 0 {
-				continue
-			}
-			vid, err := variantID(sn.Variant)
-			if err != nil {
-				return err
-			}
-			if err := tx.InsertSnapshot(ctx, r.TargetID, agentID, vid, t, sn.URL, began[sn.Variant], sn.Body, sn.Previous, sn.PreviousTime); err != nil {
-				return err
-			}
-		}
-		for _, inc := range open {
-			if present[key{inc.VariantID, inc.Kind}] {
-				continue
-			}
-			switch {
-			case r.Variants != nil && !active[inc.VariantKey]:
-				// The variant is gone from the stream, and its problems with it.
-				err = tx.CloseIncident(ctx, inc.ID, t)
-			case !up[inc.VariantKey] || r.Overloaded != "":
-				// The variant was not reached in this cycle, or the checker
-				// could not keep up and left out what rests on timing: no
-				// evidence either way.
-			case inc.Severity == probe.SevInfo && t.Sub(inc.LastSeen) < in.CloseEventAfter:
-				// Something a source does over and over is one event that
-				// keeps recurring, not a new one every minute.
-				err = tx.MarkIncidentClean(ctx, inc.ID)
-			case inc.CleanCycles+1 >= in.CloseCycles && t.Sub(inc.LastSeen) >= in.CloseAfter:
-				err = tx.CloseIncident(ctx, inc.ID, t)
-			default:
-				err = tx.MarkIncidentClean(ctx, inc.ID)
-			}
-			if err != nil {
+		for _, step := range []func() error{a.metrics, a.states, a.journal, a.incidents, a.picture, a.snapshots, a.quiet} {
+			if err := step(); err != nil {
 				return err
 			}
 		}
@@ -374,11 +200,249 @@ func (in *Ingester) apply(ctx context.Context, agentID int64, r *probe.Result) e
 	}
 	// The journal is a convenience kept apart from the state: failing to
 	// write it must not lose the result that has just been stored.
-	if err := in.st.AppendSegments(ctx, r.TargetID, agentID, journal); err != nil && ctx.Err() == nil {
+	if err := in.st.AppendSegments(ctx, r.TargetID, agentID, a.entries); err != nil && ctx.Err() == nil {
 		in.log.Warn("cannot write the segment journal", "stream", r.TargetID, "error", err)
 	}
 	if in.mx != nil {
-		in.mx.Write(samples)
+		in.mx.Write(a.samples)
+	}
+	return nil
+}
+
+// applying is the storing of one result, within one transaction.
+type applying struct {
+	in      *Ingester
+	ctx     context.Context
+	tx      *store.Tx
+	agentID int64
+	r       *probe.Result
+	t       time.Time
+	// ids are the variants of the stream by key, active those the result
+	// lists.
+	ids    map[string]int64
+	active map[string]bool
+	// The figures of the result: by variant, of the stream as a whole,
+	// and which variants were reached.
+	perVariant  map[string]map[string]float64
+	streamLevel map[string]float64
+	up          map[string]bool
+	samples     []metrics.Sample
+	entries     []store.JournalEntry
+	// open are the incidents open before the result, present the problems
+	// it reports, began those of them that begin with it, by variant.
+	open    []*store.Incident
+	present map[incidentKey]bool
+	began   map[string][]string
+}
+
+type incidentKey struct {
+	variant int64
+	kind    string
+}
+
+// variantID is the ID of a variant, made when it is not known yet.
+func (a *applying) variantID(key string) (int64, error) {
+	if id, ok := a.ids[key]; ok {
+		return id, nil
+	}
+	id, err := a.tx.EnsureVariant(a.ctx, a.r.TargetID, key, a.t)
+	if err == nil {
+		a.ids[key] = id
+	}
+	return id, err
+}
+
+// metrics sorts the figures: time series, plus the latest values per variant.
+func (a *applying) metrics() error {
+	a.perVariant, a.streamLevel, a.up = map[string]map[string]float64{}, map[string]float64{}, map[string]bool{}
+	for _, m := range a.r.Metrics {
+		if !metrics.ValidName(m.Name) || math.IsNaN(m.Value) || math.IsInf(m.Value, 0) {
+			continue
+		}
+		var vid int64
+		switch {
+		case m.Server != "":
+			// About a server, not a playlist: a series only.
+		case m.Variant == "":
+			a.streamLevel[m.Name] = m.Value
+		default:
+			var err error
+			if vid, err = a.variantID(m.Variant); err != nil {
+				return err
+			}
+			if a.perVariant[m.Variant] == nil {
+				a.perVariant[m.Variant] = map[string]float64{}
+			}
+			a.perVariant[m.Variant][m.Name] = m.Value
+			if m.Name == "hls_up" {
+				a.up[m.Variant] = m.Value == 1
+			}
+		}
+		a.samples = append(a.samples, metrics.Sample{Name: m.Name, Stream: a.r.TargetID, Agent: a.agentID, Variant: vid, Server: m.Server, IP: m.IP, Value: m.Value, Time: a.t})
+	}
+	return nil
+}
+
+// states saves the latest state of every variant and of the stream.
+// Segment figures exist only in cycles that found a new segment, which is
+// roughly every other one. The latest state keeps the last known value of
+// everything, as long as the variant is still being reached.
+func (a *applying) states() error {
+	ctx, tx, r := a.ctx, a.tx, a.r
+	sources := map[string]probe.Source{}
+	for _, src := range r.Sources {
+		sources[src.Variant] = src
+	}
+	previous, err := tx.VariantMetrics(ctx, r.TargetID, a.agentID)
+	if err != nil {
+		return err
+	}
+	for key, vals := range a.perVariant {
+		vid, err := a.variantID(key)
+		if err != nil {
+			return err
+		}
+		if a.up[key] {
+			for name, v := range previous[vid] {
+				if _, ok := vals[name]; !ok {
+					vals[name] = v
+				}
+			}
+		}
+		var pl, seg *probe.Endpoint
+		if src, ok := sources[key]; ok {
+			pl, seg = src.Playlist, src.Segment
+		}
+		if err := tx.SaveVariantState(ctx, vid, a.agentID, statusName(vals["hls_status"]), a.t, vals, pl, seg); err != nil {
+			return err
+		}
+		for what, e := range map[string]*probe.Endpoint{"playlist": pl, "segment": seg} {
+			if e == nil || e.Host == "" {
+				continue
+			}
+			if err := tx.RecordSource(ctx, vid, a.agentID, what, e, a.t); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.SaveStreamState(ctx, r.TargetID, a.agentID, r.Status, a.t, summarize(r, a.streamLevel, a.perVariant))
+}
+
+// journal makes the entries of the segment journal, written after the
+// transaction.
+func (a *applying) journal() error {
+	a.entries = a.entries[:0]
+	for i := range a.r.Segments {
+		vid, err := a.variantID(a.r.Segments[i].Variant)
+		if err != nil {
+			return err
+		}
+		a.entries = append(a.entries, store.JournalEntry{VariantID: vid, Segment: &a.r.Segments[i]})
+	}
+	return nil
+}
+
+// incidents opens or goes on with an incident for every problem reported.
+func (a *applying) incidents() error {
+	ctx, tx, r := a.ctx, a.tx, a.r
+	var err error
+	if a.open, err = tx.OpenIncidents(ctx, r.TargetID, a.agentID); err != nil {
+		return err
+	}
+	wasOpen := map[incidentKey]bool{}
+	for _, inc := range a.open {
+		wasOpen[incidentKey{inc.VariantID, inc.Kind}] = true
+	}
+	a.present = map[incidentKey]bool{}
+	// A playlist is kept only for problems that begin in this cycle: one
+	// that persists would otherwise store the same text again and again.
+	a.began = map[string][]string{}
+	for _, p := range r.Problems {
+		vid, err := a.variantID(p.Variant)
+		if err != nil {
+			return err
+		}
+		k := incidentKey{vid, p.Kind}
+		a.present[k] = true
+		if !wasOpen[k] {
+			a.began[p.Variant] = append(a.began[p.Variant], p.Kind)
+			if err := tx.ReopenIncident(ctx, r.TargetID, a.agentID, vid, p.Kind, a.t.Add(-a.in.ReopenWithin), a.t); err != nil {
+				return err
+			}
+		}
+		if err := tx.ReportIncident(ctx, r.TargetID, a.agentID, vid, p.Kind, p.Severity, p.Message, p.Details, p.Count, a.t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// picture keeps the latest look at the stream to be shown, and the picture
+// with the incidents it is the evidence of.
+func (a *applying) picture() error {
+	p := a.r.Picture
+	if p == nil {
+		return nil
+	}
+	if err := a.tx.SavePicture(a.ctx, store.StreamPicture{StreamID: a.r.TargetID, AgentID: a.agentID, Time: p.Time, Variant: p.Variant,
+		HasPicture: p.HasPicture, Luma: p.Luma, Dark: p.Dark, HasAudio: p.HasAudio, AudioDB: p.AudioDB, JPEG: p.JPEG, Cells: p.Cells}); err != nil {
+		return err
+	}
+	var seen []string
+	for _, pr := range a.r.Problems {
+		if probe.PictureProblem(pr.Kind) {
+			seen = append(seen, pr.Kind)
+		}
+	}
+	return a.tx.SaveIncidentPictures(a.ctx, a.r.TargetID, a.agentID, seen, p.Time, p.JPEG, p.Cells)
+}
+
+// snapshots keeps the playlists of the problems that began.
+func (a *applying) snapshots() error {
+	for _, sn := range a.r.Snapshots {
+		if len(a.began[sn.Variant]) == 0 {
+			continue
+		}
+		vid, err := a.variantID(sn.Variant)
+		if err != nil {
+			return err
+		}
+		if err := a.tx.InsertSnapshot(a.ctx, a.r.TargetID, a.agentID, vid, a.t, sn.URL, a.began[sn.Variant], sn.Body, sn.Previous, sn.PreviousTime); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// quiet goes through the open incidents the result does not report: it
+// counts a clean cycle for them, or closes them.
+func (a *applying) quiet() error {
+	tx, r, t := a.tx, a.r, a.t
+	for _, inc := range a.open {
+		if a.present[incidentKey{inc.VariantID, inc.Kind}] {
+			continue
+		}
+		var err error
+		switch {
+		case r.Variants != nil && !a.active[inc.VariantKey]:
+			// The variant is gone from the stream, and its problems with it.
+			err = tx.CloseIncident(a.ctx, inc.ID, t)
+		case !a.up[inc.VariantKey] || r.Overloaded != "":
+			// The variant was not reached in this cycle, or the checker
+			// could not keep up and left out what rests on timing: no
+			// evidence either way.
+		case inc.Severity == probe.SevInfo && t.Sub(inc.LastSeen) < a.in.CloseEventAfter:
+			// Something a source does over and over is one event that
+			// keeps recurring, not a new one every minute.
+			err = tx.MarkIncidentClean(a.ctx, inc.ID)
+		case inc.CleanCycles+1 >= a.in.CloseCycles && t.Sub(inc.LastSeen) >= a.in.CloseAfter:
+			err = tx.CloseIncident(a.ctx, inc.ID, t)
+		default:
+			err = tx.MarkIncidentClean(a.ctx, inc.ID)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
