@@ -164,6 +164,9 @@ const (
 	// jumps unannounced, or frames come after their time by it. A set-top
 	// box plays by this clock.
 	ProbTSClock = "ts_clock_error"
+	// ProbSubtitlesInvalid: a segment of subtitles is not the WebVTT it
+	// is served as.
+	ProbSubtitlesInvalid = "subtitles_invalid"
 )
 
 // Problem is one kind of trouble found for one variant in a cycle.

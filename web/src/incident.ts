@@ -66,6 +66,7 @@ export const problemAbout = perLocale((): Record<string, { what: string; how: st
   media_undecodable: { what: t('incident.mediaUndecodableWhat'), how: t('incident.mediaUndecodableHow') },
   declared_mismatch: { what: t('incident.declaredMismatchWhat'), how: t('incident.declaredMismatchHow') },
   ts_clock_error: { what: t('incident.tsClockWhat'), how: t('incident.tsClockHow') },
+  subtitles_invalid: { what: t('incident.subtitlesInvalidWhat'), how: t('incident.subtitlesInvalidHow') },
   no_keyframe_start: {
     what: t('incident.theSegmentDoesNotStartWith'),
     how: t('incident.theFirstVideoFrameOfThe'),

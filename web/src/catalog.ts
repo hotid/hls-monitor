@@ -76,6 +76,7 @@ export const problemTitle = perLocale((): Record<string, string> => ({
   media_undecodable: t('catalog.mediaUndecodable'),
   declared_mismatch: t('catalog.declaredMismatch'),
   ts_clock_error: t('catalog.tsClockError'),
+  subtitles_invalid: t('catalog.subtitlesInvalid'),
   media_params_changed: t('catalog.videoParametersChanged'),
   playlist_source_changed: t('catalog.playlistServedByADifferentServer'),
   segment_source_changed: t('catalog.segmentsServedByADifferentServer'),
@@ -333,6 +334,10 @@ export const chartGroups = perLocale((): ChartGroup[] => [
           { metric: 'hls_ts_pcr_gap_seconds', label: t('catalog.pcrGap') },
           { metric: 'hls_ts_decode_lead_seconds', label: t('catalog.decodeLead') },
         ],
+      },
+      {
+        id: 'subtitle-cues', title: t('catalog.subtitleCues'), hint: t('catalog.subtitleCuesHint'), unit: 'count', agg: 'sum', steps: true, levels: ['header', 'segments', 'container'],
+        series: [{ metric: 'hls_subtitle_cues', label: t('catalog.cues') }],
       },
       {
         id: 'variant-offset', title: t('catalog.variantOffset'), hint: t('catalog.variantOffsetHint'), unit: 's', agg: 'avg', levels: ['header', 'container'],

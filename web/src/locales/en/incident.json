@@ -111,6 +111,8 @@
   "sinceThePreviousCheck": "Since the previous successful check",
   "slateName": "Slate",
   "someOfTheNewSegmentsFailed": "Some of the new segments failed to download, so they did not add to the buffer.",
+  "subtitlesInvalidHow": "Every new segment of a subtitles playlist is read whole: it must begin with the word WEBVTT, the X-TIMESTAMP-MAP time mapping, when present, must have MPEGTS and LOCAL, and the start and the end of every cue must be readable, the end not before the start. The text of the cues is not checked, nor is their timing against the picture.",
+  "subtitlesInvalidWhat": "A segment of subtitles is not the WebVTT it is served as: an error page or a fragment came instead, or the times of the cues cannot be read. A player will not show such subtitles, and some players stop playback over them.",
   "theCheckCameLaterThanA": "The check came later than that although the playlist was read without errors in between: the monitor was late. This is a gap in observation, not a loss at the origin.",
   "theCheckCameWithinTheWindow": "The check came within the window, yet the segments were gone: the origin moved the playlist in one jump.",
   "theFirstVideoFrameOfThe": "The first video frame of the segment is checked for an IDR frame, a frame with a recovery point SEI or the random access indicator in the MPEG-TS header.",

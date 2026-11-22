@@ -54,6 +54,9 @@ type Options struct {
 	// its own, va/index.m3u8, as streams do that keep the sound out of
 	// the segments of the picture.
 	SoundApart bool
+	// Subtitles makes the master playlist name a playlist of WebVTT
+	// subtitles, vs/index.m3u8, with a cue in every segment.
+	Subtitles bool
 }
 
 // Origin is the fake stream. All methods are safe for concurrent use.
@@ -75,6 +78,8 @@ type Origin struct {
 	backend  string
 	// soundBehind is how many segments the playlist of sound is short of.
 	soundBehind uint64
+	// subtitles, when set, is served for every segment of subtitles.
+	subtitles []byte
 }
 
 // New creates an origin with no segments published yet.
@@ -99,6 +104,14 @@ func (o *Origin) Publish(n int) {
 	if o.next-o.first > uint64(o.opt.Window) {
 		o.first = o.next - uint64(o.opt.Window)
 	}
+}
+
+// SubtitlesBody makes every segment of subtitles be body; nil brings the
+// WebVTT of the origin back.
+func (o *Origin) SubtitlesBody(body []byte) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.subtitles = body
 }
 
 // SoundBehind makes the playlist of sound end n segments before those of
@@ -236,7 +249,25 @@ func (o *Origin) Handler() http.Handler {
 		switch {
 		case file == "index.m3u8":
 			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-			fmt.Fprint(w, o.media(dir == "va"))
+			pl := o.media(dir == "va")
+			if dir == "vs" {
+				pl = strings.ReplaceAll(pl, "."+o.ext()+"\n", ".vtt\n")
+			}
+			fmt.Fprint(w, pl)
+		case dir == "vs" && strings.HasPrefix(file, "seg-"):
+			seq, _ := strconv.ParseUint(strings.TrimSuffix(strings.TrimPrefix(file, "seg-"), ".vtt"), 10, 64)
+			o.mu.Lock()
+			body := o.subtitles
+			o.mu.Unlock()
+			if body == nil {
+				at := time.Duration(float64(seq) * SegmentDur * float64(time.Second))
+				stamp := func(d time.Duration) string {
+					return fmt.Sprintf("%02d:%02d:%02d.%03d", int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60, d.Milliseconds()%1000)
+				}
+				body = []byte(fmt.Sprintf("WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:0,LOCAL:00:00:00.000\n\n%s --> %s\nsegment %d\n", stamp(at), stamp(at+time.Second), seq))
+			}
+			w.Header().Set("Content-Type", "text/vtt")
+			w.Write(body)
 		case file == "init.mp4" && o.opt.FMP4:
 			o.serveAsset(w, "assets/fmp4/init.mp4", Fault{})
 		case strings.HasPrefix(file, "seg-"):
@@ -344,6 +375,10 @@ func (o *Origin) master() string {
 	if o.opt.SoundApart {
 		b.WriteString("#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"sound\",NAME=\"main\",DEFAULT=YES,AUTOSELECT=YES,URI=\"va/index.m3u8\"\n")
 		group = ",AUDIO=\"sound\""
+	}
+	if o.opt.Subtitles {
+		b.WriteString("#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"main\",LANGUAGE=\"en\",AUTOSELECT=YES,URI=\"vs/index.m3u8\"\n")
+		group += ",SUBTITLES=\"subs\""
 	}
 	for i := range n {
 		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,AVERAGE-BANDWIDTH=%d,RESOLUTION=160x90,FRAME-RATE=25.000,CODECS=\"avc1.64000b,mp4a.40.2\"%s\n",

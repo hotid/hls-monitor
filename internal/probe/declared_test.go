@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hotid/hls-monitor/internal/hlstest"
 	"github.com/hotid/hls-monitor/internal/media"
 )
 
@@ -37,5 +38,32 @@ func TestDeclaredAgainstTheSegments(t *testing.T) {
 	}
 	if p, l := declaredVideo("hvc1.2.4.L153.B0"); p != "Main 10" || l != "5.1" {
 		t.Errorf("hvc1.2.4.L153.B0 read as %q, %q", p, l)
+	}
+}
+
+// Subtitles are read as the WebVTT they are served as.
+func TestSubtitlesAreRead(t *testing.T) {
+	for _, level := range []Level{LevelHeader, LevelContainer} {
+		f := newFixture(t, hlstest.Options{Subtitles: true, Variants: 1}, "/master.m3u8", level)
+		r := f.step(1)
+		for range 3 {
+			r = f.step(1)
+		}
+		if p := hasProblem(r, ProbSubtitlesInvalid); p != nil {
+			t.Fatalf("level %v: good subtitles were told: %+v", level, p)
+		}
+		cues := -1.0
+		for _, m := range r.Metrics {
+			if m.Name == "hls_subtitle_cues" {
+				cues = m.Value
+			}
+		}
+		if cues != 1 {
+			t.Errorf("level %v: %v cues counted in the new segment, want 1", level, cues)
+		}
+		f.origin.SubtitlesBody([]byte("<html>not found</html>"))
+		if p := hasProblem(f.step(1), ProbSubtitlesInvalid); p == nil {
+			t.Errorf("level %v: a page served for subtitles was not told", level)
+		}
 	}
 }

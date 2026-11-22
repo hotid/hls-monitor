@@ -38,7 +38,11 @@ type segAgg struct {
 	// What the program clock of MPEG-TS said: the longest time between
 	// two references and the least lead of a frame over the clock.
 	clocked, hasLead bool
-	pcrGap, lead     float64
+	// subtitles tells that segments of subtitles were read, cues how
+	// many cues they had.
+	subtitles    bool
+	cues         int
+	pcrGap, lead float64
 }
 
 func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL string, selected []plSegment, st *variantState, plResp, entry *httpx.Response, failed map[uint64]bool) {
@@ -284,6 +288,23 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 			c.noteSizes(v, st, info, c.now())
 		} else {
 			st.prev = prevSegment{}
+			if v.Kind == KindSubtitles && !s.encrypted && (!header || (rec.Size > 0 && rec.Fetched >= rec.Size)) {
+				// Subtitles are text, and the whole of a segment is read at
+				// every level that reads segments at all.
+				name := strings.ToLower(s.seg.URI)
+				if q := strings.IndexAny(name, "?#"); q >= 0 {
+					name = name[:q]
+				}
+				if media.IsWebVTT(resp.Body) || strings.HasSuffix(name, ".vtt") || strings.HasSuffix(name, ".webvtt") {
+					sub, err := media.ParseWebVTT(resp.Body)
+					if err != nil {
+						flag(ProbSubtitlesInvalid, SevWarn, "segment %d is not valid WebVTT: %v", s.seq, err)
+					} else {
+						agg.subtitles = true
+						agg.cues += sub.Cues
+					}
+				}
+			}
 		}
 		if look && err == nil && resp != nil && resp.OK() {
 			c.look(ctx, cy, v, resp.Body, st.initRaw, info, c.now())
@@ -550,6 +571,9 @@ func (c *Checker) emitSegmentMetrics(cy *cycle, v Variant, a *segAgg) {
 			cy.metric("hls_segment_download_bps_min", k, a.minBps)
 			cy.metric("hls_segment_download_ratio", k, a.maxRatio)
 		}
+	}
+	if a.subtitles {
+		cy.metric("hls_subtitle_cues", k, float64(a.cues))
 	}
 	if a.analysed == 0 {
 		return
