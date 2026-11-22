@@ -82,6 +82,10 @@ type Checker struct {
 	entryText   []byte
 	entryAt     time.Time
 	variantKeys []string
+	// soundApart tells that the master playlist names playlists of sound.
+	soundApart bool
+	// loud is the measuring of loudness.
+	loud loudState
 	// steps is how every playlist stood against the picture.
 	steps    map[string]*inStep
 	vars     map[string]*variantState
@@ -169,6 +173,7 @@ func (c *Checker) Run(ctx context.Context) *Result {
 	// one shows only when one is made on purpose: every few minutes the
 	// stream's own address is asked on a fresh connection.
 	c.beginLook(start)
+	c.checkLoudGiveUp(cy, start)
 	fresh := c.freshAt.IsZero() || start.Sub(c.freshAt) >= freshEvery
 	switch {
 	case c.freshAt.IsZero():
@@ -588,6 +593,10 @@ type edge struct {
 
 func (c *Checker) checkMaster(ctx context.Context, cy *cycle, mp *m3u8.MasterPlaylist, base string, entry *httpx.Response) {
 	variants := buildVariants(mp)
+	c.soundApart = false
+	for _, v := range variants {
+		c.soundApart = c.soundApart || v.Kind == KindAudio
+	}
 	cy.res.Variants = append([]Variant{{Key: VariantMaster, Kind: KindMaster, URI: c.t.URL}}, variants...)
 
 	keys := make([]string, 0, len(variants))

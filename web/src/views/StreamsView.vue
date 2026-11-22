@@ -154,11 +154,15 @@ async function remove() {
             <tr>
               <th class="hide-narrow" />
               <SortTh :sort="sort" by="name">{{ t('common.stream') }}</SortTh>
-              <SortTh :sort="sort" by="status">{{ t('common.status') }}</SortTh>
+              <SortTh :sort="sort" by="status" class="narrow-col" :title="t('common.status')"><span class="sr-only">{{ t('common.status') }}</span></SortTh>
               <SortTh :sort="sort" by="why">{{ t('streams.why') }}</SortTh>
-              <SortTh :sort="sort" by="bitrate" class="right hide-narrow">{{ t('streams.video') }}</SortTh>
-              <SortTh :sort="sort" by="loudness" class="right hide-narrow" :title="t('streams.loudnessHint')">{{ t('streams.loudness') }}</SortTh>
-              <SortTh :sort="sort" by="subtitles" class="hide-narrow">{{ t('streams.subtitles') }}</SortTh>
+              <th class="right hide-narrow">
+                <span class="th-group">
+                  <SortTh as="span" :sort="sort" by="bitrate">{{ t('streams.video') }}</SortTh>
+                  <SortTh as="span" :sort="sort" by="loudness" :title="t('streams.loudnessHint')">LUFS</SortTh>
+                  <SortTh as="span" :sort="sort" by="subtitles">{{ t('streams.subtitlesShort') }}</SortTh>
+                </span>
+              </th>
               <SortTh v-if="severalAgents" :sort="sort" by="agents" class="hide-narrow">{{ t('common.agents') }}</SortTh>
               <SortTh :sort="sort" by="checked" class="hide-narrow">{{ t('streams.lastCheck') }}</SortTh>
               <th v-if="session.isAdmin" />
@@ -171,22 +175,21 @@ async function remove() {
                 <RouterLink :to="{ name: 'stream', params: { id: s.id } }" class="strong" @click.stop>{{ s.name }}</RouterLink>
                 <div class="mono muted truncate" :title="s.url">{{ s.url }}</div>
               </td>
-              <td><StatusBadge :status="s.status" /></td>
+              <td class="narrow-col"><StatusBadge :status="s.status" icon /></td>
               <td class="why" :title="why(s).map((i) => problemName(i.kind)).join(', ')">
                 <template v-for="(i, n) in why(s).slice(0, 2)" :key="i.id"><template v-if="n">, </template><span :class="i.severity" :title="i.message">{{ problemName(i.kind) }}</span></template>
                 <span v-if="why(s).length > 2" class="muted more" :title="why(s).slice(2).map((i) => problemName(i.kind)).join(', ')">{{ t('streams.andMore', { n: why(s).length - 2 }) }}</span>
               </td>
-              <td class="mono right hide-narrow nowrap">
-                <template v-if="figure(s, 'bitrate_bps')"><span v-if="figure(s, 'height')" class="muted">{{ figure(s, 'height') }}p<template v-if="rangeWord(s)"> <b class="hdr" :title="t('streams.hdrHint')">{{ rangeWord(s) }}</b></template> · </span>{{ fmtBits(figure(s, 'bitrate_bps')) }}</template>
-                <template v-else>—</template>
-              </td>
-              <td class="mono right hide-narrow nowrap">
-                <span v-if="loudness(s) !== undefined" :class="{ off: loudOff(loudness(s)!) }">{{ fmtNumber(loudness(s), 1) }}</span>
-                <template v-else>—</template>
-              </td>
-              <td class="hide-narrow nowrap">
-                <template v-if="subtitleTracks(s)">{{ subtitleTracks(s) === 1 ? t('streams.subtitlesYes') : t('streams.subtitlesN', { n: subtitleTracks(s) }) }}</template>
-                <span v-else class="muted">—</span>
+              <td class="mono right hide-narrow nowrap media">
+                <div>
+                  <template v-if="figure(s, 'bitrate_bps')"><span v-if="figure(s, 'height')" class="muted">{{ figure(s, 'height') }}p<template v-if="rangeWord(s)"> <b class="hdr" :title="t('streams.hdrHint')">{{ rangeWord(s) }}</b></template> · </span>{{ fmtBits(figure(s, 'bitrate_bps')) }}</template>
+                  <template v-else>—</template>
+                </div>
+                <div v-if="loudness(s) !== undefined || subtitleTracks(s)" class="second">
+                  <span v-if="loudness(s) !== undefined" :class="{ off: loudOff(loudness(s)!) }" :title="t('streams.loudnessHint')">{{ fmtNumber(loudness(s), 1) }} LUFS</span>
+                  <template v-if="loudness(s) !== undefined && subtitleTracks(s)"> · </template>
+                  <span v-if="subtitleTracks(s)">{{ subtitleTracks(s) === 1 ? t('streams.subtitlesShort') : t('streams.subtitlesN', { n: subtitleTracks(s) }) }}</span>
+                </div>
               </td>
               <td v-if="severalAgents" class="hide-narrow">
                 <template v-if="s.agents.length">{{ s.agents.map((a) => a.agent_name).join(', ') }}</template>
@@ -248,6 +251,23 @@ async function remove() {
   font-weight: 600;
 }
 .off {
+  color: var(--accent-warm);
+}
+.narrow-col {
+  width: 1%;
+  padding-right: 4px;
+}
+.th-group {
+  display: inline-flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.media .second {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.media .second .off {
   color: var(--accent-warm);
 }
 </style>

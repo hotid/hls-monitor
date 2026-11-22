@@ -148,6 +148,8 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 		// And one of a playlist of sound alone is listened to, where the
 		// look found the picture without its sound.
 		listen := !look && c.wantsListen(v, s.encrypted)
+		// And now and then three of them, apart, are measured for loudness.
+		loud := !look && !listen && c.wantsLoud(v, s.encrypted, c.now())
 		if header {
 			// A server that ignores Range answers with the whole segment;
 			// MaxBody then stops the download at the same point. A look
@@ -158,6 +160,10 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 				head = c.lookSize()
 			} else if listen {
 				head = lookBytes
+			} else if loud {
+				// The beginning of a segment of a few megabits holds a
+				// fraction of a second of sound; R 128 needs 400 ms at least.
+				head = lookBytesMore
 			}
 			rq.MaxBody = head
 			rq.RangeLength = head
@@ -315,6 +321,9 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 		}
 		if listen && err == nil && resp != nil && resp.OK() {
 			c.listen(ctx, cy, v, resp.Body, st.initRaw, info, c.now())
+		}
+		if loud {
+			c.measureLoud(ctx, cy, v, resp.Body, st.initRaw, err == nil && resp != nil && resp.OK(), c.now())
 		}
 		if look || listen {
 			suspected = append(suspected, c.suspicions()...)

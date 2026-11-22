@@ -34,6 +34,9 @@ func newFixture(t *testing.T, opt hlstest.Options, path string, level Level) *fi
 	t.Cleanup(f.srv.Close)
 	f.c = New(Target{ID: 1, URL: f.srv.URL + path, Level: level, TimeoutSec: 5}, nil)
 	f.c.now = func() time.Time { return f.clock }
+	// Loudness is measured by tests of its own: elsewhere it would add
+	// to the sound listened to.
+	f.c.loud.due = f.clock.Add(1000 * time.Hour)
 	return f
 }
 

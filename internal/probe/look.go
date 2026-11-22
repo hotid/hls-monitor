@@ -104,9 +104,6 @@ const (
 	// begin with less than a moment of sound in lookBytes: one of many
 	// megabits a second.
 	lookBytesMore = 4 * lookBytes
-	// loudEvery is how often a look fetches lookBytesMore to measure the
-	// loudness of a stream whose segments are read from their beginning.
-	loudEvery = 30 * time.Minute
 	// lookAgain is how soon a look is repeated after one that found
 	// something: a dark scene and a pause are over in a moment, a fault
 	// is not. lookRuns such looks in a row, over at least lookSpan, make
@@ -222,9 +219,6 @@ type looks struct {
 	unheard run
 	// more tells to fetch more of a segment for a look.
 	more bool
-	// loudAt is when a look last fetched enough of a segment for its
-	// loudness to be measured.
-	loudAt time.Time
 }
 
 type standingProblem struct {
@@ -409,9 +403,6 @@ func (c *Checker) hear(cy *cycle, v Variant, f *picture.Frame, audio *media.Trac
 	if f.HasAudio {
 		l.silent.note(f.AudioDB < silentBelow, at)
 		cy.metric("hls_audio_level_db", v.Key, f.AudioDB)
-		if f.HasLoudness {
-			cy.metric("hls_audio_loudness_lufs", v.Key, f.Loudness)
-		}
 		suspect = suspect || l.silent.n > 0
 		if l.silent.standing(at) {
 			tell(SevCrit, ProbAudioSilent, "the sound is silence", "audio_level_db", round1(f.AudioDB),
@@ -482,13 +473,6 @@ func (c *Checker) lookSize() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.looks.more {
-		return lookBytesMore
-	}
-	// The beginning of a segment has a fraction of a second of sound, and
-	// loudness by EBU R 128 is measured over 400 ms at least: once in a
-	// while a look takes more of it, for that.
-	if now := c.now(); now.Sub(c.looks.loudAt) >= loudEvery {
-		c.looks.loudAt = now
 		return lookBytesMore
 	}
 	return lookBytes

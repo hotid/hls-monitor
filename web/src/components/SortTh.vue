@@ -3,7 +3,8 @@ import { computed, nextTick, onBeforeUnmount, ref } from 'vue'
 import { t } from '@/i18n'
 import type { Sorter } from '@/sort'
 
-const props = defineProps<{ sort: Sorter<T>; by: string }>()
+// as: a header cell of its own, or one of several in a cell ("span").
+const props = defineProps<{ sort: Sorter<T>; by: string; as?: 'th' | 'span' }>()
 const sorted = computed(() => props.sort.state?.key === props.by)
 const desc = computed(() => sorted.value && !!props.sort.state?.desc)
 const kind = computed(() => props.sort.kind(props.by))
@@ -79,7 +80,7 @@ function reset() {
 </script>
 
 <template>
-  <th :aria-sort="sorted ? (desc ? 'descending' : 'ascending') : 'none'">
+  <component :is="as ?? 'th'" :aria-sort="(as ?? 'th') === 'th' ? (sorted ? (desc ? 'descending' : 'ascending') : 'none') : undefined" :class="{ 'th-part': as === 'span' }">
     <span class="th-cell">
       <button type="button" class="th-sort" :class="{ active: sorted, desc }" :title="t('table.sort')" @click="sort.toggle(by)">
         <span><slot /></span><span class="th-arrow" aria-hidden="true" />
@@ -127,5 +128,5 @@ function reset() {
         </div>
       </div>
     </Teleport>
-  </th>
+  </component>
 </template>
