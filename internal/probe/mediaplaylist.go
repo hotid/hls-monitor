@@ -78,6 +78,8 @@ type variantState struct {
 	// media, epoch which count of segment numbers the playlist is on.
 	anchor anchor
 	epoch  int
+	// clockRuns counts the checks in a row that found the program clock wrong.
+	clockRuns int
 }
 
 // failed notes a check that could not read the playlist.

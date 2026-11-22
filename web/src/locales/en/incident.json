@@ -145,7 +145,7 @@
   "theValueIsComparedWithThe": "The value is compared with the previous check.",
   "threshold": "Threshold",
   "tolerance": "Tolerance",
-  "tsClockHow": "PCR marks and frame decoding times are read from the packets. An error is: more than 100 ms between two marks in a row (TR 101 290 asks for 40 ms and takes 100 ms for an error); a mark that went back or more than a second forward with no discontinuity flag; a frame whose decoding time is before the current value of the clock. At the “beginning of a segment” level only the beginning read is checked. The repetition of PAT and PMT is not checked: in HLS they stand at the start of every segment, and that is enough.",
+  "tsClockHow": "PCR marks and frame decoding times are read from the packets. An error is: more than 100 ms between two marks in a row (TR 101 290 asks for 40 ms and takes 100 ms for an error); a mark that went back or more than a second forward with no discontinuity flag; a frame whose decoding time is before the current value of the clock. It is reported when found in three checks in a row: a set-top box lives through a single slip where an encoder was switched or restarted. At the “beginning of a segment” level only the beginning read is checked. The repetition of PAT and PMT is not checked: in HLS they stand at the start of every segment, and that is enough.",
   "tsClockWhat": "The program clock (PCR) of the MPEG-TS segments is wrong: its marks come too seldom, the clock jumps with no discontinuity announced, or a frame comes after the moment the clock says it must be decoded. Browser players do not look at the PCR and play such a stream; set-top boxes and hardware decoders play by it and stutter, break up or lose sound.",
   "uriNow": "URI now",
   "uriWas": "URI was",

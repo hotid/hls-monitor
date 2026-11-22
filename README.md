@@ -101,6 +101,12 @@ What is collected:
 - **Segment:** availability, size, download time relative to duration, actual bitrate against declared.
 - **Container (MPEG-TS, fMP4):** sync loss and continuity counter errors, inside a segment and at the joint between two, presence of PAT/PMT, track composition, duration by timestamps against `EXTINF`, timestamp continuity between segments, audio/video offset, starting with a keyframe, GOP length, resolution, profile, frame rate.
 - **Player model:** the player buffer of a player running three segments behind the live edge, and the moments when it would stall for buffering.
+- **Declared against real:** the codec, profile, level, picture height and frame rate declared in the master playlist are compared with what the segments carry. The width is not compared: `RESOLUTION` is the display size, and a picture 720 points wide is rightly shown as 1024.
+- **Renditions against each other:** the end of every video variant and every audio rendition is compared with the first video variant — by the timestamps inside the segments, and where those are not read, by whether the difference between segment numbers changes. A rendition that fell behind is a warning.
+- **MPEG-TS program clock:** the time between PCR marks, jumps of the clock with no discontinuity announced, and frames that come after their time by that clock. Reported when it repeats in three checks in a row. A browser player does not care, a set-top box does.
+- **Subtitles:** every WebVTT segment is read whole: the header, the `X-TIMESTAMP-MAP` time mapping, the times of the cues. Whether the cues match the picture in time is not checked.
+
+Streams can be added as a list: the “Import a list” button on the Streams page takes an IPTV list (`.m3u` with `#EXTINF`), plain addresses one per line, or lines of “name;address”. The list is first shown as read — what will be added, what is checked already, what is unsuitable — and only then added. In the API it is `POST /api/v1/streams/import`.
 
 The interval set for a stream is an upper bound: if the playlist window is shorter, the stream is polled more often so that no segments are missed between checks.
 

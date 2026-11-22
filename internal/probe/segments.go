@@ -38,6 +38,8 @@ type segAgg struct {
 	// What the program clock of MPEG-TS said: the longest time between
 	// two references and the least lead of a frame over the clock.
 	clocked, hasLead bool
+	// clockFault is what was last found wrong with the clock.
+	clockFault string
 	// subtitles tells that segments of subtitles were read, cues how
 	// many cues they had.
 	subtitles    bool
@@ -318,6 +320,16 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 		emit()
 	}
 
+	// A clock that slips once, where an encoder was switched or restarted,
+	// plays on; one that is wrong check after check does not on a set-top box.
+	switch {
+	case agg.clockFault != "":
+		if st.clockRuns++; st.clockRuns >= clockRuns {
+			cy.problem(ProbTSClock, SevWarn, v.Key, "%s; wrong for %d checks in a row", agg.clockFault, st.clockRuns)
+		}
+	case agg.clocked:
+		st.clockRuns = 0
+	}
 	c.emitSegmentMetrics(cy, v, agg)
 }
 
@@ -403,7 +415,7 @@ func (c *Checker) judgeMedia(v Variant, s plSegment, info *media.Info, st *varia
 				}
 			}
 			if len(wrong) > 0 {
-				flag(ProbTSClock, SevWarn, "segment %d: %s", s.seq, strings.Join(wrong, "; "))
+				agg.clockFault = fmt.Sprintf("segment %d: %s", s.seq, strings.Join(wrong, "; "))
 			}
 		}
 		if !info.HasPAT || !info.HasPMT {
