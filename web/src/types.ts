@@ -324,6 +324,8 @@ export interface MediaTrack {
   profile?: string
   level?: string
   fps?: number
+  /** "PQ" or "HLG" for a picture of high dynamic range. */
+  range?: string
   sample_rate?: number
   channels?: number
   frames: number

@@ -754,7 +754,7 @@ function trackParams(tr: MediaTrack): string {
                 <tbody>
                   <tr v-for="t in openSegment.detail.media.tracks" :key="t.id">
                     <td>{{ trackKind(t.kind) }} <span class="muted mono">{{ t.id }}</span></td>
-                    <td class="mono">{{ t.codec }}<template v-if="t.profile"> {{ t.profile }}<template v-if="t.level">@{{ t.level }}</template></template></td>
+                    <td class="mono">{{ t.codec }}<template v-if="t.profile"> {{ t.profile }}<template v-if="t.level">@{{ t.level }}</template></template><template v-if="t.range"> · {{ t.range === 'PQ' ? 'HDR (PQ)' : 'HDR (HLG)' }}</template></td>
                     <td class="mono">{{ trackParams(t) }}</td>
                     <td class="mono right">{{ t.frames }}</td>
                     <td class="mono right">{{ t.has_timing ? t.start_pts.toFixed(3) : '—' }}</td>

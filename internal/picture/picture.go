@@ -26,6 +26,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -78,6 +79,11 @@ type Frame struct {
 	// ChannelDB is the level of every channel of the sound, in the order
 	// the stream has them: left and right first. AudioDB is the loudest.
 	ChannelDB []float64 `json:"channel_db,omitempty"`
+	// Loudness is the loudness of the sound looked at by EBU R 128
+	// (ITU-R BS.1770), in LUFS, when HasLoudness: of the two seconds
+	// that were decoded, not of a programme.
+	Loudness    float64 `json:"loudness,omitempty"`
+	HasLoudness bool    `json:"has_loudness,omitempty"`
 	// AudioError is what the decoder said when no sound came out.
 	AudioError string `json:"-"`
 	// NoSound tells that the data has no sound in it at all: the stream
@@ -176,6 +182,24 @@ type Decoder struct {
 
 	once sync.Once
 	err  error
+	// plain is set once the decoder at hand refused to measure loudness:
+	// from then on it is asked for the sound alone.
+	plain atomic.Bool
+}
+
+// loudness is where a run of the decoder leaves the loudness it measured.
+type loudness struct {
+	lufs float64
+	ok   bool
+}
+
+type loudnessKey struct{}
+
+// measured is the loudness the last run under ctx left, if any.
+func measured(ctx context.Context, f *Frame) {
+	if l, _ := ctx.Value(loudnessKey{}).(*loudness); l != nil && l.ok && f.HasAudio {
+		f.Loudness, f.HasLoudness = l.lufs, true
+	}
 }
 
 // New makes a decoder. The program is looked for when it is first needed.
@@ -231,6 +255,7 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 	// the picture alone, its sound being a rendition of its own, or the
 	// other way round, makes the decoder refuse the output it has nothing
 	// for and the other with it: then each is asked for by itself.
+	ctx = context.WithValue(ctx, loudnessKey{}, &loudness{})
 	shot, sound, errText, runErr := d.decode(ctx, data, true, true, true)
 	noVideo, apart := false, false
 	if len(shot) == 0 && len(sound) == 0 && refusedOutput(errText) {
@@ -273,6 +298,7 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 		}
 	}
 	f.hear(sound, audioErr)
+	measured(ctx, f)
 	if !f.HasPicture && !f.HasAudio {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("the decoder did not finish in %s", d.timeout)
@@ -320,6 +346,7 @@ func (d *Decoder) Listen(ctx context.Context, data []byte) (*Frame, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
+	ctx = context.WithValue(ctx, loudnessKey{}, &loudness{})
 	_, sound, errText, runErr := d.decode(ctx, data, false, true, true)
 	f := &Frame{}
 	if f.hear(sound, errText); !f.HasAudio {
@@ -333,6 +360,7 @@ func (d *Decoder) Listen(ctx context.Context, data []byte) (*Frame, error) {
 		}
 		return nil, ErrNothing
 	}
+	measured(ctx, f)
 	return f, nil
 }
 
@@ -340,6 +368,38 @@ func (d *Decoder) Listen(ctx context.Context, data []byte) (*Frame, error) {
 // returns what came out of it: the picture as PPM, the sound as a WAV
 // file of signed 16-bit samples, what it had to say and how it ended.
 func (d *Decoder) decode(ctx context.Context, data []byte, picture, audio, keyOnly bool) (shot, sound []byte, errText string, runErr error) {
+	box, _ := ctx.Value(loudnessKey{}).(*loudness)
+	loud := audio && box != nil && !d.plain.Load()
+	shot, sound, errText, runErr, meta := d.run(ctx, data, picture, audio, keyOnly, loud)
+	if loud && len(sound) == 0 && strings.Contains(errText, "ilter") {
+		// A decoder built without the filter: the sound is still wanted.
+		d.plain.Store(true)
+		shot, sound, errText, runErr, _ = d.run(ctx, data, picture, audio, keyOnly, false)
+		return shot, sound, errText, runErr
+	}
+	if loud {
+		box.lufs, box.ok = lastLoudness(meta)
+	}
+	return shot, sound, errText, runErr
+}
+
+// lastLoudness reads the loudness of the whole of what was measured out of
+// what the filter printed: its last figure. Sound too short or too quiet
+// to be measured leaves the floor of the scale, and that is no figure.
+func lastLoudness(meta []byte) (float64, bool) {
+	i := bytes.LastIndex(meta, []byte("lavfi.r128.I="))
+	if i < 0 {
+		return 0, false
+	}
+	text, _, _ := strings.Cut(string(meta[i+len("lavfi.r128.I="):]), "\n")
+	v, err := strconv.ParseFloat(strings.TrimSpace(text), 64)
+	if err != nil || v <= -69.9 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, false
+	}
+	return v, true
+}
+
+func (d *Decoder) run(ctx context.Context, data []byte, picture, audio, keyOnly, loud bool) (shot, sound []byte, errText string, runErr error, meta []byte) {
 	args := []string{
 		"-nostdin", "-v", "error", "-threads", "1",
 		// Nothing but what it is handed: no files, no network.
@@ -364,35 +424,54 @@ func (d *Decoder) decode(ctx context.Context, data []byte, picture, audio, keyOn
 	if audio {
 		// With the header of a sound file before the samples: it says
 		// how many channels there are.
-		args = append(args, "-map", "0:a:0?", "-t", strconv.Itoa(audioSeconds), "-vn", "-ar", strconv.Itoa(audioRate),
-			"-c:a", "pcm_s16le", "-f", "wav", "pipe:3")
+		args = append(args, "-map", "0:a:0?", "-t", strconv.Itoa(audioSeconds), "-vn")
+		if loud {
+			// The loudness is measured on the sound as it is, before it is
+			// brought down to the rate the level is taken at, and written
+			// frame by frame to a pipe of its own.
+			args = append(args, "-af", `ebur128=metadata=1:framelog=quiet,ametadata=mode=print:key=lavfi.r128.I:file=pipe\\:4`)
+		}
+		args = append(args, "-ar", strconv.Itoa(audioRate), "-c:a", "pcm_s16le", "-f", "wav", "pipe:3")
 	}
 	// The sound comes back over a pipe of its own, the picture over the
 	// standard output.
 	audioR, audioW, err := os.Pipe()
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", err, nil
 	}
 	defer audioR.Close()
+	metaR, metaW, err := os.Pipe()
+	if err != nil {
+		audioW.Close()
+		return nil, nil, "", err, nil
+	}
+	defer metaR.Close()
 	// The shell is there for one thing: to set the limit of memory before
 	// the decoder starts.
 	script := `ulimit -v ` + strconv.Itoa(d.memory*1024) + ` 2>/dev/null; exec "$0" "$@"`
 	cmd := exec.CommandContext(ctx, "/bin/sh", append([]string{"-c", script, d.path}, args...)...)
 	cmd.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin"}
 	cmd.Stdin = bytes.NewReader(data)
-	cmd.ExtraFiles = []*os.File{audioW}
+	cmd.ExtraFiles = []*os.File{audioW, metaW}
 	var pictureOut, errOut limited
 	pictureOut.left, errOut.left = maxOutput, 4096
 	cmd.Stdout, cmd.Stderr = &pictureOut, &errOut
 	cmd.WaitDelay = time.Second
 	if err := cmd.Start(); err != nil {
 		audioW.Close()
-		return nil, nil, "", err
+		metaW.Close()
+		return nil, nil, "", err, nil
 	}
-	audioW.Close() // the decoder holds its own end now
+	audioW.Close() // the decoder holds its own ends now
+	metaW.Close()
+	read := make(chan []byte, 1)
+	go func() {
+		b, _ := io.ReadAll(io.LimitReader(metaR, 64<<10))
+		read <- b
+	}()
 	sound, _ = io.ReadAll(io.LimitReader(audioR, maxOutput))
 	runErr = cmd.Wait()
-	return pictureOut.buf.Bytes(), sound, errOut.buf.String(), runErr
+	return pictureOut.buf.Bytes(), sound, errOut.buf.String(), runErr, <-read
 }
 
 // refusedOutput tells that the decoder refused to start because one of the

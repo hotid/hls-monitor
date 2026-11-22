@@ -67,10 +67,18 @@ func TestSample(t *testing.T) {
 	if !live.HasAudio || live.AudioDB < -40 || live.AudioDB > 0 {
 		t.Errorf("a tone: %v dB, heard %v", live.AudioDB, live.HasAudio)
 	}
+	// Its loudness by EBU R 128 is near its level: a tone of 440 Hz is
+	// hardly weighted.
+	if !live.HasLoudness || live.Loudness < live.AudioDB-6 || live.Loudness > live.AudioDB+6 {
+		t.Errorf("a tone at %.1f dB: loudness %.1f LUFS, measured %v", live.AudioDB, live.Loudness, live.HasLoudness)
+	}
 
 	dead, err := d.Sample(ctx, clip(t, black, quiet))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if dead.HasLoudness {
+		t.Errorf("silence has no loudness to measure, got %.1f LUFS", dead.Loudness)
 	}
 	if !dead.HasPicture || dead.Luma > 20 || dead.Dark < 0.98 {
 		t.Errorf("a black screen: luma %.1f, dark %.2f", dead.Luma, dead.Dark)

@@ -294,6 +294,11 @@ export const chartGroups = perLocale((): ChartGroup[] => [
         series: [{ metric: 'hls_audio_level_db', label: t('catalog.levelDB') }],
       },
       {
+        id: 'audio-loudness', title: t('catalog.loudness'), hint: t('catalog.loudnessHint'), unit: 'count', agg: 'avg', levels: ['header', 'segments', 'container'],
+        emptyHint: t('catalog.pictureNotChecked'),
+        series: [{ metric: 'hls_audio_loudness_lufs', label: 'LUFS' }],
+      },
+      {
         id: 'bitrate', title: t('catalog.segmentBitrate'), hint: t('catalog.segmentSizeDividedByDuration'), unit: 'bps', agg: 'avg', levels: ['header', 'segments', 'container'],
         series: [{ metric: 'hls_segment_bitrate_bps', label: t('common.bitrate') }],
       },

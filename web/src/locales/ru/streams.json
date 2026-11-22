@@ -4,6 +4,7 @@
   "checksOfStreamResumed": "Проверки потока «{name}» возобновлены",
   "checksOfStreamStopped": "Проверки потока «{name}» остановлены",
   "findByNameOrURL": "Найти по названию или адресу",
+  "hdrHint": "Картинка с расширенным динамическим диапазоном: HDR — кривая PQ (HDR10, Dolby Vision), HLG — гибридная. Прочитано из заголовка видео. Найти такие потоки: введите HDR или HLG в поиск.",
   "importAdd": "Добавить: {n}",
   "importAdded": "Добавлено потоков: {n}",
   "importAddress": "Адрес",

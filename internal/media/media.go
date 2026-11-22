@@ -34,6 +34,9 @@ type Track struct {
 	Profile string  `json:"profile,omitempty"`
 	Level   string  `json:"level,omitempty"`
 	FPS     float64 `json:"fps,omitempty"`
+	// Range is the dynamic range of the picture when it is a high one:
+	// "PQ" (HDR10, Dolby Vision) or "HLG"; empty for standard.
+	Range string `json:"range,omitempty"`
 
 	SampleRate int `json:"sample_rate,omitempty"`
 	Channels   int `json:"channels,omitempty"`

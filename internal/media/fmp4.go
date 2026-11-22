@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Eyevinn/mp4ff/avc"
+	"github.com/Eyevinn/mp4ff/hevc"
 	"github.com/Eyevinn/mp4ff/mp4"
 )
 
@@ -87,6 +88,9 @@ func describeSampleEntry(t *Track, stsd *mp4.StsdBox) {
 			if len(c.SPSnalus) > 0 {
 				if sps, err := avc.ParseSPSNALUnit(c.SPSnalus[0], true); err == nil && sps != nil {
 					t.Width, t.Height = int(sps.Width), int(sps.Height)
+					if sps.VUI != nil {
+						t.Range = videoRange(sps.VUI.TransferCharacteristics)
+					}
 				}
 			}
 		}
@@ -95,6 +99,11 @@ func describeSampleEntry(t *Track, stsd *mp4.StsdBox) {
 		if c := stsd.HvcX.HvcC; c != nil {
 			t.Profile = hevcProfile(uint32(c.GeneralProfileIDC))
 			t.Level = fmt.Sprintf("%d.%d", c.GeneralLevelIDC/30, (c.GeneralLevelIDC%30)/3)
+			if nalus := c.GetNalusForType(hevc.NALU_SPS); len(nalus) > 0 {
+				if sps, err := hevc.ParseSPSNALUnit(nalus[0]); err == nil && sps != nil && sps.VUI != nil {
+					t.Range = videoRange(uint(sps.VUI.TransferCharacteristics))
+				}
+			}
 		}
 	case stsd.Av01 != nil:
 		visual(stsd.Av01)

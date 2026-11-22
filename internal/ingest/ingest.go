@@ -129,6 +129,8 @@ var summaryAggregates = []struct {
 	{"height", "hls_media_height", "max"},
 	{"width", "hls_media_width", "max"},
 	{"fps", "hls_media_fps", "max"},
+	// 1 for a picture in PQ (HDR10, Dolby Vision), 2 for HLG, 0 for standard.
+	{"hdr", "hls_media_hdr", "max"},
 }
 
 // ErrStale is returned for a result that is not newer than the newest one

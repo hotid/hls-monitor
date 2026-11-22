@@ -444,7 +444,22 @@ func applyH264SPS(t *Track, nalu []byte) *avc.SPS {
 	t.Width, t.Height = int(sps.Width), int(sps.Height)
 	t.Profile = h264Profile(sps.Profile)
 	t.Level = fmt.Sprintf("%d.%d", sps.Level/10, sps.Level%10)
+	if sps.VUI != nil {
+		t.Range = videoRange(sps.VUI.TransferCharacteristics)
+	}
 	return sps
+}
+
+// videoRange names the dynamic range a transfer function is of: PQ (HDR10,
+// Dolby Vision) and HLG are high, the rest standard and left unnamed.
+func videoRange(transfer uint) string {
+	switch transfer {
+	case 16:
+		return "PQ"
+	case 18:
+		return "HLG"
+	}
+	return ""
 }
 
 func applyHEVCSPS(t *Track, nalu []byte) {
@@ -457,6 +472,9 @@ func applyHEVCSPS(t *Track, nalu []byte) {
 	t.Profile = hevcProfile(uint32(sps.ProfileTierLevel.GeneralProfileIDC))
 	lvl := uint32(sps.ProfileTierLevel.GeneralLevelIDC)
 	t.Level = fmt.Sprintf("%d.%d", lvl/30, (lvl%30)/3)
+	if sps.VUI != nil {
+		t.Range = videoRange(uint(sps.VUI.TransferCharacteristics))
+	}
 }
 
 var adtsSampleRates = [...]int{96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350}

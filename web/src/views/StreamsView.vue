@@ -26,7 +26,7 @@ const filter = ref('')
 const found = computed(() => {
   const q = filter.value.trim().toLowerCase()
   const all = live.overview?.streams ?? []
-  return q ? all.filter((s) => s.name.toLowerCase().includes(q) || s.url.toLowerCase().includes(q)) : all
+  return q ? all.filter((s) => s.name.toLowerCase().includes(q) || s.url.toLowerCase().includes(q) || rangeWord(s).toLowerCase() === q) : all
 })
 
 const editing = ref<Stream | null>(null)
@@ -63,6 +63,12 @@ const why = (s: Stream) => (s.status === 'fail' || s.status === 'warn' ? (reason
 function figure(s: Stream, key: string): number | undefined {
   const v = s.agents.map((a) => a.summary?.[key]).filter((x): x is number => typeof x === 'number' && x > 0)
   return v.length ? Math.max(...v) : undefined
+}
+// The dynamic range of the picture when it is a high one: found by the
+// search as well ("hdr", "hlg"), so that such streams can be picked out.
+function rangeWord(s: Stream): string {
+  const r = figure(s, 'hdr')
+  return r === 1 ? 'HDR' : r === 2 ? 'HLG' : ''
 }
 // With one vantage point the column of agents says the same in every row.
 const severalAgents = computed(() => (live.overview?.agents.length ?? 0) > 1)
@@ -152,7 +158,7 @@ async function remove() {
                 <span v-if="why(s).length > 2" class="muted more" :title="why(s).slice(2).map((i) => problemName(i.kind)).join(', ')">{{ t('streams.andMore', { n: why(s).length - 2 }) }}</span>
               </td>
               <td class="mono right hide-narrow nowrap">
-                <template v-if="figure(s, 'bitrate_bps')"><span v-if="figure(s, 'height')" class="muted">{{ figure(s, 'height') }}p · </span>{{ fmtBits(figure(s, 'bitrate_bps')) }}</template>
+                <template v-if="figure(s, 'bitrate_bps')"><span v-if="figure(s, 'height')" class="muted">{{ figure(s, 'height') }}p<template v-if="rangeWord(s)"> <b class="hdr" :title="t('streams.hdrHint')">{{ rangeWord(s) }}</b></template> · </span>{{ fmtBits(figure(s, 'bitrate_bps')) }}</template>
                 <template v-else>—</template>
               </td>
               <td v-if="severalAgents" class="hide-narrow">
@@ -209,5 +215,9 @@ async function remove() {
 }
 .why .warn {
   color: var(--accent-warm);
+}
+.hdr {
+  color: var(--accent-warm);
+  font-weight: 600;
 }
 </style>

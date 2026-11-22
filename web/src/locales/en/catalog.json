@@ -50,6 +50,8 @@
   "leftThePlaylistBetweenChecks": "Left the playlist between checks",
   "levelDB": "Level, dB",
   "longestDistanceBetweenKeyframes": "Longest distance between keyframes",
+  "loudness": "Loudness by EBU R 128, LUFS",
+  "loudnessHint": "Loudness as a person hears it (ITU-R BS.1770, K-weighting), of two seconds of sound at every look. The EBU R 128 broadcast norm is −23 LUFS on average over a programme; single looks differ from it in quiet and loud scenes, and the average over hours is what to judge by (the “avg” column).",
   "measuredFromTimestamps": "Measured from timestamps",
   "media": "Media",
   "mediaCannotBeParsed": "Media cannot be parsed",

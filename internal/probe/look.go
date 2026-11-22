@@ -403,6 +403,9 @@ func (c *Checker) hear(cy *cycle, v Variant, f *picture.Frame, audio *media.Trac
 	if f.HasAudio {
 		l.silent.note(f.AudioDB < silentBelow, at)
 		cy.metric("hls_audio_level_db", v.Key, f.AudioDB)
+		if f.HasLoudness {
+			cy.metric("hls_audio_loudness_lufs", v.Key, f.Loudness)
+		}
 		suspect = suspect || l.silent.n > 0
 		if l.silent.standing(at) {
 			tell(SevCrit, ProbAudioSilent, "the sound is silence", "audio_level_db", round1(f.AudioDB),

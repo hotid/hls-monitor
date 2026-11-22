@@ -42,7 +42,9 @@ type segAgg struct {
 	clockFault string
 	// subtitles tells that segments of subtitles were read, cues how
 	// many cues they had.
-	subtitles    bool
+	subtitles bool
+	// hdr tells a picture of high dynamic range: 1 for PQ, 2 for HLG.
+	hdr          int
 	cues         int
 	pcrGap, lead float64
 }
@@ -444,6 +446,12 @@ func (c *Checker) judgeMedia(v Variant, s plSegment, info *media.Info, st *varia
 			flag(ProbNoKeyframeStart, SevWarn, "segment %d does not start with a keyframe", s.seq)
 		}
 		cur.width, cur.height = vt.Width, vt.Height
+		switch vt.Range {
+		case "PQ":
+			agg.hdr = 1
+		case "HLG":
+			agg.hdr = 2
+		}
 		if vt.HasTiming {
 			cur.hasV, cur.vEnd = true, vt.EndPTS
 			if guessEnd {
@@ -610,6 +618,7 @@ func (c *Checker) emitSegmentMetrics(cy *cycle, v Variant, a *segAgg) {
 		cy.metric("hls_media_keyframe_start", k, float64(a.keyframeStarts)/n)
 		cy.metric("hls_media_width", k, float64(a.width))
 		cy.metric("hls_media_height", k, float64(a.height))
+		cy.metric("hls_media_hdr", k, float64(a.hdr))
 		if !a.partial {
 			cy.metric("hls_media_gop_seconds", k, a.maxGOP)
 			cy.metric("hls_media_fps", k, a.fps)

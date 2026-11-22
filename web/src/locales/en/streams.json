@@ -4,6 +4,7 @@
   "checksOfStreamResumed": "Checks of stream “{name}” resumed",
   "checksOfStreamStopped": "Checks of stream “{name}” stopped",
   "findByNameOrURL": "Find by name or URL",
+  "hdrHint": "A picture of high dynamic range: HDR is the PQ curve (HDR10, Dolby Vision), HLG the hybrid one. Read from the video header. To find such streams type HDR or HLG into the search.",
   "importAdd": "Add: {n}",
   "importAdded": "Streams added: {n}",
   "importAddress": "Address",
