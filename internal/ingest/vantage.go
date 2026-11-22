@@ -30,8 +30,10 @@ const (
 
 // seenEdge is where one playlist ended as one place saw it.
 type seenEdge struct {
-	// edge is the end of the playlist on the stream's own clock, at the
-	// moment when on the server's clock.
+	// edge is the end of the playlist on the stream's own clock, as seen
+	// by the check made at when — the time of the check, not of its
+	// delivery: an agent sends its results every few seconds, and after a
+	// restart what it could not send before.
 	edge, when time.Time
 	target     float64
 }
@@ -75,10 +77,12 @@ func (in *Ingester) compareVantages(agentID int64, r *probe.Result, now time.Tim
 			st = &vantageState{edges: map[int64]seenEdge{}, behind: map[int64]int{}}
 			in.vantages[k] = st
 		}
-		mine := seenEdge{edge: r.Time.Add(-time.Duration(lat * float64(time.Second))), when: now, target: target[variant]}
+		mine := seenEdge{edge: r.Time.Add(-time.Duration(lat * float64(time.Second))), when: r.Time, target: target[variant]}
 		st.edges[agentID] = mine
 		// How far behind the place that is furthest ahead this one is: the
-		// ends are brought to one moment by the time between the checks.
+		// ends are brought to one moment by the time between the checks,
+		// each by its own clock — which on hosts kept by NTP agree to
+		// within milliseconds.
 		worst, ahead := 0.0, int64(0)
 		for other, e := range st.edges {
 			if other == agentID {
@@ -89,7 +93,7 @@ func (in *Ingester) compareVantages(agentID int64, r *probe.Result, now time.Tim
 				delete(st.behind, other)
 				continue
 			}
-			if d := e.edge.Sub(mine.edge).Seconds() + now.Sub(e.when).Seconds(); d > worst {
+			if d := e.edge.Sub(mine.edge).Seconds() + mine.when.Sub(e.when).Seconds(); d > worst {
 				worst, ahead = d, other
 			}
 		}

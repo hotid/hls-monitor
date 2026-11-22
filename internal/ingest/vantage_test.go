@@ -55,6 +55,20 @@ func TestVantagePointBehind(t *testing.T) {
 	if told(seen(2, 5)) {
 		t.Error("told after it caught up")
 	}
+	// A result delivered some seconds after its check, as an agent sends
+	// them, or after a restart, is as close to the edge as it was then.
+	for i := 0; i < vantageRuns+1; i++ {
+		now = now.Add(3 * time.Second)
+		seen(1, 4)
+		r := &probe.Result{TargetID: 7, Time: now.Add(-12 * time.Second), Metrics: []probe.Metric{
+			{Name: "hls_live_latency_seconds", Variant: "v", Value: 5},
+			{Name: "hls_target_duration_seconds", Variant: "v", Value: 6},
+		}}
+		in.compareVantages(2, r, now)
+		if told(r) {
+			t.Fatal("a result delivered 12 s after its check was told as 12 s behind")
+		}
+	}
 	// A result delivered late says nothing of now.
 	late := &probe.Result{TargetID: 7, Time: now.Add(-5 * time.Minute), Metrics: []probe.Metric{{Name: "hls_live_latency_seconds", Variant: "v", Value: 300}}}
 	for i := 0; i < 5; i++ {
