@@ -167,6 +167,10 @@ const (
 	// ProbSubtitlesInvalid: a segment of subtitles is not the WebVTT it
 	// is served as.
 	ProbSubtitlesInvalid = "subtitles_invalid"
+	// ProbVantageBehind: one vantage point sees the stream well behind
+	// what another sees at the same time. Told by the server, which is
+	// where the results of all of them meet.
+	ProbVantageBehind = "vantage_behind"
 )
 
 // Problem is one kind of trouble found for one variant in a cycle.

@@ -47,6 +47,10 @@ type Ingester struct {
 	// a restart, and so is not stored.
 	ownMu sync.Mutex
 	own   map[[2]int64]string
+
+	// vantages is where every playlist ended as every place last saw it.
+	vantageMu sync.Mutex
+	vantages  map[vantageKey]*vantageState
 }
 
 // OwnClip names the clip of its own a stream plays as an agent sees it;
@@ -152,6 +156,7 @@ func (in *Ingester) apply(ctx context.Context, agentID int64, r *probe.Result) e
 	if r.Time.IsZero() || r.Time.After(now.Add(5*time.Minute)) {
 		r.Time = now
 	}
+	in.compareVantages(agentID, r, now)
 	t := r.Time
 	var samples []metrics.Sample
 	var journal []store.JournalEntry

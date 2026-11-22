@@ -77,6 +77,7 @@ export const problemTitle = perLocale((): Record<string, string> => ({
   declared_mismatch: t('catalog.declaredMismatch'),
   ts_clock_error: t('catalog.tsClockError'),
   subtitles_invalid: t('catalog.subtitlesInvalid'),
+  vantage_behind: t('catalog.vantageBehind'),
   media_params_changed: t('catalog.videoParametersChanged'),
   playlist_source_changed: t('catalog.playlistServedByADifferentServer'),
   segment_source_changed: t('catalog.segmentsServedByADifferentServer'),

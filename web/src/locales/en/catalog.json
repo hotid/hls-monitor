@@ -145,6 +145,7 @@
   "totalWhenDownloadedWhole": "Total (when downloaded whole)",
   "tsClockError": "MPEG-TS program clock errors",
   "unchanged": "Unchanged",
+  "vantageBehind": "A vantage point sees the stream behind",
   "variantOffset": "Renditions against the video",
   "variantOffsetHint": "How far the end of the playlist of an audio rendition or another video variant is from the end of the first video variant, by the timestamps in the segments. Negative means behind.",
   "variantsOutOfSync": "Variants out of sync",

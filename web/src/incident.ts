@@ -67,6 +67,7 @@ export const problemAbout = perLocale((): Record<string, { what: string; how: st
   declared_mismatch: { what: t('incident.declaredMismatchWhat'), how: t('incident.declaredMismatchHow') },
   ts_clock_error: { what: t('incident.tsClockWhat'), how: t('incident.tsClockHow') },
   subtitles_invalid: { what: t('incident.subtitlesInvalidWhat'), how: t('incident.subtitlesInvalidHow') },
+  vantage_behind: { what: t('incident.vantageBehindWhat'), how: t('incident.vantageBehindHow') },
   no_keyframe_start: {
     what: t('incident.theSegmentDoesNotStartWith'),
     how: t('incident.theFirstVideoFrameOfThe'),
@@ -182,6 +183,9 @@ const circumstances = perLocale((): Field[] => [
   { key: 'segments_moved', label: t('incident.segmentsMoved'), unit: 'count' },
   { key: 'segments_moved_limit', label: t('incident.segmentsMovedLimit'), unit: 'count' },
   { key: 'compared_with', label: t('incident.comparedWith'), unit: 'text' },
+  { key: 'behind_seconds', label: t('incident.behindSeconds'), unit: 's' },
+  { key: 'behind_limit', label: t('incident.behindLimit'), unit: 's' },
+  { key: 'ahead_agent_id', label: t('incident.aheadAgent'), unit: 'count' },
   { key: 'since_previous_check', label: t('incident.sinceThePreviousCheck'), unit: 's' },
   { key: 'previous_playlist_keeps', label: t('incident.previousPlaylistKeeps'), unit: 's' },
   { key: 'failed_checks_between', label: t('incident.failedChecksBetween'), unit: 'count' },
