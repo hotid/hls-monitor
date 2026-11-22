@@ -464,6 +464,9 @@ func (c *Checker) judgeMedia(v Variant, s plSegment, info *media.Info, st *varia
 		}
 	}
 	st.prev = cur
+	if ref := refTrack(vt, at); ref != nil {
+		st.anchor = anchor{ok: true, seq: s.seq, pts: ref.StartPTS, wrap: info.TimeWrap}
+	}
 }
 
 func refTrack(v, a *media.Track) *media.Track {

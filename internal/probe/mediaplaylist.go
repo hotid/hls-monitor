@@ -74,6 +74,10 @@ type variantState struct {
 	lastFailure  string
 
 	prev prevSegment
+	// anchor is where the last segment read starts on the timeline of its
+	// media, epoch which count of segment numbers the playlist is on.
+	anchor anchor
+	epoch  int
 }
 
 // failed notes a check that could not read the playlist.
@@ -184,7 +188,8 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 		// player that ran dry, none of which happened. The change itself
 		// is reported as such.
 		st.recent = nil
-		st.prev = prevSegment{}
+		st.prev, st.anchor = prevSegment{}, anchor{}
+		st.epoch++
 		st.bufInit = false
 	}
 
@@ -205,13 +210,15 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 			cy.detail(ProbSeqRenumbered, v.Key, "previous_last_sequence", st.lastSeq, "playlist_server_before", serverBefore)
 			cy.snapshot(v.Key, plURL, resp.Body)
 			st.haveSeq = false
-			st.prev = prevSegment{}
+			st.prev, st.anchor = prevSegment{}, anchor{}
+			st.epoch++
 		case last < st.lastSeq:
 			cy.problem(ProbSeqRegression, SevCrit, v.Key, "media sequence went back from %d to %d", st.lastSeq, last)
 			cy.detail(ProbSeqRegression, v.Key, "previous_last_sequence", st.lastSeq)
 			cy.snapshot(v.Key, plURL, resp.Body)
 			st.haveSeq = false
-			st.prev = prevSegment{}
+			st.prev, st.anchor = prevSegment{}, anchor{}
+			st.epoch++
 		case first > st.lastSeq+1:
 			missed := first - st.lastSeq - 1
 			cy.metric("hls_segments_missed", v.Key, float64(missed))
@@ -285,7 +292,13 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 		st.recent[s.seq] = s.seg.URI
 	}
 
-	e := edge{ok: true, kind: v.Kind, targetDuration: td}
+	e := edge{ok: true, key: v.Key, kind: v.Kind, targetDuration: td, live: !p.Closed, seq: last, epoch: st.epoch, disc: uint64(p.DiscontinuitySeq), wrap: st.anchor.wrap}
+	for _, s := range segs {
+		if s.seg.Discontinuity {
+			e.disc++
+		}
+	}
+	e.media, e.hasMedia = st.anchor.place(segs)
 	if t := segs[n-1].seg.ProgramDateTime; !t.IsZero() {
 		e.pdt = t.Add(time.Duration(segs[n-1].seg.Duration * float64(time.Second)))
 	}

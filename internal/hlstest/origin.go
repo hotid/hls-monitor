@@ -73,6 +73,8 @@ type Origin struct {
 	rangeReq map[string]string
 	noRange  bool
 	backend  string
+	// soundBehind is how many segments the playlist of sound is short of.
+	soundBehind uint64
 }
 
 // New creates an origin with no segments published yet.
@@ -97,6 +99,14 @@ func (o *Origin) Publish(n int) {
 	if o.next-o.first > uint64(o.opt.Window) {
 		o.first = o.next - uint64(o.opt.Window)
 	}
+}
+
+// SoundBehind makes the playlist of sound end n segments before those of
+// the picture, as one does whose packager fell behind.
+func (o *Origin) SoundBehind(n uint64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.soundBehind = n
 }
 
 // Rewind moves the media sequence back by n, as a restarted packager would.
@@ -226,7 +236,7 @@ func (o *Origin) Handler() http.Handler {
 		switch {
 		case file == "index.m3u8":
 			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-			fmt.Fprint(w, o.media())
+			fmt.Fprint(w, o.media(dir == "va"))
 		case file == "init.mp4" && o.opt.FMP4:
 			o.serveAsset(w, "assets/fmp4/init.mp4", Fault{})
 		case strings.HasPrefix(file, "seg-"):
@@ -343,9 +353,13 @@ func (o *Origin) master() string {
 	return b.String()
 }
 
-func (o *Origin) media() string {
+func (o *Origin) media(sound bool) string {
 	o.mu.Lock()
 	first, next, ended := o.first, o.next, o.ended
+	if sound {
+		back := min(o.soundBehind, first)
+		first, next = first-back, next-back
+	}
 	o.mu.Unlock()
 
 	var b strings.Builder

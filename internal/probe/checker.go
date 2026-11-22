@@ -82,8 +82,10 @@ type Checker struct {
 	entryText   []byte
 	entryAt     time.Time
 	variantKeys []string
-	vars        map[string]*variantState
-	interval    time.Duration
+	// steps is how every playlist stood against the picture.
+	steps    map[string]*inStep
+	vars     map[string]*variantState
+	interval time.Duration
 	// received counts the bytes of response bodies downloaded in the
 	// current cycle, by every request it makes.
 	received atomic.Int64
@@ -566,8 +568,20 @@ func (c *Checker) pruneStates(keys []string) {
 // edge is where a media playlist ends: the end of its last segment by
 // EXT-X-PROGRAM-DATE-TIME, zero when the playlist has no date-times.
 type edge struct {
-	ok             bool
-	kind           string
+	ok   bool
+	key  string
+	kind string
+	live bool
+	// Where the playlist has got to: the number of its last segment and
+	// which count that is of, how many discontinuities it has been
+	// through, and the end of the last segment on the timeline of the
+	// media, when timestamps were read.
+	seq            uint64
+	epoch          int
+	disc           uint64
+	media          float64
+	hasMedia       bool
+	wrap           float64
 	pdt            time.Time
 	targetDuration float64
 }
@@ -624,6 +638,7 @@ func (c *Checker) checkMaster(ctx context.Context, cy *cycle, mp *m3u8.MasterPla
 			cy.detail(ProbVariantsOutOfSync, VariantMaster, "variants_edge_spread", apart, "variants_edge_spread_limit", limit)
 		}
 	}
+	c.renditionsInStep(cy, edges)
 }
 
 // edgesApart tells how far apart in time the live edges of the video
