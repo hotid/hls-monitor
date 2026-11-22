@@ -250,9 +250,6 @@ async function remove() {
   color: var(--accent-warm);
   font-weight: 600;
 }
-.off {
-  color: var(--accent-warm);
-}
 .narrow-col {
   width: 1%;
   padding-right: 4px;
