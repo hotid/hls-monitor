@@ -197,9 +197,18 @@ async function remove() {
               </td>
               <td class="hide-narrow nowrap">{{ lastCheck(s) }}</td>
               <td v-if="session.isAdmin" class="actions" @click.stop>
-                <button class="btn small" type="button" @click="toggle(s)">{{ s.enabled ? t('common.stop') : t('common.resume') }}</button>
-                <button class="btn small" type="button" @click="editing = s">{{ t('common.configure') }}</button>
-                <button class="btn small danger" type="button" @click="deleting = s">{{ t('common.delete') }}</button>
+                <button class="btn small icon" type="button" :title="s.enabled ? t('common.stop') : t('common.resume')" :aria-label="s.enabled ? t('common.stop') : t('common.resume')" @click="toggle(s)">
+                  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                    <path v-if="s.enabled" d="M5.5 3.5v9M10.5 3.5v9" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none" />
+                    <path v-else d="M5 3.2v9.6L12.5 8z" fill="currentColor" />
+                  </svg>
+                </button>
+                <button class="btn small icon" type="button" :title="t('common.configure')" :aria-label="t('common.configure')" @click="editing = s">
+                  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M10.5 2.8l2.7 2.7-7.5 7.5H3v-2.7zM9 4.3l2.7 2.7" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" fill="none" /></svg>
+                </button>
+                <button class="btn small icon danger" type="button" :title="t('common.delete')" :aria-label="t('common.delete')" @click="deleting = s">
+                  <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none" /></svg>
+                </button>
               </td>
             </tr>
             <FilterEmpty :sort="sort" />
@@ -266,5 +275,9 @@ async function remove() {
 }
 .media .second .off {
   color: var(--accent-warm);
+}
+.btn.icon {
+  width: 28px;
+  padding: 0;
 }
 </style>
