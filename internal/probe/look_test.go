@@ -522,8 +522,10 @@ func TestMoreIsFetchedWhereTheSoundComesLate(t *testing.T) {
 	s := &stubLooker{frame: liveFrame}
 	s.frame.HasAudio = false
 	c.Looker, c.PictureEvery = s, 5*time.Minute
-	if c.lookSize() != lookBytes {
-		t.Fatalf("a look fetches %d bytes to begin with", c.lookSize())
+	// The first look takes more for the loudness, the next ones do not
+	// until half an hour is over.
+	if c.lookSize() != lookBytesMore || c.lookSize() != lookBytes {
+		t.Fatalf("a look fetches %d bytes after the one that measured the loudness", c.lookSize())
 	}
 	few := &media.Info{Tracks: []media.Track{{Kind: media.KindVideo, Frames: 12}, {Kind: media.KindAudio, Frames: 3}}}
 	c.look(context.Background(), &cycle{res: &Result{}}, Variant{Key: "v", Kind: KindVideo}, []byte{0x47}, nil, few, time.Now())
