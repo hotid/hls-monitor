@@ -1564,6 +1564,46 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/streams/import": {
+            "post": {
+                "description": "Reads an IPTV list (extended M3U, a plain list of addresses, or lines of a name and an address) and adds a stream for every address that is not checked yet. With dry_run it only tells what would be added.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "streams"
+                ],
+                "summary": "Add streams from a list of channels",
+                "parameters": [
+                    {
+                        "description": "The list and the settings of the streams",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.importRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.importResult"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_api.apiError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/streams/{id}": {
             "get": {
                 "produces": [
@@ -3074,6 +3114,14 @@ const docTemplate = `{
                 "cc_errors": {
                     "type": "integer"
                 },
+                "clock": {
+                    "description": "Clock is what the program clock of the segment says.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_media.TSClock"
+                        }
+                    ]
+                },
                 "container": {
                     "type": "string"
                 },
@@ -3109,6 +3157,46 @@ const docTemplate = `{
                 },
                 "transport_errors": {
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_media.TSClock": {
+            "type": "object",
+            "properties": {
+                "has_lead": {
+                    "type": "boolean"
+                },
+                "max_pat_gap": {
+                    "type": "number"
+                },
+                "max_pcr_gap": {
+                    "description": "MaxPCRGap is the longest time between two clock references in a row,\nby the clock. TR 101 290 allows 40 ms, and 100 ms at most.",
+                    "type": "number"
+                },
+                "max_pmt_gap": {
+                    "type": "number"
+                },
+                "min_lead": {
+                    "description": "MinLead is the least time by which a frame came before the clock\nreached the moment it is to be decoded at; negative when it came\nlate. HasLead tells that it was measured.",
+                    "type": "number"
+                },
+                "pats": {
+                    "description": "PATs and PMTs count the tables, MaxPATGap and MaxPMTGap are the\nlongest time between two of them by the clock, counting the tail\nafter the last one. TR 101 290 allows half a second.",
+                    "type": "integer"
+                },
+                "pcr_jumps": {
+                    "description": "PCRJumps counts references that went back or more than a second\nforward with no discontinuity announced.",
+                    "type": "integer"
+                },
+                "pcrs": {
+                    "description": "PCRs is how many clock references were read, Span the time between\nthe first and the last of them.",
+                    "type": "integer"
+                },
+                "pmts": {
+                    "type": "integer"
+                },
+                "span": {
+                    "type": "number"
                 }
             }
         },
@@ -4659,6 +4747,51 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.importRequest": {
+            "type": "object",
+            "properties": {
+                "dry_run": {
+                    "description": "DryRun only tells what would be added.",
+                    "type": "boolean"
+                },
+                "settings": {
+                    "description": "Settings every added stream gets; name and url are not used.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/internal_api.streamRequest"
+                        }
+                    ]
+                },
+                "text": {
+                    "description": "Text is the list itself.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.importResult": {
+            "type": "object",
+            "properties": {
+                "created": {
+                    "type": "integer"
+                },
+                "entries": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/internal_api.listEntry"
+                    }
+                },
+                "existing": {
+                    "type": "integer"
+                },
+                "invalid": {
+                    "type": "integer"
+                },
+                "new": {
+                    "description": "New is how many streams would be added, Created how many were.",
+                    "type": "integer"
+                }
+            }
+        },
         "internal_api.incidentScope": {
             "type": "object",
             "properties": {
@@ -4689,6 +4822,35 @@ const docTemplate = `{
                 },
                 "vantage": {
                     "description": "Vantage sums them up: \"all\" saw it, \"some\", \"only_this\" one, or\n\"single\" when there is nothing to compare with.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.listEntry": {
+            "type": "object",
+            "properties": {
+                "group": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "status": {
+                    "description": "Status: \"new\" for a stream that would be added, \"created\" for one\nthat was, \"exists\" when the address is checked already, \"duplicate\"\nwhen the list has it twice, \"invalid\" when it is not an address the\nmonitor can check, \"failed\" when adding it went wrong.",
+                    "type": "string",
+                    "enum": [
+                        "new",
+                        "created",
+                        "exists",
+                        "duplicate",
+                        "invalid",
+                        "failed"
+                    ]
+                },
+                "url": {
                     "type": "string"
                 }
             }

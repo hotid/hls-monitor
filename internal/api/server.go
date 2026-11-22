@@ -174,6 +174,7 @@ func (s *Server) routes(ui http.Handler) {
 
 	admin := user.Group("", s.requireAdmin)
 	admin.POST("/streams", s.createStream)
+	admin.POST("/streams/import", s.importStreams)
 	admin.POST("/slates", s.markSlate)
 	admin.GET("/captures/:id/archive", s.captureArchive)
 	admin.DELETE("/captures/:id", s.deleteCapture)

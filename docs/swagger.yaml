@@ -334,6 +334,10 @@ definitions:
     properties:
       cc_errors:
         type: integer
+      clock:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_media.TSClock'
+        description: Clock is what the program clock of the segment says.
       container:
         type: string
       error:
@@ -361,6 +365,46 @@ definitions:
         type: array
       transport_errors:
         type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_media.TSClock:
+    properties:
+      has_lead:
+        type: boolean
+      max_pat_gap:
+        type: number
+      max_pcr_gap:
+        description: |-
+          MaxPCRGap is the longest time between two clock references in a row,
+          by the clock. TR 101 290 allows 40 ms, and 100 ms at most.
+        type: number
+      max_pmt_gap:
+        type: number
+      min_lead:
+        description: |-
+          MinLead is the least time by which a frame came before the clock
+          reached the moment it is to be decoded at; negative when it came
+          late. HasLead tells that it was measured.
+        type: number
+      pats:
+        description: |-
+          PATs and PMTs count the tables, MaxPATGap and MaxPMTGap are the
+          longest time between two of them by the clock, counting the tail
+          after the last one. TR 101 290 allows half a second.
+        type: integer
+      pcr_jumps:
+        description: |-
+          PCRJumps counts references that went back or more than a second
+          forward with no discontinuity announced.
+        type: integer
+      pcrs:
+        description: |-
+          PCRs is how many clock references were read, Span the time between
+          the first and the last of them.
+        type: integer
+      pmts:
+        type: integer
+      span:
+        type: number
     type: object
   github_com_hotid_hls-monitor_internal_media.Track:
     properties:
@@ -1507,6 +1551,35 @@ definitions:
           $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.VariantState'
         type: array
     type: object
+  internal_api.importRequest:
+    properties:
+      dry_run:
+        description: DryRun only tells what would be added.
+        type: boolean
+      settings:
+        allOf:
+        - $ref: '#/definitions/internal_api.streamRequest'
+        description: Settings every added stream gets; name and url are not used.
+      text:
+        description: Text is the list itself.
+        type: string
+    type: object
+  internal_api.importResult:
+    properties:
+      created:
+        type: integer
+      entries:
+        items:
+          $ref: '#/definitions/internal_api.listEntry'
+        type: array
+      existing:
+        type: integer
+      invalid:
+        type: integer
+      new:
+        description: New is how many streams would be added, Created how many were.
+        type: integer
+    type: object
   internal_api.incidentScope:
     properties:
       agents:
@@ -1535,6 +1608,31 @@ definitions:
         description: |-
           Vantage sums them up: "all" saw it, "some", "only_this" one, or
           "single" when there is nothing to compare with.
+        type: string
+    type: object
+  internal_api.listEntry:
+    properties:
+      group:
+        type: string
+      name:
+        type: string
+      reason:
+        type: string
+      status:
+        description: |-
+          Status: "new" for a stream that would be added, "created" for one
+          that was, "exists" when the address is checked already, "duplicate"
+          when the list has it twice, "invalid" when it is not an address the
+          monitor can check, "failed" when adding it went wrong.
+        enum:
+        - new
+        - created
+        - exists
+        - duplicate
+        - invalid
+        - failed
+        type: string
+      url:
         type: string
     type: object
   internal_api.loginRequest:
@@ -3578,6 +3676,34 @@ paths:
           schema:
             $ref: '#/definitions/internal_api.apiError'
       summary: Ways to watch a stream through the server
+      tags:
+      - streams
+  /api/v1/streams/import:
+    post:
+      consumes:
+      - application/json
+      description: Reads an IPTV list (extended M3U, a plain list of addresses, or
+        lines of a name and an address) and adds a stream for every address that is
+        not checked yet. With dry_run it only tells what would be added.
+      parameters:
+      - description: The list and the settings of the streams
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/internal_api.importRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/internal_api.importResult'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/internal_api.apiError'
+      summary: Add streams from a list of channels
       tags:
       - streams
   /api/v1/system:

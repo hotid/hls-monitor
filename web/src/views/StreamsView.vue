@@ -15,6 +15,7 @@ import FilterEmpty from '@/components/FilterEmpty.vue'
 import SortTh from '@/components/SortTh.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
 import StreamFormDialog from '@/components/StreamFormDialog.vue'
+import StreamImportDialog from '@/components/StreamImportDialog.vue'
 
 const live = useLive()
 const session = useSession()
@@ -30,6 +31,7 @@ const found = computed(() => {
 
 const editing = ref<Stream | null>(null)
 const creating = ref(false)
+const importing = ref(false)
 const deleting = ref<Stream | null>(null)
 const busy = ref(false)
 
@@ -112,6 +114,7 @@ async function remove() {
       <h1>{{ t('common.streams') }}</h1>
       <span class="spacer" />
       <input v-model="filter" class="input compact" type="search" :placeholder="t('streams.findByNameOrURL')" :aria-label="t('common.streamSearch')" style="width: 260px" />
+      <button v-if="session.isAdmin" class="btn" type="button" @click="importing = true">{{ t('streams.importButton') }}</button>
       <button v-if="session.isAdmin" class="btn primary" type="button" @click="creating = true">{{ t('common.addStream') }}</button>
     </div>
 
@@ -170,6 +173,7 @@ async function remove() {
     </div>
 
     <StreamFormDialog v-if="creating" @close="creating = false" @saved="(s) => router.push({ name: 'stream', params: { id: s.id } })" />
+    <StreamImportDialog v-if="importing" @close="importing = false" />
     <StreamFormDialog v-if="editing" :stream="editing" @close="editing = null" />
     <ConfirmDialog v-if="deleting" :title="t('common.deleteStreamQuestion')" :action="t('common.deleteStream')" :busy="busy" @close="deleting = null" @confirm="remove">
       <p>{{ t('streams.streamWillBeDeletedTogetherWith', { name: deleting.name }) }}</p>
