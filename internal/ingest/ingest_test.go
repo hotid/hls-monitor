@@ -120,7 +120,7 @@ func TestApplyStoresEverything(t *testing.T) {
 	hi := variants[1].ID
 
 	states, _ := e.st.StreamStates(ctx, e.stream.ID)
-	if len(states) != 1 || states[0].Status != probe.StatusWarn || states[0].Summary["bitrate_bps"] != 1.9e6 || states[0].Summary["variants"] != 2 {
+	if len(states) != 1 || states[0].Status != probe.StatusWarn || states[0].Summary["bitrate_bps"] != 1.9e6 || states[0].Summary["variants"] != 2 || states[0].Summary["subtitles"] != 0 {
 		t.Errorf("stream state = %+v", states)
 	}
 	vstates, _ := e.st.VariantStates(ctx, e.stream.ID)

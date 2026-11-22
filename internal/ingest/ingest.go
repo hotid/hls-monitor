@@ -135,6 +135,9 @@ var summaryAggregates = []struct {
 	{"fps", "hls_media_fps", "max"},
 	// 1 for a picture in PQ (HDR10, Dolby Vision), 2 for HLG, 0 for standard.
 	{"hdr", "hls_media_hdr", "max"},
+	// Loudness by EBU R 128 of the loudest track, in LUFS: measured now
+	// and then, and kept until measured again.
+	{"loudness_lufs", "hls_audio_loudness_lufs", "max"},
 }
 
 // ErrStale is returned for a result that is not newer than the newest one
@@ -421,14 +424,18 @@ func summarize(r *probe.Result, streamLevel map[string]float64, perVariant map[s
 		}
 		out[a.name] = acc
 	}
-	video := 0
+	video, subtitles := 0, 0
 	for _, v := range r.Variants {
-		if v.Kind == probe.KindVideo || v.Kind == probe.KindMedia {
+		switch v.Kind {
+		case probe.KindVideo, probe.KindMedia:
 			video++
+		case probe.KindSubtitles:
+			subtitles++
 		}
 	}
 	if r.Variants != nil {
 		out["variants"] = float64(video)
+		out["subtitles"] = float64(subtitles)
 	}
 	problems := 0
 	for _, p := range r.Problems {

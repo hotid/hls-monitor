@@ -21,8 +21,15 @@
   "importTitle": "Add streams from a list",
   "importWhat": "What happens",
   "lastCheck": "Last check",
+  "loudness": "Loudness, LUFS",
+  "loudnessHint": "Loudness by EBU R 128 at the last measure (of two seconds of sound, every half hour or more often). The broadcast norm is −23 LUFS; those more than 6 away from it stand out.",
   "mbit": "Mbit/s",
   "streamWillBeDeletedTogetherWith": "Stream “{name}” will be deleted together with its history: metrics, incidents and the segment journal. This cannot be undone.",
+  "subtitles": "Subtitles",
+  "subtitlesN": "tracks: {n}",
+  "subtitlesNo": "no",
+  "subtitlesUnknown": "unknown",
+  "subtitlesYes": "yes",
   "video": "Video",
   "why": "What is wrong"
 }

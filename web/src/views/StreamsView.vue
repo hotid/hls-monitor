@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api, basePath } from '@/api'
 import { levelLabel, problemName, statusLabel } from '@/catalog'
-import { fmtAgo, fmtBits } from '@/format'
+import { fmtAgo, fmtBits, fmtNumber } from '@/format'
 import { t } from '@/i18n'
 import { timeValue, useSort } from '@/sort'
 import { useLive } from '@/stores/live'
@@ -70,6 +70,17 @@ function rangeWord(s: Stream): string {
   const r = figure(s, 'hdr')
   return r === 1 ? 'HDR' : r === 2 ? 'HLG' : ''
 }
+// A figure that may be negative or zero, as the agents last saw it: the
+// largest of them; undefined where none was told.
+function anyFigure(s: Stream, key: string): number | undefined {
+  const v = s.agents.map((a) => a.summary?.[key]).filter((x): x is number => typeof x === 'number')
+  return v.length ? Math.max(...v) : undefined
+}
+const loudness = (s: Stream) => anyFigure(s, 'loudness_lufs')
+const subtitleTracks = (s: Stream) => anyFigure(s, 'subtitles')
+// How far from the EBU R 128 norm of -23 LUFS a stream may be before it
+// stands out in the list: a single measure is of two seconds of sound.
+const loudOff = (v: number) => Math.abs(v + 23) > 6
 // With one vantage point the column of agents says the same in every row.
 const severalAgents = computed(() => (live.overview?.agents.length ?? 0) > 1)
 const thumb = (s: Stream) => (s.picture_ref ? `${basePath}/api/v1/streams/${s.id}/picture?agent=${s.picture_ref.agent_id}&t=${new Date(s.picture_ref.time).getTime()}` : '')
@@ -81,6 +92,12 @@ const sort = useSort(() => found.value, {
   status: { value: (s) => severity[s.status], filter: 'choice', label: (s) => statusLabel()[s.status] },
   why: { value: (s) => why(s).map((i) => problemName(i.kind)).join(', '), filter: 'text' },
   bitrate: { value: (s) => figure(s, 'bitrate_bps') ?? 0, filter: 'range', unit: t('streams.mbit'), scale: 1e6 },
+  loudness: { value: (s) => loudness(s), filter: 'range', unit: 'LUFS' },
+  subtitles: {
+    value: (s) => subtitleTracks(s),
+    filter: 'choice',
+    label: (s) => (subtitleTracks(s) === undefined ? t('streams.subtitlesUnknown') : subtitleTracks(s) ? t('streams.subtitlesYes') : t('streams.subtitlesNo')),
+  },
   level: { value: (s) => levelLabel()[s.level], filter: 'choice' },
   agents: { value: (s) => s.agents.map((a) => a.agent_name).join(', '), filter: 'choice', label: (s) => s.agents.map((a) => a.agent_name).join(', ') || t('common.notAssigned') },
   checked: (s) => timeValue(lastChecked(s)),
@@ -140,6 +157,8 @@ async function remove() {
               <SortTh :sort="sort" by="status">{{ t('common.status') }}</SortTh>
               <SortTh :sort="sort" by="why">{{ t('streams.why') }}</SortTh>
               <SortTh :sort="sort" by="bitrate" class="right hide-narrow">{{ t('streams.video') }}</SortTh>
+              <SortTh :sort="sort" by="loudness" class="right hide-narrow" :title="t('streams.loudnessHint')">{{ t('streams.loudness') }}</SortTh>
+              <SortTh :sort="sort" by="subtitles" class="hide-narrow">{{ t('streams.subtitles') }}</SortTh>
               <SortTh v-if="severalAgents" :sort="sort" by="agents" class="hide-narrow">{{ t('common.agents') }}</SortTh>
               <SortTh :sort="sort" by="checked" class="hide-narrow">{{ t('streams.lastCheck') }}</SortTh>
               <th v-if="session.isAdmin" />
@@ -160,6 +179,14 @@ async function remove() {
               <td class="mono right hide-narrow nowrap">
                 <template v-if="figure(s, 'bitrate_bps')"><span v-if="figure(s, 'height')" class="muted">{{ figure(s, 'height') }}p<template v-if="rangeWord(s)"> <b class="hdr" :title="t('streams.hdrHint')">{{ rangeWord(s) }}</b></template> · </span>{{ fmtBits(figure(s, 'bitrate_bps')) }}</template>
                 <template v-else>—</template>
+              </td>
+              <td class="mono right hide-narrow nowrap">
+                <span v-if="loudness(s) !== undefined" :class="{ off: loudOff(loudness(s)!) }">{{ fmtNumber(loudness(s), 1) }}</span>
+                <template v-else>—</template>
+              </td>
+              <td class="hide-narrow nowrap">
+                <template v-if="subtitleTracks(s)">{{ subtitleTracks(s) === 1 ? t('streams.subtitlesYes') : t('streams.subtitlesN', { n: subtitleTracks(s) }) }}</template>
+                <span v-else class="muted">—</span>
               </td>
               <td v-if="severalAgents" class="hide-narrow">
                 <template v-if="s.agents.length">{{ s.agents.map((a) => a.agent_name).join(', ') }}</template>
@@ -219,5 +246,8 @@ async function remove() {
 .hdr {
   color: var(--accent-warm);
   font-weight: 600;
+}
+.off {
+  color: var(--accent-warm);
 }
 </style>
