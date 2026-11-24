@@ -13,8 +13,8 @@ import (
 // A capture asked for of a stream only an agent checks is made by the
 // agent, sent to the server and kept there as the agent's.
 func TestCaptureByAnAgent(t *testing.T) {
-	captureSendEvery = 200 * time.Millisecond
-	t.Cleanup(func() { captureSendEvery = 15 * time.Second })
+	captureSendEvery.Store(int64(200 * time.Millisecond))
+	t.Cleanup(func() { captureSendEvery.Store(int64(15 * time.Second)) })
 	store, err := capture.Open(capture.Options{Dir: filepath.Join(t.TempDir(), "captures"), MaxBytes: 100 << 20})
 	if err != nil {
 		t.Fatal(err)

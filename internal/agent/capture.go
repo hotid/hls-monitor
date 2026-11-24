@@ -64,12 +64,16 @@ func (a *Agent) openCaptures() error {
 	return nil
 }
 
-// captureSendEvery is how often finished captures are looked for to be sent.
-var captureSendEvery = 15 * time.Second
+// captureSendEvery is how often finished captures are looked for to be
+// sent, in nanoseconds. Tests make it shorter while agents of other tests
+// may still be running.
+var captureSendEvery atomic.Int64
+
+func init() { captureSendEvery.Store(int64(15 * time.Second)) }
 
 // captureLoop sends the captures worth keeping, one at a time.
 func (a *Agent) captureLoop(ctx context.Context) {
-	for sleepCtx(ctx, captureSendEvery) {
+	for sleepCtx(ctx, time.Duration(captureSendEvery.Load())) {
 		for _, c := range a.captures.store.List(0) {
 			if ctx.Err() != nil {
 				return
