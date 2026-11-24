@@ -605,6 +605,17 @@ func (j *job) room() bool {
 
 // put writes a file of the capture and records it.
 func (j *job) put(f File, data []byte) {
+	// The limit is of the capture, not of where the next file may begin:
+	// a segment that would take it over is not kept. What the check read
+	// is kept always, being what the capture is of.
+	if len(data) > 0 && f.Role != "evidence" {
+		j.s.mu.Lock()
+		over := j.c.Bytes+int64(len(data)) > captureMax
+		j.s.mu.Unlock()
+		if over {
+			f.Error, f.Whole, data = "not kept: the capture is as large as one may be", false, nil
+		}
+	}
 	if len(data) > 0 {
 		full := filepath.Join(j.dir, filepath.FromSlash(f.Name))
 		err := os.MkdirAll(filepath.Dir(full), 0o750)

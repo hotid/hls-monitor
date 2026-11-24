@@ -197,7 +197,7 @@ func TestHeadersStayOnTheirSite(t *testing.T) {
 
 func TestPublicAddresses(t *testing.T) {
 	for addr, want := range map[string]bool{
-		"8.8.8.8": true, "195.191.5.207": true, "2a00:1450:4010:c0b::8a": true,
+		"8.8.8.8": true, "93.184.216.34": true, "2a00:1450:4010:c0b::8a": true,
 		"127.0.0.1": false, "10.1.2.3": false, "172.16.0.1": false, "192.168.1.1": false,
 		"169.254.169.254": false, "100.64.0.1": false, "198.18.0.1": false, "0.0.0.0": false,
 		"::1": false, "fe80::1": false, "fd00::1": false, "::ffff:10.0.0.1": false, "224.0.0.1": false,
@@ -213,7 +213,7 @@ func TestPublicAddresses(t *testing.T) {
 
 // What a request may connect to, connection by connection.
 func TestReachDecisions(t *testing.T) {
-	const pub, in = "195.191.5.207:443", "10.0.0.5:80"
+	const pub, in = "93.184.216.34:443", "10.0.0.5:80"
 	for _, tc := range []struct {
 		name  string
 		mode  Reach

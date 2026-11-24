@@ -51,6 +51,9 @@ type Checker struct {
 	// sound, every PictureEvery. Set both before Run.
 	Looker       Looker
 	PictureEvery time.Duration
+	// blind leaves the container of the segments unread; for tests of
+	// what is decoded alone.
+	blind bool
 	// Slates, when set, returns the pictures known to be slates.
 	Slates func() []Slate
 	looks  looks

@@ -12,7 +12,7 @@ The interface is available in English and Russian: the switch is in the top bar,
 
 ## Features
 
-- **Checks at four depths, set per stream:** playlists only; the first kilobytes of every segment; whole segments; whole segments with the container parsed. The cheapest useful level costs a few percent of the stream's bitrate.
+- **Checks at four depths, set per stream:** playlists only; the first kilobytes of every segment; whole segments; whole segments with the container parsed. The cheapest useful level costs a few percent of the bitrate of a stream of several megabits.
 - **Looks inside the media without decoding it:** MPEG-TS and fMP4 — continuity counters, tables, tracks, timestamps, frames and keyframes, GOP, frame rate; H.264, HEVC and MPEG-2, interlaced included. Compared with ffprobe on real broadcast segments.
 - **Incidents with their evidence:** every finding keeps the figures it was concluded from, the playlist as it was and as it had been at the check before, the redirects followed and the server that answered.
 - **Where to look for the cause:** whether other vantage points saw the same, and whether other streams of the same server have it. The same problem on several streams of one server at once is one incident of the server, not one per stream; a problem that comes back within minutes continues its incident.
@@ -68,7 +68,7 @@ cp deploy/.env.example deploy/.env      # optionally set HLSMON_ADMIN_PASSWORD
 docker compose -f deploy/docker-compose.yml up -d
 ```
 
-This runs the published images `ghcr.io/hotid/hls-monitor-server` and VictoriaMetrics; nothing is built. The images are for x86-64 and 64-bit ARM. Of the repository only `deploy/docker-compose.yml` and `deploy/.env` are needed. `HLSMON_VERSION` in `deploy/.env` selects the release (`latest` by default).
+This runs the published images `ghcr.io/hotid/hls-monitor-server` and VictoriaMetrics; nothing is built. The images are for x86-64 and 64-bit ARM. Of the repository only `deploy/docker-compose.yml` and `deploy/.env` are needed. `HLSMON_VERSION` in `deploy/.env` selects the release (`latest` by default); it is the tag of the image — the number of the release without the letter `v`: `0.1.11`, not `v0.1.11`.
 
 The interface opens at <http://localhost:4000>. The port is published on the loopback only: to reach the server from other hosts, set `HLSMON_BIND=0.0.0.0` in `deploy/.env` or put a reverse proxy in front. If the administrator password is not set, it is generated on first start and written to the log once:
 
@@ -89,7 +89,7 @@ The depth is set per stream:
 | Level | What it does |
 |---|---|
 | Playlists only | Requests the multivariant and media playlists. Segments are not downloaded. |
-| Playlists and the start of each segment | Additionally requests the first 130 KB of every new segment: existence, size, server, video parameters, timestamp continuity. Uses tens of times less traffic than downloading whole segments. |
+| Playlists and the start of each segment | Additionally requests the first 130 KB of every new segment: existence, size, server, video parameters, timestamp continuity. For a stream of several megabits that is tens of times less traffic than downloading whole segments; a segment shorter than 130 KB (a low bitrate, short segments) is fetched whole. |
 | Playlists and whole segments | Downloads every new segment: this adds download speed and truncated downloads to the above. Traffic equals the stream bitrate. |
 | Playlists, whole segments and media parsing | Additionally parses the whole segment without decoding: duration, GOP, frame rate, errors anywhere in the segment. |
 
@@ -106,7 +106,7 @@ What is collected:
 - **MPEG-TS program clock:** the time between PCR marks, jumps of the clock with no discontinuity announced, and frames that come after their time by that clock. Reported when it repeats in three checks in a row. A browser player does not care, a set-top box does.
 - **Subtitles:** every WebVTT segment is read whole: the header, the `X-TIMESTAMP-MAP` time mapping, the times of the cues. Whether the cues match the picture in time is not checked. A track that had not a single cue in the last hour is marked as empty — in the list of streams, on the stream page and in the player.
 - **Vantage points against each other:** when a stream is checked from several places (the server and agents), the server compares where the playlist ends for each by `EXT-X-PROGRAM-DATE-TIME`. A place that for three checks in a row sees the stream more than two target durations later than another gets a warning: it is served an old playlist.
-- **For information:** the high dynamic range of the picture (HDR, the PQ curve, or HLG) is read from the video header and shown in the list of streams; such streams are found by typing `HDR` or `HLG` into the search. Every half hour the loudness by EBU R 128 is measured in LUFS: three segments some 15 seconds apart, two seconds of the sound of each, taken together as R 128 takes its blocks, pauses left out. The sound is measured where it is: in the playlist of sound when it is apart. At the “beginning of a segment” level 2 MB of a segment are taken for this instead of 0.5. The figure is shown in the list of streams (sorted and filtered) and on the stream's chart.
+- **For information:** the high dynamic range of the picture (HDR, the PQ curve, or HLG) is read from the video header and shown in the list of streams; such streams are found by typing `HDR` or `HLG` into the search. Every half hour, when the check of picture and sound is on (`HLSMON_PICTURE_CHECK`: the same ffmpeg measures it), the loudness by EBU R 128 is measured in LUFS: three segments some 15 seconds apart, two seconds of the sound of each, taken together as R 128 takes its blocks, pauses left out. The sound is measured where it is: in the playlist of sound when it is apart. At the “beginning of a segment” level 2 MB of a segment are taken for this instead of 0.5. The figure is shown in the list of streams (sorted and filtered) and on the stream's chart.
 
 In the list of streams the state is shown by an icon, and video, loudness and subtitles share one cell in two lines; each keeps its own sorting and filter.
 
@@ -116,7 +116,7 @@ The interval set for a stream is an upper bound: if the playlist window is short
 
 Segments are downloaded once each: every cycle fetches only those that appeared since the previous one. For ended broadcasts and VOD, segments are checked one per cycle, round-robin.
 
-A problem that persists for several cycles becomes an incident. An incident is closed after three clean cycles in a row and no sooner than 30 seconds after the problem was last seen. The playlist text at the moment the problem started is saved. A problem that comes back within ten minutes of ending continues the same incident: it tells how many times it began, and its duration leaves out the pauses. When three or more streams of one server have the same problem of answering at once — an HTTP error, an unreachable or stale playlist, failing segments — that is an incident of the server, one line with the streams listed instead of one per stream; so is a server to which more than 5 % of the requests needed a TCP retransmission.
+A problem that is found becomes an incident at once; the checks one observation is not enough for (picture, sound, the clock of the stream, a vantage point behind) wait for several in a row themselves before they tell of a problem. An incident is closed after three clean cycles in a row and no sooner than 30 seconds after the problem was last seen. The playlist text at the moment the problem started is saved. A problem that comes back within ten minutes of ending continues the same incident: it tells how many times it began, and its duration leaves out the pauses. When three or more streams of one server have the same problem of answering at once — an HTTP error, an unreachable or stale playlist, failing segments — that is an incident of the server, one line with the streams listed instead of one per stream; so is a server to which, over five minutes, a hundred requests took more than five TCP retransmissions (with 200 requests at the least).
 
 The details of an incident also say where to look for its cause: whether the other vantage points saw the same problem, and whether other streams served by the same server had it at the same time. It is a guess from that evidence, and is worded as one.
 
@@ -134,9 +134,9 @@ The browser is given only addresses signed by the server, valid for twelve hours
 
 ### Live diagnosis
 
-A separate check, run once per second at the chosen depth (for one to ten minutes), is started from the stream page. Every check is visible in the browser immediately: the response and server of each playlist, the player model buffer, the video arrival rate as a percentage of real time, every new segment, and everything that was found, with the calculation. The check is performed by the monitor server itself, not by agents. Live diagnosis saves nothing and does not affect regular checks, incidents or charts; no more than three run at the same time.
+A separate check, run once per second at the chosen depth (for one to ten minutes), is started from the stream page. Every check is visible in the browser immediately: the response and server of each playlist, the player model buffer, the video arrival rate as a percentage of real time, every new segment, and everything that was found, with the calculation. Live diagnosis writes nothing to incidents or charts and does not affect regular checks; a segment it finds something in may be captured, as with a regular check; no more than three run at the same time.
 
-By default the diagnosis is made by the server itself. Where there are agents the page lets one be chosen instead: the agent then checks the stream every second from where it stands and sends what every check found, so the timings are those of its network. A stream the server does not check itself is diagnosed from its own agent to begin with.
+By default the diagnosis is made by the server itself. Where there are agents the page lets one be chosen instead: the agent then checks the stream every second from where it stands and sends what every check found, so the timings are those of its network. A stream the server does not check itself is diagnosed from its own agent to begin with. The agent a stream is watched or diagnosed through is given the request headers of that stream as well, even when it does not check it itself.
 
 ### Picture and sound
 
@@ -176,7 +176,7 @@ A capture waits ten minutes to be confirmed by a problem of the kind it was made
 
 Captures are made for what is in the segments: the picture, the sound, the container, the timestamps. A playlist that cannot be reached leaves nothing to save but what its incident already has. Encrypted segments are not captured.
 
-It is bounded on every side, and checks never wait for it: `HLSMON_CAPTURE_MAX_MB` (2048) is all the disk captures may take, unconfirmed ones included — beyond it the unconfirmed go first, then the oldest; one capture takes 96 MB at the most; two are made at a time, and one from any one server; a stream is captured once in half an hour, and for a problem a kept capture of it already stands for, once a day — a stream with the same thing wrong in every segment is not captured over and over. When room has to be made among kept captures, the oldest of whatever there is most of goes first, so that a common problem does not push out the one capture of a rare one. A capture that does not fit these is not made. Agents capture too, when the server has captures on: from where they stand, on their own disk, by the same rules. A capture worth keeping (confirmed, asked for, or one a decoder found fault with) is sent to the server as an archive and removed from the agent once the server has it; in the list it says which agent made it. “Capture now” on a stream that only agents check is passed to the first of them in contact.
+It is bounded on every side, and checks never wait for it: `HLSMON_CAPTURE_MAX_MB` (2048) is all the disk captures may take, unconfirmed ones included — beyond it the unconfirmed go first, then the oldest; one capture takes 96 MB at the most; the checks make two at a time, and one from any one server (a capture asked for by hand does not wait in that line); a stream is captured once in half an hour, and for a problem a kept capture of it already stands for, once a day — a stream with the same thing wrong in every segment is not captured over and over. When room has to be made among kept captures, the oldest of whatever there is most of goes first, so that a common problem does not push out the one capture of a rare one. A capture that does not fit these is not made. Agents capture too, when the server has captures on: from where they stand, on their own disk, by the same rules. A capture worth keeping (confirmed, asked for, or one a decoder found fault with) is sent to the server as an archive and removed from the agent once the server has it; in the list it says which agent made it. “Capture now” on a stream that only agents check is passed to the first of them in contact.
 
 ## Agents
 
@@ -225,7 +225,7 @@ Every setting is given as a flag or an environment variable.
 | `HLSMON_SEGMENT_RETENTION` | `-segment-retention` | `48h` | Maximum age of a segment journal entry |
 | `HLSMON_JOURNAL_MAX_MB` | `-journal-max-mb` | `512` | Size in MiB that the journal file cannot exceed |
 | `HLSMON_BODY_MEMORY_MB` | `-body-memory-mb` | `1024` | MiB of segment bodies all local checks together may hold in memory; a download waits when there is no room. The agent has the same setting |
-| `HLSMON_PRIVATE_NETWORKS` | `-private-networks` | `same` | Whether checks may connect to addresses that are not public (loopback, private, link-local, carrier and container ranges). `same`: only for a stream whose own address is such — a stream on a public address cannot lead the monitor inside by a redirect or by what its playlists name; `allow`: no restriction; `deny`: never. Applied to the address actually connected to, after name resolution; not applied when requests go through a proxy. The agent has the same setting |
+| `HLSMON_PRIVATE_NETWORKS` | `-private-networks` | `same` | Whether checks may connect to addresses that are not public (loopback, private, link-local, carrier and container ranges). `same`: only for a stream whose own address is such — a stream on a public address cannot lead the monitor inside by a redirect or by what its playlists name; `allow`: no restriction; `deny`: never. Applied to the address actually connected to, after name resolution; not applied to a request that the environment (`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`) sends through a proxy: the proxy connects then. Addresses of IPv6 that carry one of IPv4 (NAT64, 6to4) are judged by it. The agent has the same setting |
 | `HLSMON_METRICS_QUEUE_MAX_MB` | `-metrics-queue-max-mb` | `1024` | MiB of disk for samples VictoriaMetrics has not taken yet. They are kept compressed (about twelvefold) in `metrics-queue` next to the database while it is away and across restarts of the server, and written with their original time when it returns; beyond the limit the oldest are dropped |
 | `HLSMON_SNAPSHOT_RETENTION` | `-snapshot-retention` | `168h` | Retention of playlist snapshots |
 | `HLSMON_INCIDENT_RETENTION` | `-incident-retention` | `2160h` | Retention of closed incidents |
@@ -261,9 +261,9 @@ location /hls-monitor/ {
 Everything that is configured lives in the server's volume: `hls-monitor.db` (streams, users, tokens, agent keys, incidents) and `hls-monitor-journal.db` (the segment journal; restoring it is optional). The database runs in WAL mode, so the file of a running server must not be copied: the copy may be inconsistent. Stop the server for a few seconds — agents keep their results meanwhile and deliver them afterwards:
 
 ```sh
-docker compose stop server
+docker compose -f deploy/docker-compose.yml stop server
 docker run --rm -v hls-monitor_server-data:/data:ro -v "$PWD":/backup alpine tar czf /backup/hls-monitor-data.tgz -C /data .
-docker compose start server
+docker compose -f deploy/docker-compose.yml start server
 ```
 
 Restore into an empty volume, with the server stopped:
@@ -302,7 +302,7 @@ curl -H "Authorization: Bearer <token>" http://localhost:4000/api/ext/v1/status
 
 `status_code`: 0 — OK, 1 — warning, 2 — failure, 3 — no data, −1 — disabled.
 
-A ready-made template for Zabbix 7.2 and newer is [`deploy/zabbix/template_hls_monitor.yaml`](deploy/zabbix/template_hls_monitor.yaml), "HLS monitor by HTTP". It needs no Zabbix agent: import it, link it to a host and set the macros `{$HLSMON.URL}` (address of the server with its prefix, no trailing slash) and `{$HLSMON.TOKEN}` (a token from the Access page). The template makes three requests a minute — `/readyz`, `/metrics` and `/api/ext/v1/status` — and gets from them:
+A ready-made template for Zabbix 7.2 and newer is [`deploy/zabbix/template_hls_monitor.yaml`](deploy/zabbix/template_hls_monitor.yaml), "HLS monitor by HTTP". It needs no Zabbix agent: import it, link it to a host and set the macros `{$HLSMON.URL}` (address of the server with its prefix, no trailing slash) and `{$HLSMON.TOKEN}` (a token from the Settings page). The template makes three requests a minute — `/readyz`, `/metrics` and `/api/ext/v1/status` — and gets from them:
 
 - for every stream (discovered): its state and the number of open incidents; triggers "failure" (3 min), "no data" (5 min), "warning" (15 min). When more than `{$HLSMON.MASS.FAIL}` streams fail at once, one common trigger fires and those of the streams depend on it;
 - for the monitor itself: does not answer, cannot do its job (database), is overloaded, checks are late, results are not being stored, the time series storage is down, the disk is almost full;
@@ -310,7 +310,7 @@ A ready-made template for Zabbix 7.2 and newer is [`deploy/zabbix/template_hls_m
 
 Periods and thresholds are macros of the template.
 
-Time series names in VictoriaMetrics start with `hls_`; the labels are `stream`, `agent`, `variant` (identifiers).
+Time series names in VictoriaMetrics start with `hls_`; the labels are `stream`, `agent`, `variant` (identifiers), and `server` and `ip` as well on the series by server (`hls_server_…`). The series about the monitor itself start with `hlsmon_self_`.
 
 ### Watching the monitor itself
 

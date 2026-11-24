@@ -409,8 +409,15 @@ func (k *segCheck) transfer(resp *httpx.Response, size int64) {
 func (k *segCheck) contents(resp *httpx.Response, init *media.Init) *media.Info {
 	s, v := k.s, k.v
 	whole := k.sized && (!k.header || (k.rec.Size > 0 && k.rec.Fetched >= k.rec.Size))
-	if (k.c.t.Level == LevelContainer || k.header) && !s.encrypted && v.Kind != KindSubtitles {
-		info := media.Analyze(resp.Body, init)
+	if !k.c.blind && !s.encrypted && v.Kind != KindSubtitles {
+		body := resp.Body
+		// The level of whole segments reads of their contents what the
+		// level below it does: the beginning. The whole of one is parsed
+		// at the level that is for it.
+		if k.c.t.Level == LevelSegments && len(body) > headerBytes {
+			body, whole = body[:headerBytes], false
+		}
+		info := media.Analyze(body, init)
 		k.rec.Media = info
 		k.c.judgeMedia(v, s, info, k.st, k.agg, k.flag, whole)
 		k.c.noteCoded(v, k.st, info, k.c.now())

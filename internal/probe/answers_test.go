@@ -145,3 +145,19 @@ func TestRangeOfAFileFromAServerWithoutRanges(t *testing.T) {
 		t.Errorf("the beginning of a segment within what came = %q", r.Body)
 	}
 }
+
+// The level of whole segments reads of them what the level below does.
+func TestWholeSegmentsLevelReadsTheirBeginning(t *testing.T) {
+	f := newFixture(t, hlstest.Options{NoDiscontinuity: true}, "/v0/index.m3u8", LevelSegments)
+	r := f.step(2)
+	wantClean(t, r)
+	if seg := r.Segments[0]; seg.Media == nil || seg.Media.Video() == nil || seg.Media.Video().Width != 160 {
+		t.Fatalf("the segment was not read: %+v", seg.Media)
+	}
+	if _, ok := metric(r, "hls_media_width", VariantMedia); !ok {
+		t.Error("hls_media_width is missing at the level of whole segments")
+	}
+	wantClean(t, f.step(1))
+	// Where the sample loop starts over without a word of the playlist.
+	wantProblem(t, f.step(1), ProbPTSDiscontinuity, SevWarn)
+}

@@ -62,6 +62,10 @@ func lookFixture(t *testing.T, level Level) (*fixture, *stubLooker) {
 	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level)
 	s := &stubLooker{frame: liveFrame}
 	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
+	// The origin of the tests plays three segments round and round, which
+	// is a clip going round to whoever reads their container: the tests
+	// of looks at the level of whole segments are of the looks alone.
+	f.c.blind = level == LevelSegments
 	return f, s
 }
 
@@ -539,8 +543,9 @@ func TestMoreIsFetchedWhereTheSoundComesLate(t *testing.T) {
 func TestStreamWithNoSound(t *testing.T) {
 	// The picture and no sound, and no playlist of sound either: told for
 	// information, after a few looks. (The container of the fixture's
-	// segments has sound in it, and is not read at this level.)
+	// segments has sound in it, and is not read here.)
 	f := newFixture(t, hlstest.Options{}, "/master.m3u8", LevelSegments)
+	f.c.blind = true
 	s := &stubLooker{frame: liveFrame}
 	s.frame.HasAudio, s.frame.NoSound = false, true
 	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
