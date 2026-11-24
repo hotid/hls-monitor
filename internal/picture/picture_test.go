@@ -6,9 +6,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // clip has ffmpeg make a short MPEG-TS segment from a picture source and a
@@ -330,5 +332,38 @@ func TestEveryChannelIsHeard(t *testing.T) {
 	}
 	if pcm, n := readWAV([]byte("RIFF\xff\xff\xff\xffWAVEdata")); n != 0 || pcm != nil {
 		t.Error("a sound file without a format was read")
+	}
+}
+
+// A decoder that is broken says nothing of the data: only one that ran
+// and refused it does.
+func TestBrokenDecoderIsNotUndecodableData(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in decoders are shell scripts")
+	}
+	stand := func(body string) *Decoder {
+		p := filepath.Join(t.TempDir(), "ffmpeg")
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return New(Options{FFmpeg: p, Timeout: time.Second})
+	}
+	data := make([]byte, 188*10)
+	for name, tc := range map[string]struct {
+		body string
+		want error
+	}{
+		"refuses the data":   {"cat >/dev/null; echo 'Invalid data found when processing input' >&2; exit 1", ErrNothing},
+		"killed by a signal": {"kill -SEGV $$", ErrDecoder},
+		"cannot be started":  {"exec /nonexistent/ffmpeg", ErrDecoder},
+		"does not finish":    {"sleep 5", ErrDecoder},
+	} {
+		d := stand(tc.body)
+		if _, err := d.Sample(context.Background(), data); !errors.Is(err, tc.want) {
+			t.Errorf("%s: a look gave %v, want %v", name, err, tc.want)
+		}
+		if _, err := d.Listen(context.Background(), data); !errors.Is(err, tc.want) {
+			t.Errorf("%s: a listen gave %v, want %v", name, err, tc.want)
+		}
 	}
 }

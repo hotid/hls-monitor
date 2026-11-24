@@ -276,11 +276,20 @@ func (c *Client) Flush(ctx context.Context) error {
 			size += len(c.queue[n])
 			n++
 		}
-		batch := bytes.Join(c.queue[:n], nil)
+		// Taken out of the queue while it is sent: what is written, moved
+		// to disk or dropped meanwhile is other samples than these.
+		taken := c.queue[:n:n]
+		c.queue = c.queue[n:]
+		c.queued -= size
+		batch := bytes.Join(taken, nil)
 		c.mu.Unlock()
 
 		if err := c.post(ctx, "/api/v1/import/prometheus", "text/plain", "", batch); err != nil {
 			if !refused(err) {
+				c.mu.Lock()
+				c.queue = append(taken, c.queue...)
+				c.queued += size
+				c.mu.Unlock()
 				return err
 			}
 			// Sending it again cannot help, and it must not hold up what is
@@ -290,14 +299,6 @@ func (c *Client) Flush(ctx context.Context) error {
 			c.dropped++
 			c.mu.Unlock()
 		}
-		c.mu.Lock()
-		// Write may have dropped from the head meanwhile; never cut more than exists.
-		n = min(n, len(c.queue))
-		for _, b := range c.queue[:n] {
-			c.queued -= len(b)
-		}
-		c.queue = c.queue[n:]
-		c.mu.Unlock()
 	}
 }
 

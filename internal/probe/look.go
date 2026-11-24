@@ -325,7 +325,9 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 // time, and what stood before stands. The lock is held.
 func (c *Checker) sawNothing(ctx context.Context, v Variant, err error, info *media.Info, at time.Time) {
 	l := &c.looks
-	if errors.Is(err, picture.ErrNothing) || errors.Is(err, picture.ErrNoDecoder) || ctx.Err() != nil {
+	// A decoder that failed or ran out of time is not asked again the
+	// next moment either: it would only load what is loaded already.
+	if errors.Is(err, picture.ErrNothing) || errors.Is(err, picture.ErrNoDecoder) || errors.Is(err, picture.ErrDecoder) || ctx.Err() != nil {
 		l.at = at
 	}
 	// A segment nothing can be made of, look after look, is a stream no

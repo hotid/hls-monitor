@@ -372,7 +372,7 @@ func (c *Checker) playlistResponse(cy *cycle, variant, reqURL string, resp *http
 	// address consecutive requests may reach different ones.
 	ep := endpoint(reqURL, resp)
 	cy.source(variant, ep, false)
-	cy.about(variant, "playlist_server", ep.Node(), "playlist_software", ep.Headers["server"], "playlist_redirects", hopLines(ep.Redirects), "playlist_bytes", resp.Size)
+	cy.about(variant, "playlist_server", ep.Node(), "playlist_software", ep.Headers["Server"], "playlist_redirects", hopLines(ep.Redirects), "playlist_bytes", resp.Size)
 	if ep.URL != reqURL {
 		cy.about(variant, "playlist_final_url", ep.URL)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
 	"strings"
 	"time"
 
@@ -26,7 +27,11 @@ type segAgg struct {
 	sourceChanges                             int
 	checked, ok                               int
 	dns, connect, tls, ttfb, total, size, bps float64
-	maxTotal, minBps, maxRatio, bitrate       float64
+	maxTotal, minBps, maxRatio                float64
+	// bits and span are the sizes and the lengths of the segments whose
+	// size is known: their bitrate is one over the other, so that a stub
+	// of a frame or two weighs what it lasts.
+	bits, span float64
 
 	analysed                                     int
 	durDiff, ptsGap, avOffset                    float64
@@ -78,7 +83,12 @@ type segCheck struct {
 	// it came in, once there is one, and url its address.
 	suspected []string
 	got       *httpx.Response
-	url       string
+	// asked is how many bytes of the segment were asked for, when not all.
+	asked int64
+	// sized is set when the size of the whole segment is known: it came
+	// whole, or the server told the size of what it sent a part of.
+	sized bool
+	url   string
 }
 
 // segWork is what is done with a segment besides checking it.
@@ -142,6 +152,7 @@ func (r *segRun) checkOne(ctx context.Context, s plSegment) bool {
 	}
 	resp, err := r.c.get(ctx, rq, timeout)
 	k.got = resp
+	k.asked = rq.RangeLength
 	if resp != nil && r.held > 0 && resp.Size > r.held {
 		bodies.grow(resp.Size - r.held)
 		r.held = resp.Size
@@ -156,6 +167,12 @@ func (r *segRun) checkOne(ctx context.Context, s plSegment) bool {
 		return true
 	}
 	k.transfer(resp, size)
+	if !k.ownBytes(resp) {
+		// What came is not the segment: nothing is said of its contents.
+		r.st.prev = prevSegment{}
+		k.emit()
+		return true
+	}
 	info := k.contents(resp, init)
 	k.decode(ctx, work, resp, info)
 	k.emit()
@@ -202,7 +219,7 @@ func (k *segCheck) emit() {
 			"segment_http_status", rec.Status, "segment_error", rec.Error,
 			"segment_bytes", rec.Size, "segment_fetched_bytes", rec.Fetched)
 		if rec.Source != nil {
-			k.cy.detail(kind, k.v.Key, "segment_server", rec.Source.Node(), "segment_software", rec.Source.Headers["server"])
+			k.cy.detail(kind, k.v.Key, "segment_server", rec.Source.Node(), "segment_software", rec.Source.Headers["Server"])
 		}
 	}
 	k.cy.segment(rec)
@@ -268,12 +285,17 @@ func (k *segCheck) record(resp *httpx.Response) int64 {
 		return 0
 	}
 	size := resp.Size
+	k.sized = !resp.Truncated
 	if k.header {
 		switch {
 		case k.s.seg.Limit > 0:
-			size = k.s.seg.Limit
+			size, k.sized = k.s.seg.Limit, true
 		case resp.TotalSize > 0:
-			size = resp.TotalSize
+			size, k.sized = resp.TotalSize, true
+		case resp.Status == http.StatusPartialContent:
+			// A part with its whole not told ("bytes 0-131599/*"): the
+			// segment ends here only if less came than was asked for.
+			k.sized = resp.Size < k.asked
 		}
 	}
 	rec := &k.rec
@@ -350,7 +372,10 @@ func (k *segCheck) transfer(resp *httpx.Response, size int64) {
 	}
 
 	if s.seg.Duration > 0 {
-		if !k.header {
+		// A stub of a frame or two, left by an encoder restart, is not
+		// slow for taking longer than its 40 ms, and has no bitrate of
+		// its own to speak of.
+		if !k.header && s.seg.Duration >= minBitrateSpan {
 			ratio := resp.Total.Seconds() / s.seg.Duration
 			agg.maxRatio = max(agg.maxRatio, ratio)
 			if ratio > 1 {
@@ -359,10 +384,11 @@ func (k *segCheck) transfer(resp *httpx.Response, size int64) {
 			}
 		}
 		bitrate := float64(size*8) / s.seg.Duration
-		agg.bitrate += bitrate
-		// A stub of a frame or two, left by an encoder restart, has no
-		// bitrate to speak of: its size divided by 40 ms says nothing.
-		if bw := k.v.Bandwidth; bw > 0 && s.seg.Duration >= minBitrateSpan && bitrate > float64(bw)*k.c.th.BitrateFactor {
+		if k.sized {
+			agg.bits += float64(size * 8)
+			agg.span += s.seg.Duration
+		}
+		if bw := k.v.Bandwidth; bw > 0 && k.sized && s.seg.Duration >= minBitrateSpan && bitrate > float64(bw)*k.c.th.BitrateFactor {
 			k.flag(ProbBitrateExceeds, SevWarn, "segment %d is %.0f kbit/s, playlist declares %.0f kbit/s", s.seq, bitrate/1000, float64(bw)/1000)
 			k.cy.detail(ProbBitrateExceeds, k.v.Key, "segment_bitrate", bitrate, "declared_bandwidth", bw, "bitrate_ratio", bitrate/float64(bw), "bitrate_ratio_limit", k.c.th.BitrateFactor)
 		}
@@ -382,7 +408,7 @@ func (k *segCheck) transfer(resp *httpx.Response, size int64) {
 // sound, or the text of subtitles.
 func (k *segCheck) contents(resp *httpx.Response, init *media.Init) *media.Info {
 	s, v := k.s, k.v
-	whole := !k.header || (k.rec.Size > 0 && k.rec.Fetched >= k.rec.Size)
+	whole := k.sized && (!k.header || (k.rec.Size > 0 && k.rec.Fetched >= k.rec.Size))
 	if (k.c.t.Level == LevelContainer || k.header) && !s.encrypted && v.Kind != KindSubtitles {
 		info := media.Analyze(resp.Body, init)
 		k.rec.Media = info
@@ -396,6 +422,29 @@ func (k *segCheck) contents(resp *httpx.Response, init *media.Init) *media.Info 
 		k.subtitles(resp.Body)
 	}
 	return nil
+}
+
+// ownBytes leaves of the answer the bytes of the segment itself, and tells
+// false when they are not in it. A segment that is a range of a larger
+// file comes as the file from its beginning when the server takes no
+// notice of Range.
+func (k *segCheck) ownBytes(resp *httpx.Response) bool {
+	off, limit := k.s.seg.Offset, k.s.seg.Limit
+	if (off == 0 && limit == 0) || resp.Status != http.StatusOK {
+		return true
+	}
+	end := int64(len(resp.Body))
+	if limit > 0 {
+		end = off + limit
+		if k.header {
+			end = off + min(limit, k.asked)
+		}
+	}
+	if off >= int64(len(resp.Body)) || end > int64(len(resp.Body)) {
+		return false
+	}
+	resp.Body = resp.Body[off:end]
+	return true
 }
 
 // subtitles reads a segment of subtitles: the whole of one is read at
@@ -504,6 +553,9 @@ func (c *Checker) initSection(ctx context.Context, cy *cycle, v Variant, plURL s
 	switch {
 	case err != nil:
 		cy.problem(ProbInitUnavailable, SevCrit, v.Key, "initialization section request failed: %v", err)
+		if timedOut(err) {
+			cy.doubt(ProbInitUnavailable, v.Key)
+		}
 		return nil
 	case !resp.OK():
 		cy.problem(ProbInitUnavailable, SevCrit, v.Key, "initialization section returned HTTP %d", resp.Status)
@@ -791,9 +843,13 @@ func (c *Checker) emitSegmentMetrics(cy *cycle, v Variant, a *segAgg) {
 		cy.metric("hls_segment_tls_seconds", k, a.tls/n)
 		cy.metric("hls_segment_ttfb_seconds", k, a.ttfb/n)
 		cy.metric("hls_segment_size_bytes", k, a.size/n)
-		cy.metric("hls_segment_bitrate_bps", k, a.bitrate/n)
+		bitrate := 0.0
+		if a.span > 0 {
+			bitrate = a.bits / a.span
+		}
+		cy.metric("hls_segment_bitrate_bps", k, bitrate)
 		if v.Bandwidth > 0 {
-			cy.metric("hls_segment_bitrate_ratio", k, a.bitrate/n/float64(v.Bandwidth))
+			cy.metric("hls_segment_bitrate_ratio", k, bitrate/float64(v.Bandwidth))
 		}
 		if !a.partial {
 			cy.metric("hls_segment_total_seconds", k, a.total/n)

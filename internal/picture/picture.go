@@ -37,6 +37,26 @@ var ErrNoDecoder = errors.New("ffmpeg is not installed")
 // it was too short, encrypted, or not media at all. It is not a finding.
 var ErrNothing = errors.New("nothing could be decoded")
 
+// ErrDecoder tells that the decoder itself failed: it did not start, was
+// killed, or did not finish in time. It says nothing of the data.
+var ErrDecoder = errors.New("the decoder failed")
+
+// broke tells whether the decoder ended the way a program that is broken
+// ends, not the way it refuses data it cannot decode: not started at all,
+// killed by a signal, or not found by what was to start it.
+func broke(runErr error) bool {
+	if runErr == nil {
+		return false
+	}
+	var exit *exec.ExitError
+	if !errors.As(runErr, &exit) {
+		return true
+	}
+	// 126 and 127 are the shell's for a program it could not run or find;
+	// the decoder's own codes for data it refuses are other ones (1, 183…).
+	return exit.ExitCode() < 0 || exit.ExitCode() == 126 || exit.ExitCode() == 127
+}
+
 const (
 	// thumbWidth is how wide the picture is made; its height follows.
 	thumbWidth = 160
@@ -301,7 +321,10 @@ func (d *Decoder) Sample(ctx context.Context, data []byte) (*Frame, error) {
 	measured(ctx, f)
 	if !f.HasPicture && !f.HasAudio {
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("the decoder did not finish in %s", d.timeout)
+			return nil, fmt.Errorf("%w: it did not finish in %s", ErrDecoder, d.timeout)
+		}
+		if broke(runErr) {
+			return nil, fmt.Errorf("%w: %v", ErrDecoder, runErr)
 		}
 		if msg := strings.TrimSpace(errText); msg != "" {
 			return nil, fmt.Errorf("%w: %s", ErrNothing, firstLine(msg))
@@ -352,7 +375,9 @@ func (d *Decoder) Listen(ctx context.Context, data []byte) (*Frame, error) {
 	if f.hear(sound, errText); !f.HasAudio {
 		switch {
 		case ctx.Err() != nil:
-			return nil, fmt.Errorf("the decoder did not finish in %s", d.timeout)
+			return nil, fmt.Errorf("%w: it did not finish in %s", ErrDecoder, d.timeout)
+		case broke(runErr):
+			return nil, fmt.Errorf("%w: %v", ErrDecoder, runErr)
 		case f.AudioError != "":
 			return nil, fmt.Errorf("%w: %s", ErrNothing, f.AudioError)
 		case runErr != nil:

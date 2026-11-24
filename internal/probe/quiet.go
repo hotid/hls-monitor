@@ -42,7 +42,7 @@ func (c *Checker) noteSizes(v Variant, st *variantState, info *media.Info, at ti
 		bits = float64(video.PlainBytes) * 8 / float64(video.PlainFrames) / float64(video.Width*video.Height)
 		still = bits < stillBits
 	}
-	if audio := info.Audio(); audio != nil && audio.Codec == "aac" && audio.Frames >= stillFrames {
+	if audio := info.Audio(); audio != nil && codecFamily(audio.Codec) == "aac" && audio.Frames >= stillFrames {
 		bytes = float64(audio.Bytes) / float64(audio.Frames)
 		mute = bytes < muteBytes
 	}

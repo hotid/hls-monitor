@@ -24,6 +24,9 @@ type variantState struct {
 	// lastServer is the server the previous playlist came from.
 	lastServer string
 	recent     map[uint64]string
+	// dated is the program date-time the segments of the last playlist
+	// had, told or counted from the one before.
+	dated map[uint64]time.Time
 
 	signature      string
 	lastChange     time.Time
@@ -236,6 +239,7 @@ func playlistSegments(p *m3u8.MediaPlaylist) []plSegment {
 // itself is reported as such.
 func (st *variantState) anotherServer() {
 	st.recent = nil
+	st.dated = nil
 	st.prev, st.anchor = prevSegment{}, anchor{}
 	st.epoch++
 	st.bufInit = false
@@ -294,13 +298,36 @@ func (c *Checker) sequenceGoesOn(cy *cycle, st *variantState, pl playlistRead, n
 		cy.detail(ProbSeqJump, v.Key, "previous_last_sequence", st.lastSeq, "missed_segments", missed, "previous_playlist_keeps", pl.promised)
 		cy.snapshot(v.Key, pl.url, pl.resp.Body)
 	}
+	// The dates of a playlist that dates its first segment alone are
+	// compared within it by nothing: a clock that jumped shows only in the
+	// same segment being dated differently than a moment before.
+	moved, movedAt := 0.0, uint64(0)
 	for _, s := range segs {
-		if old, ok := st.recent[s.seq]; ok && old != s.seg.URI {
+		// The same segment under another token is the same segment.
+		if old, ok := st.recent[s.seq]; ok && withoutQuery(old) != withoutQuery(s.seg.URI) {
 			cy.problem(ProbSegmentChanged, SevWarn, v.Key, "segment %d changed URI from %q to %q", s.seq, old, s.seg.URI)
 			cy.detail(ProbSegmentChanged, v.Key, "segment_sequence", s.seq, "uri_before", old, "uri_now", s.seg.URI)
 			cy.snapshot(v.Key, pl.url, pl.resp.Body)
 		}
+		if old, ok := st.dated[s.seq]; ok && !s.at.IsZero() {
+			if d := s.at.Sub(old).Seconds(); math.Abs(d) > math.Abs(moved) {
+				moved, movedAt = d, s.seq
+			}
+		}
 	}
+	if math.Abs(moved) > c.th.PDTDrift {
+		cy.problem(ProbPDTDiscontinuity, SevWarn, v.Key, "program date-time of segment %d moved by %+.3fs between two readings of the playlist", movedAt, moved)
+		cy.snapshot(v.Key, pl.url, pl.resp.Body)
+	}
+}
+
+// withoutQuery is the address of a segment without what follows "?": a
+// token that is given anew with every playlist.
+func withoutQuery(uri string) string {
+	if i := strings.IndexByte(uri, '?'); i >= 0 {
+		return uri[:i]
+	}
+	return uri
 }
 
 // lostCount forgets the count of segments followed so far: what comes
@@ -309,6 +336,7 @@ func (st *variantState) lostCount() {
 	st.haveSeq = false
 	st.prev, st.anchor = prevSegment{}, anchor{}
 	st.epoch++
+	st.dated = nil
 }
 
 // selectSegments picks the segments to download this cycle: of a finished
@@ -351,8 +379,12 @@ func (st *variantState) remember(closed bool, segs []plSegment, td float64) {
 	st.lastSeq = segs[len(segs)-1].seq
 	st.targetDuration = td
 	st.recent = make(map[uint64]string, len(segs))
+	st.dated = make(map[uint64]time.Time, len(segs))
 	for _, s := range segs {
 		st.recent[s.seq] = s.seg.URI
+		if !s.at.IsZero() {
+			st.dated[s.seq] = s.at
+		}
 	}
 }
 
@@ -495,6 +527,9 @@ func (c *Checker) checkKeys(ctx context.Context, cy *cycle, v Variant, plURL str
 			switch {
 			case err != nil:
 				cy.problem(ProbKeyUnavailable, SevCrit, v.Key, "encryption key request failed: %v", err)
+				if timedOut(err) {
+					cy.doubt(ProbKeyUnavailable, v.Key)
+				}
 			case !resp.OK():
 				cy.problem(ProbKeyUnavailable, SevCrit, v.Key, "encryption key returned HTTP %d", resp.Status)
 			default:
