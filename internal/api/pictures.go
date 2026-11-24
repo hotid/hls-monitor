@@ -16,7 +16,6 @@ import (
 //	@Description	One per vantage point: when the stream was looked at, how bright the picture was and how loud the sound. The picture itself is at /api/v1/streams/{id}/picture. Empty when the picture is not checked (see HLSMON_PICTURE_CHECK).
 //	@Tags		streams
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Produce	json
 //	@Param		id	path		int	true	"Stream ID"
 //	@Success	200	{array}		store.StreamPicture
@@ -41,7 +40,6 @@ func (s *Server) streamPictures(c *gin.Context) {
 //	@Summary	The picture of the latest look at a stream
 //	@Tags		streams
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Produce	jpeg
 //	@Param		id		path	int	true	"Stream ID"
 //	@Param		agent	query	int	false	"Vantage point; the server's own by default"
@@ -70,7 +68,6 @@ func (s *Server) streamPicture(c *gin.Context) {
 //	@Description	Kept for incidents found by looking at the picture: a black screen, a picture that stopped.
 //	@Tags		incidents
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Produce	jpeg
 //	@Param		id	path	int	true	"Incident ID"
 //	@Success	200

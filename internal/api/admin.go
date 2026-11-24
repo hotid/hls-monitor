@@ -181,6 +181,11 @@ func (s *Server) deleteAgent(c *gin.Context) {
 	if s.storeError(c, s.st.DeleteAgent(c.Request.Context(), id)) {
 		return
 	}
+	if s.captures != nil {
+		if n := s.captures.Forget(0, id); n > 0 {
+			s.log.Info("the captures of a deleted agent were removed", "agent", id, "captures", n)
+		}
+	}
 	s.purgeSeriesSoon()
 	c.Status(http.StatusNoContent)
 }

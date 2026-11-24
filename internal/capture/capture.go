@@ -274,6 +274,22 @@ func (s *Store) Delete(id string) bool {
 	return true
 }
 
+// Forget removes the captures of a stream that is no more, or those an
+// agent that is no more made: zero for the one not meant. One that is
+// still being made is left to its time.
+func (s *Store) Forget(streamID, agentID int64) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	for _, c := range s.captures {
+		if c.Done && ((streamID != 0 && c.StreamID == streamID) || (agentID != 0 && c.AgentID == agentID)) {
+			s.drop(c)
+			n++
+		}
+	}
+	return n
+}
+
 // drop removes a capture; the lock is held.
 func (s *Store) drop(c *Capture) {
 	delete(s.captures, c.ID)

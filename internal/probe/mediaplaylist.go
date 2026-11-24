@@ -148,7 +148,6 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 	if n == 0 {
 		cy.problem(ProbPlaylistEmpty, SevCrit, v.Key, "media playlist has no segments")
 		cy.snapshot(v.Key, plURL, resp.Body)
-		st.seen = true
 		return edge{}
 	}
 	first, last := segs[0].seq, segs[n-1].seq

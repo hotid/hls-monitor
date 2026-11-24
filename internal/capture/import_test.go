@@ -75,6 +75,18 @@ func TestImportFromAnAgent(t *testing.T) {
 		t.Error("a capture without files is gone after a restart")
 	}
 
+	// The captures of a stream that is deleted go with it, and those an
+	// agent made with the agent.
+	if n := s.Forget(8, 0); n != 1 || len(s.List(8)) != 0 || len(s.List(7)) != 1 {
+		t.Errorf("forgot %d captures of stream 8; left %d and %d", n, len(s.List(8)), len(s.List(7)))
+	}
+	if n := s.Forget(0, 2); n != 1 || len(s.List(0)) != 0 {
+		t.Errorf("forgot %d captures of agent 2; left %d", n, len(s.List(0)))
+	}
+	if _, err := os.Stat(filepath.Join(dir, id)); err == nil {
+		t.Error("the files of a forgotten capture are still there")
+	}
+
 	for name, files := range map[string]map[string][]byte{
 		"a way out":           {"20260101-1/capture.json": desc, "20260101-1/../../x": []byte("x")},
 		"two captures":        {"20260101-1/capture.json": desc, "other/x": []byte("x")},

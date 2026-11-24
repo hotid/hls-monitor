@@ -29,7 +29,6 @@ type capturesResponse struct {
 //	@Description	A capture is the segment a check suspected, a few before it and a few after, with the playlists they came from, what ffprobe says of them and a playlist that plays them with no stream to ask. It is made at the first suspicion and kept only when an incident came of it (state kept), somebody asked for it, or a decoder found fault with its segment (state found). Only the server's own checks capture, and only when HLSMON_CAPTURE is set.
 //	@Tags		captures
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Produce	json
 //	@Param		stream	query		int	false	"Only the captures of this stream"
 //	@Success	200		{object}	capturesResponse
@@ -52,7 +51,6 @@ func (s *Server) listCaptures(c *gin.Context) {
 //	@Description	Everything of the capture in one zip: capture.json describes the files, index.m3u8 plays the whole segments. Administrators only: playlists and addresses are in it as they were.
 //	@Tags		captures
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Produce	application/zip
 //	@Param		id	path	string	true	"Capture ID"
 //	@Success	200
@@ -85,7 +83,6 @@ func (s *Server) hasCapture(id string) bool {
 //	@Summary	Delete a capture
 //	@Tags		captures
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Param		id	path	string	true	"Capture ID"
 //	@Success	204
 //	@Failure	404	{object}	apiError
@@ -105,7 +102,6 @@ func (s *Server) deleteCapture(c *gin.Context) {
 //	@Description	The stream is checked at once and the segments of its picture are saved whatever the check finds: for what an operator sees or hears before the checks do. The capture appears in the list a moment later. At most one a minute for a stream.
 //	@Tags		captures
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Param		id	path	int	true	"Stream ID"
 //	@Success	202
 //	@Failure	404	{object}	apiError

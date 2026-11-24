@@ -26,6 +26,19 @@ jobs:
       - run: make web
       - run: make vet
       - run: make test
+      - run: go test -race ./...
+
+  # Known vulnerabilities in what the code calls. A job of its own: a
+  # finding in a dependency is to be seen, not to hold a release back.
+  vulnerabilities:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: mkdir -p internal/webui/dist && touch internal/webui/dist/.gitkeep
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   # A tag like v1.2.3 publishes ghcr.io/<owner>/hls-monitor-server and
   # hls-monitor-agent as 1.2.3 and latest, for x86-64 and 64-bit ARM.

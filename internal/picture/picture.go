@@ -397,8 +397,12 @@ func (d *Decoder) decode(ctx context.Context, data []byte, picture, audio, keyOn
 	loud := audio && box != nil && !d.plain.Load()
 	shot, sound, errText, runErr, meta := d.run(ctx, data, picture, audio, keyOnly, loud)
 	if loud && len(sound) == 0 && strings.Contains(errText, "ilter") {
-		// A decoder built without the filter: the sound is still wanted.
-		d.plain.Store(true)
+		// The sound is still wanted. A decoder built without the filter
+		// is not asked for it again; one that could not filter this
+		// sound is, the next time.
+		if strings.Contains(errText, "No such filter") || strings.Contains(errText, "Unknown filter") {
+			d.plain.Store(true)
+		}
 		shot, sound, errText, runErr, _ = d.run(ctx, data, picture, audio, keyOnly, false)
 		return shot, sound, errText, runErr
 	}

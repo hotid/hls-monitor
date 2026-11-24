@@ -67,7 +67,6 @@ func slatesRevision(slates []probe.Slate) string {
 //	@Description	A slate is what is put on air in place of a channel. A stream showing a picture marked as one gets the incident picture_slate at the first look. The picture of a frame is at /api/v1/slates/frames/{id}.
 //	@Tags		slates
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Produce	json
 //	@Success	200	{array}	store.Slate
 //	@Router		/api/v1/slates [get]
@@ -101,7 +100,6 @@ type slateRequest struct {
 //	@Description	A picture is known by what it looks like, to a decoder. A clip going round (an incident picture_loop or audio_loop) is known by its coded frames as well: a stream playing it again gets picture_slate at the first segment, with no decoding — or, marked with own, nothing at all.
 //	@Tags		slates
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Accept		json
 //	@Produce	json
 //	@Param		request	body		slateRequest	true	"Which picture, and the name of the slate"
@@ -154,7 +152,6 @@ func (s *Server) markSlate(c *gin.Context) {
 //	@Summary	Forget a slate
 //	@Tags		slates
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Param		id	path	int	true	"Slate ID"
 //	@Success	204
 //	@Failure	404	{object}	apiError
@@ -178,7 +175,6 @@ func (s *Server) deleteSlate(c *gin.Context) {
 //	@Description	The slate goes with its last picture.
 //	@Tags		slates
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Param		id	path	int	true	"Frame ID"
 //	@Success	204
 //	@Failure	404	{object}	apiError
@@ -201,7 +197,6 @@ func (s *Server) deleteSlateFrame(c *gin.Context) {
 //	@Summary	The picture of one frame of a slate
 //	@Tags		slates
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Produce	jpeg
 //	@Param		id	path	int	true	"Frame ID"
 //	@Success	200

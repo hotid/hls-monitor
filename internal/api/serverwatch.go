@@ -159,7 +159,6 @@ func (s *Server) WatchServers(ctx context.Context) {
 //	@Description	What is wrong with a server rather than with one stream: the same problem on several of its streams at once (the kind is that of the streams' problem), or the way to it losing packets (network_loss). A problem that comes back within ten minutes continues the same incident.
 //	@Tags		incidents
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Produce	json
 //	@Param		open	query	bool	false	"true: only open"
 //	@Param		limit	query	int		false	"Rows to return (default 200, max 2000)"

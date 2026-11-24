@@ -1,6 +1,12 @@
 package media
 
-import "testing"
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // clockPacket makes one packet of pid; pcr and ts are in 90 kHz ticks, -1 for none.
 func clockPacket(pid uint16, start bool, pcr, ts int64, payload []byte) []byte {
@@ -57,5 +63,24 @@ func TestProgramClock(t *testing.T) {
 	c = scanTSClock(data)
 	if !near(c.MaxPCRGap, 0.2) || !near(c.MinLead, -0.01) || c.PCRJumps != 1 {
 		t.Errorf("gap %.3f, lead %.3f, %d jumps; want 0.200, -0.010, 1", c.MaxPCRGap, c.MinLead, c.PCRJumps)
+	}
+}
+
+// DVB carries AC-3 as private data and names it by a descriptor: it is
+// sound all the same.
+func TestSoundCarriedAsPrivateData(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "clip.ts")
+	msg, err := exec.Command("ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x90:rate=25", "-f", "lavfi", "-i", "sine=frequency=440",
+		"-t", "2", "-c:v", "libx264", "-g", "25", "-pix_fmt", "yuv420p", "-c:a", "ac3", "-mpegts_flags", "system_b", "-f", "mpegts", out).CombinedOutput()
+	if err != nil {
+		t.Skipf("ffmpeg cannot make the clip: %s", strings.TrimSpace(string(msg)))
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := Analyze(data, nil)
+	if a := info.Audio(); a == nil || a.Codec != "ac3" {
+		t.Fatalf("tracks = %+v", info.Tracks)
 	}
 }

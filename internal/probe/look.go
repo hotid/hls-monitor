@@ -302,6 +302,10 @@ func (c *Checker) look(ctx context.Context, cy *cycle, v Variant, data, init []b
 		// decoder alone may have been given too little to find it in.
 		l.unheard.note(l.listen && (info == nil || audio == nil), at)
 		l.listen = true
+		// What was said of sound that is no longer there does not stand.
+		if l.unheard.n >= 2 {
+			l.soundProblems = nil
+		}
 	} else {
 		l.unheard = run{}
 		suspect = c.hear(cy, v, f, audio, at) || suspect

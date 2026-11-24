@@ -414,6 +414,12 @@ func (s *Server) deleteStream(c *gin.Context) {
 	if s.storeError(c, s.st.DeleteStream(ctx, id)) {
 		return
 	}
+	// What was captured of it goes with it.
+	if s.captures != nil {
+		if n := s.captures.Forget(id, 0); n > 0 {
+			s.log.Info("the captures of a deleted stream were removed", "stream", id, "captures", n)
+		}
+	}
 	s.configChanged(ctx)
 	s.purgeSeriesSoon()
 	c.Status(http.StatusNoContent)

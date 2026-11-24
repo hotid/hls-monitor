@@ -190,6 +190,9 @@ func demuxTS(data []byte, info *Info) {
 				t := &tsTrack{streamType: es.StreamType}
 				t.ID = uint32(es.ElementaryPID)
 				t.Kind, t.Codec = tsStreamKind(es.StreamType)
+				if t.Kind == KindOther {
+					t.Kind, t.Codec = tsPrivateSound(es, t.Codec)
+				}
 				tracks[es.ElementaryPID] = t
 				order = append(order, es.ElementaryPID)
 			}
@@ -238,6 +241,37 @@ func tsStreamKind(st astits.StreamType) (kind, codec string) {
 		return KindAudio, "dts"
 	}
 	return KindOther, fmt.Sprintf("0x%02x", uint8(st))
+}
+
+// tsPrivateSound names the sound carried as private data: what DVB does
+// with AC-3, E-AC-3 and DTS, telling which by a descriptor, the stream
+// type saying nothing. Teletext and subtitles are carried the same way and
+// stay what they were.
+func tsPrivateSound(es *astits.PMTElementaryStream, codec string) (string, string) {
+	if es.StreamType != astits.StreamTypePrivateData && uint8(es.StreamType) != 0x83 && uint8(es.StreamType) != 0x84 {
+		return KindOther, codec
+	}
+	for _, d := range es.ElementaryStreamDescriptors {
+		switch {
+		case d == nil:
+		case d.Tag == astits.DescriptorTagAC3:
+			return KindAudio, "ac3"
+		case d.Tag == astits.DescriptorTagEnhancedAC3:
+			return KindAudio, "eac3"
+		case d.Tag == 0x7b:
+			return KindAudio, "dts"
+		case d.Tag == astits.DescriptorTagRegistration && d.Registration != nil:
+			switch d.Registration.FormatIdentifier {
+			case 0x41432d33: // "AC-3"
+				return KindAudio, "ac3"
+			case 0x45414333: // "EAC3"
+				return KindAudio, "eac3"
+			case 0x44545331, 0x44545332, 0x44545333: // "DTS1".."DTS3"
+				return KindAudio, "dts"
+			}
+		}
+	}
+	return KindOther, codec
 }
 
 // maxKeyHashes bounds Track.KeyHashes, maxSoundHashes Track.SoundHashes.

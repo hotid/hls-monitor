@@ -559,9 +559,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "For the server's own checks and for every agent: the streams it checks by their state as it sees them, the open incidents found from it, what its checks download, how many segments it checks a minute and how many of them failed, how long a check takes and how late checks start. Rates and counts are over the last five minutes. Keyed by agent ID.",
@@ -876,9 +873,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "A capture is the segment a check suspected, a few before it and a few after, with the playlists they came from, what ffprobe says of them and a playlist that plays them with no stream to ask. It is made at the first suspicion and kept only when an incident came of it (state kept), somebody asked for it, or a decoder found fault with its segment (state found). Only the server's own checks capture, and only when HLSMON_CAPTURE is set.",
@@ -912,9 +906,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "tags": [
@@ -948,9 +939,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "Everything of the capture in one zip: capture.json describes the files, index.m3u8 plays the whole segments. Administrators only: playlists and addresses are in it as they were.",
@@ -1060,9 +1048,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "Kept for incidents found by looking at the picture: a black screen, a picture that stopped.",
@@ -1100,9 +1085,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "Which vantage points saw the same problem, and which other streams from the same server had it at the same time.",
@@ -1162,9 +1144,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "The player's page asks this while a stream is watched: how long the answer takes is the round trip time between the browser and the server, whatever stands in between.",
@@ -1222,9 +1201,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "What is wrong with a server rather than with one stream: the same problem on several of its streams at once (the kind is that of the streams' problem), or the way to it losing packets (network_loss). A problem that comes back within ten minutes continues the same incident.",
@@ -1330,9 +1306,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "A slate is what is put on air in place of a channel. A stream showing a picture marked as one gets the incident picture_slate at the first look. The picture of a frame is at /api/v1/slates/frames/{id}.",
@@ -1359,9 +1332,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "A picture is known by what it looks like, to a decoder. A clip going round (an incident picture_loop or audio_loop) is known by its coded frames as well: a stream playing it again gets picture_slate at the first segment, with no decoding — or, marked with own, nothing at all.",
@@ -1419,9 +1389,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "produces": [
@@ -1456,9 +1423,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "The slate goes with its last picture.",
@@ -1493,9 +1457,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "tags": [
@@ -1785,9 +1746,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "The stream is checked at once and the segments of its picture are saved whatever the check finds: for what an operator sees or hears before the checks do. The capture appears in the list a moment later. At most one a minute for a stream.",
@@ -2003,9 +1961,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "produces": [
@@ -2048,9 +2003,6 @@ const docTemplate = `{
                 "security": [
                     {
                         "SessionCookie": []
-                    },
-                    {
-                        "BearerToken": []
                     }
                 ],
                 "description": "One per vantage point: when the stream was looked at, how bright the picture was and how loud the sound. The picture itself is at /api/v1/streams/{id}/picture. Empty when the picture is not checked (see HLSMON_PICTURE_CHECK).",
@@ -5693,6 +5645,20 @@ const docTemplate = `{
                     "type": "string"
                 }
             }
+        }
+    },
+    "securityDefinitions": {
+        "BearerToken": {
+            "description": "\"Bearer \u003ctoken\u003e\": an API token from the Settings page for /api/ext/v1 and /metrics, the key of an agent for /api/agent/v1.",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
+        },
+        "SessionCookie": {
+            "description": "The session of the web interface: the hlsmon_session cookie that signing in sets. The browser sends it by itself.",
+            "type": "apiKey",
+            "name": "Cookie",
+            "in": "header"
         }
     }
 }`

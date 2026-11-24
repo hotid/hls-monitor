@@ -64,7 +64,6 @@ var agentQueries = []struct {
 //	@Description	For the server's own checks and for every agent: the streams it checks by their state as it sees them, the open incidents found from it, what its checks download, how many segments it checks a minute and how many of them failed, how long a check takes and how late checks start. Rates and counts are over the last five minutes. Keyed by agent ID.
 //	@Tags		agents
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Produce	json
 //	@Success	200	{object}	agentStatsResponse
 //	@Router		/api/v1/agents/stats [get]

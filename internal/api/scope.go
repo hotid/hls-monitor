@@ -70,7 +70,6 @@ func incidentServer(details json.RawMessage) string {
 //	@Description	Which vantage points saw the same problem, and which other streams from the same server had it at the same time.
 //	@Tags		incidents
 //	@Security	SessionCookie
-//	@Security	BearerToken
 //	@Produce	json
 //	@Param		id	path		int	true	"Incident ID"
 //	@Success	200	{object}	incidentScope

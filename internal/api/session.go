@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -40,6 +41,12 @@ func (s *Server) requireSession(c *gin.Context) {
 		return
 	}
 	u, err := s.st.SessionUser(c.Request.Context(), auth.HashToken(token), s.now())
+	// A database that did not answer is not a session that is not there:
+	// the cookie stays, and nobody is sent to sign in again for it.
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.storeError(c, err)
+		return
+	}
 	if err != nil {
 		s.clearCookie(c)
 		fail(c, http.StatusUnauthorized, "unauthorized", "sign in required")
@@ -104,6 +111,8 @@ type loginLimiter struct {
 const (
 	loginWindow      = 5 * time.Minute
 	loginMaxFailures = 10
+	// loginMaxKeys is how many addresses and names are remembered at once.
+	loginMaxKeys = 10000
 )
 
 func newLoginLimiter() *loginLimiter { return &loginLimiter{failures: map[string][]time.Time{}} }
@@ -133,8 +142,18 @@ func (l *loginLimiter) blocked(now time.Time, keys ...string) bool {
 func (l *loginLimiter) fail(now time.Time, keys ...string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if len(l.failures) > 10000 { // bound memory under a flood of distinct keys
-		l.failures = map[string][]time.Time{}
+	// Memory is bounded under a flood of distinct keys, and not by
+	// forgetting everybody: that would let whoever is held back start
+	// over by sending rubbish. What is past its time goes, then those
+	// with the fewest failures.
+	if len(l.failures) > loginMaxKeys {
+		for most := 1; len(l.failures) > loginMaxKeys/2 && most < loginMaxFailures; most++ {
+			for k, at := range l.failures {
+				if len(at) <= most || now.Sub(at[len(at)-1]) >= loginWindow {
+					delete(l.failures, k)
+				}
+			}
+		}
 	}
 	for _, k := range keys {
 		l.failures[k] = append(l.failures[k], now)
@@ -182,6 +201,10 @@ func (s *Server) login(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	u, err := s.st.GetUserByName(ctx, req.Username)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.storeError(c, err)
+		return
+	}
 	ok := false
 	if err == nil {
 		ok = auth.VerifyPassword(u.PasswordHash, req.Password) && !u.Disabled
@@ -215,7 +238,12 @@ func (s *Server) login(c *gin.Context) {
 //	@Router		/api/v1/auth/logout [post]
 func (s *Server) logout(c *gin.Context) {
 	if token, err := c.Cookie(sessionCookie); err == nil && token != "" {
-		_ = s.st.DeleteSession(c.Request.Context(), auth.HashToken(token))
+		// A session that could not be ended is not said to be ended: the
+		// cookie, kept by somebody else, would go on working.
+		if err := s.st.DeleteSession(c.Request.Context(), auth.HashToken(token)); err != nil && !errors.Is(err, store.ErrNotFound) {
+			s.storeError(c, err)
+			return
+		}
 	}
 	s.clearCookie(c)
 	c.Status(http.StatusNoContent)
