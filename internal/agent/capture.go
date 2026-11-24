@@ -78,8 +78,9 @@ func (a *Agent) captureLoop(ctx context.Context) {
 				continue
 			}
 			switch status, err := a.sendCapture(ctx, c.ID); {
-			case err != nil || status >= 500 || status == 0 || status == http.StatusTooManyRequests:
-				// Out of contact, or the server cannot take it now.
+			case err != nil || status >= 500 || status == 0 || status == http.StatusTooManyRequests || status == http.StatusUnauthorized:
+				// Out of contact, or the server cannot take it now, or
+				// does not know the agent now: the key may be given back.
 				a.log.Debug("a capture is not sent yet", "capture", c.ID, "status", status, "error", err)
 			case status == http.StatusOK:
 				a.log.Info("a capture was sent", "capture", c.ID, "stream", c.StreamID)
@@ -127,7 +128,10 @@ func (a *Agent) sendCapture(ctx context.Context, id string) (int, error) {
 	req.Header.Set("Content-Type", "application/zip")
 	req.Header.Set(agentproto.HeaderVersion, a.opt.Version)
 	req.Header.Set(agentproto.HeaderTime, strconv.FormatInt(time.Now().UnixMilli(), 10))
-	resp, err := a.hc.Do(req)
+	// Not the client of the short requests: an archive of a hundred
+	// megabytes over a slow link takes longer than those may, and sctx
+	// bounds it.
+	resp, err := (&http.Client{Transport: a.hc.Transport}).Do(req)
 	if err != nil {
 		return 0, err
 	}

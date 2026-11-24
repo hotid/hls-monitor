@@ -180,6 +180,10 @@ func (s *Server) agentCapture(c *gin.Context) {
 		fail(c, http.StatusConflict, "captures_off", "captures are not made: HLSMON_CAPTURE is not set")
 		return
 	}
+	if !a.Enabled {
+		fail(c, http.StatusForbidden, "forbidden", "the agent is disabled")
+		return
+	}
 	f, err := os.CreateTemp("", "hls-monitor-agent-capture-*.zip")
 	if err != nil {
 		fail(c, http.StatusInternalServerError, "internal", "cannot take the capture now")
@@ -196,8 +200,15 @@ func (s *Server) agentCapture(c *gin.Context) {
 		fail(c, http.StatusRequestEntityTooLarge, "too_large", "the archive is larger than a capture may be")
 		return
 	}
-	id, err := s.captures.Import(a.ID, f, n)
+	// An agent sends captures of the streams it checks, and of no other:
+	// a capture is evidence, and nobody else's word is taken for it.
+	id, err := s.captures.Import(a.ID, f, n, func(stream int64) bool {
+		ok, err := s.st.StreamAssigned(c.Request.Context(), stream, a.ID)
+		return err == nil && ok
+	})
 	switch {
+	case errors.Is(err, capture.ErrNotTheirs):
+		fail(c, http.StatusForbidden, "forbidden", "the agent does not check the stream of the capture")
 	case errors.Is(err, capture.ErrNoRoom):
 		fail(c, http.StatusInsufficientStorage, "no_room", "there is no room for the capture")
 	case err != nil:

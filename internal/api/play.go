@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -374,11 +375,28 @@ func (s *Server) play(c *gin.Context) {
 	if res.AcceptRanges != "" {
 		c.Header("Accept-Ranges", res.AcceptRanges)
 	}
-	ct := res.ContentType
-	if ct == "" {
-		ct = "application/octet-stream"
+	// What the origin sends is shown under the monitor's own address: a
+	// page or a picture with a script in it would run as the monitor's.
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Content-Security-Policy", "default-src 'none'; sandbox")
+	c.Data(res.Status, mediaType(res.ContentType), body)
+}
+
+// mediaType is the content type a player is given for what the origin
+// sent: the origin's own when it is of media, and plain bytes otherwise,
+// which no browser shows or runs.
+func mediaType(ct string) string {
+	t, _, err := mime.ParseMediaType(ct)
+	if err != nil {
+		return "application/octet-stream"
 	}
-	c.Data(res.Status, ct, body)
+	switch {
+	case strings.HasPrefix(t, "video/"), strings.HasPrefix(t, "audio/"):
+		return t
+	case t == "text/vtt", t == "application/mp4", t == "application/vnd.apple.mpegurl", t == "application/x-mpegurl":
+		return t
+	}
+	return "application/octet-stream"
 }
 
 // fetchInfo is how a fetch for a viewer went, hop by hop. The player's

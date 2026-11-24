@@ -201,6 +201,9 @@ func TestPublicAddresses(t *testing.T) {
 		"127.0.0.1": false, "10.1.2.3": false, "172.16.0.1": false, "192.168.1.1": false,
 		"169.254.169.254": false, "100.64.0.1": false, "198.18.0.1": false, "0.0.0.0": false,
 		"::1": false, "fe80::1": false, "fd00::1": false, "::ffff:10.0.0.1": false, "224.0.0.1": false,
+		// Addresses of IPv6 that carry one of IPv4 are judged by it.
+		"64:ff9b::a9fe:a9fe": false, "64:ff9b::808:808": true, "2002:7f00:1::": false, "2002:808:808::1": true,
+		"fec0::1": false, "2001:0:4136:e378:8000:63bf:3fff:fdd2": false,
 	} {
 		if got := Public(netip.MustParseAddr(addr)); got != want {
 			t.Errorf("Public(%s) = %v, want %v", addr, got, want)
@@ -224,7 +227,12 @@ func TestReachDecisions(t *testing.T) {
 		{"a stream that is inside may stay there and leave", ReachFirstAny, []string{in, in, pub, in}, []bool{true, true, true, true}},
 	} {
 		st := &reachState{mode: tc.mode, cancel: func(error) {}}
+		via := &reachState{mode: tc.mode, cancel: func(error) {}}
+		via.viaProxy.Store(true)
 		for i, addr := range tc.conns {
+			if !via.allowed(addr) {
+				t.Errorf("%s: a connection to the proxy at %s was refused", tc.name, addr)
+			}
 			got := st.allowed(addr)
 			if got != tc.want[i] {
 				t.Errorf("%s: connection %d to %s allowed = %v, want %v", tc.name, i+1, addr, got, tc.want[i])
@@ -243,6 +251,9 @@ func TestReachIsEnforced(t *testing.T) {
 		_, _ = w.Write([]byte("secret"))
 	}))
 	defer srv.Close()
+	// A proxy in the environment takes the rule off the requests that go
+	// through it, and off no other: one to the loopback never does.
+	t.Setenv("HTTP_PROXY", "http://192.0.2.1:3128")
 	c := New(Options{})
 	ctx := context.Background()
 

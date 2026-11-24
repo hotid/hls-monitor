@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -36,11 +35,8 @@ type Options struct {
 type Client struct {
 	hc *http.Client
 	// fresh keeps no connections: see Request.Fresh.
-	fresh *http.Client
-	ua    string
-	// proxied is set when requests go through a proxy: the connection is
-	// then made to the proxy, and Reach cannot be applied.
-	proxied  bool
+	fresh    *http.Client
+	ua       string
 	counters connCounters
 }
 
@@ -60,12 +56,8 @@ func New(o Options) *Client {
 		o.DialTimeout = 10 * time.Second
 	}
 	dialer := &net.Dialer{Timeout: o.DialTimeout, KeepAlive: 30 * time.Second, ControlContext: controlDial}
-	proxied := false
-	for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"} {
-		proxied = proxied || os.Getenv(name) != ""
-	}
 	tr := &http.Transport{
-		Proxy:             http.ProxyFromEnvironment,
+		Proxy:             proxyOf,
 		DialContext:       dialer.DialContext,
 		ForceAttemptHTTP2: true,
 		// One client serves every stream, and checks come in bursts: dozens
@@ -117,7 +109,7 @@ func New(o Options) *Client {
 		}
 		return nil
 	}
-	return &Client{hc: hc, fresh: &http.Client{Transport: once, CheckRedirect: hc.CheckRedirect}, ua: o.UserAgent, proxied: proxied}
+	return &Client{hc: hc, fresh: &http.Client{Transport: once, CheckRedirect: hc.CheckRedirect}, ua: o.UserAgent}
 }
 
 // CloseIdle closes idle connections of the client's pool.
@@ -279,9 +271,6 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 	rt := &redirectTrace{}
 	ctx = context.WithValue(ctx, redirectKey{}, rt)
 	reach := &reachState{mode: rq.Reach}
-	if c.proxied {
-		reach.mode = ReachAny
-	}
 	ctx, reach.cancel = context.WithCancelCause(ctx)
 	defer reach.cancel(nil)
 	ctx = context.WithValue(ctx, reachKey{}, reach)
@@ -459,4 +448,16 @@ func SameSite(a, b string) bool {
 	da, errA := publicsuffix.EffectiveTLDPlusOne(a)
 	db, errB := publicsuffix.EffectiveTLDPlusOne(b)
 	return errA == nil && errB == nil && da == db
+}
+
+// proxyOf is the proxy of the environment, if a request goes through one.
+// The connection is then made to the proxy, which connects where it
+// pleases, and Reach cannot be applied — to that request only: one that
+// the environment sends directly is held to it as any other.
+func proxyOf(r *http.Request) (*url.URL, error) {
+	u, err := http.ProxyFromEnvironment(r)
+	if st, ok := r.Context().Value(reachKey{}).(*reachState); ok {
+		st.viaProxy.Store(u != nil)
+	}
+	return u, err
 }

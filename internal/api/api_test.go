@@ -884,6 +884,19 @@ func TestWatchThroughTheServer(t *testing.T) {
 	if code != http.StatusOK || len(seg) < 188 || seg[0] != 0x47 {
 		t.Fatalf("segment: %d, %d bytes", code, len(seg))
 	}
+	// What the origin sends is never shown as a page of the monitor's.
+	if hdr.Get("X-Content-Type-Options") != "nosniff" || !strings.Contains(hdr.Get("Content-Security-Policy"), "sandbox") {
+		t.Errorf("a segment is served with %v", hdr)
+	}
+	for sent, want := range map[string]string{
+		"video/mp2t": "video/mp2t", "audio/aac": "audio/aac", "text/vtt; charset=utf-8": "text/vtt", "application/mp4": "application/mp4",
+		"text/html": "application/octet-stream", "image/svg+xml": "application/octet-stream", "text/html; charset=utf-8": "application/octet-stream",
+		"application/javascript": "application/octet-stream", "": "application/octet-stream",
+	} {
+		if got := mediaType(sent); got != want {
+			t.Errorf("mediaType(%q) = %q, want %q", sent, got, want)
+		}
+	}
 	if up := hdr.Get("X-Upstream"); !strings.HasPrefix(up, "127.0.0.1:") {
 		t.Errorf("X-Upstream = %q", up)
 	}

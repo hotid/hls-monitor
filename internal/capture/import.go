@@ -19,12 +19,17 @@ const importMaxFiles = 200
 // ErrNoRoom is returned when a capture does not fit within the limits.
 var ErrNoRoom = errors.New("no room for the capture")
 
+// ErrNotTheirs is returned for a capture of a stream the agent that sent
+// it does not check.
+var ErrNotTheirs = errors.New("a capture of a stream the agent does not check")
+
 // Import brings in a capture an agent made and sends as the archive
 // WriteZip makes: one directory named after the capture, its
 // capture.json in it. It is kept as the agent's, under an ID of its own,
 // and the ID is returned. A capture already brought in is not brought in
-// twice: its ID is returned again.
-func (s *Store) Import(agentID int64, archive io.ReaderAt, size int64) (string, error) {
+// twice: its ID is returned again. theirs, when given, tells whether the
+// agent may send a capture of the stream: ErrNotTheirs when not.
+func (s *Store) Import(agentID int64, archive io.ReaderAt, size int64, theirs func(stream int64) bool) (string, error) {
 	zr, err := zip.NewReader(archive, size)
 	if err != nil {
 		return "", fmt.Errorf("not a zip archive: %w", err)
@@ -70,6 +75,9 @@ func (s *Store) Import(agentID int64, archive io.ReaderAt, size int64) (string, 
 	if c.ID != root || !c.Done || c.StreamID <= 0 {
 		return "", fmt.Errorf("capture.json does not describe the capture in the archive")
 	}
+	if theirs != nil && !theirs(c.StreamID) {
+		return "", ErrNotTheirs
+	}
 	id := c.ID + "-a" + strconv.FormatInt(agentID, 10)
 	c.ID, c.AgentID = id, agentID
 	if c.State != StateKept && c.State != StateFound {
@@ -99,6 +107,11 @@ func (s *Store) Import(agentID int64, archive io.ReaderAt, size int64) (string, 
 		s.mu.Unlock()
 		_ = os.RemoveAll(dir)
 		return "", err
+	}
+	// A capture of nothing but its description has a directory as well:
+	// without one it would be gone at the next start.
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return fail(err)
 	}
 	var written int64
 	for _, f := range zr.File {

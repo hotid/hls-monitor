@@ -168,6 +168,7 @@ type loginRequest struct {
 //	@Router		/api/v1/auth/login [post]
 func (s *Server) login(c *gin.Context) {
 	var req loginRequest
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, anonymousBody)
 	if err := c.ShouldBindJSON(&req); err != nil || req.Username == "" || req.Password == "" {
 		badRequest(c, "username and password are required")
 		return
@@ -284,3 +285,7 @@ func (s *Server) newPasswordHash(c *gin.Context, password string) (string, bool)
 	}
 	return hash, true
 }
+
+// anonymousBody bounds what is read of a request from somebody not known
+// yet: a login or an enrollment.
+const anonymousBody = 64 << 10

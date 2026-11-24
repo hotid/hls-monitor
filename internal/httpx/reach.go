@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -41,6 +42,9 @@ type reachKey struct{}
 type reachState struct {
 	mode   Reach
 	cancel context.CancelCauseFunc
+	// viaProxy is set while the request, or the redirect of it being
+	// followed, goes through a proxy: see proxyOf.
+	viaProxy atomic.Bool
 
 	mu     sync.Mutex
 	got    int  // connections the request has been given
@@ -50,7 +54,7 @@ type reachState struct {
 // allowed reports whether the request may use a connection to addr
 // (ip:port). The caller holds no lock.
 func (st *reachState) allowed(addr string) bool {
-	if st.mode == ReachAny {
+	if st.mode == ReachAny || st.viaProxy.Load() {
 		return true
 	}
 	public := addrPublic(addr)
@@ -113,12 +117,31 @@ var notPublic = []netip.Prefix{
 	netip.MustParsePrefix("198.18.0.0/15"), // benchmarking; used for container networks
 	netip.MustParsePrefix("240.0.0.0/4"),
 	netip.MustParsePrefix("64:ff9b:1::/48"), // local-use address translation
+	netip.MustParsePrefix("2001::/32"),      // Teredo: the address inside is hidden
+	netip.MustParsePrefix("fec0::/10"),      // site-local, of old
+}
+
+// carried are the ranges of IPv6 whose addresses carry an address of IPv4
+// that the packet ends up at, and where in them it sits.
+var carried = []struct {
+	prefix netip.Prefix
+	at     int
+}{
+	{netip.MustParsePrefix("64:ff9b::/96"), 12}, // address translation
+	{netip.MustParsePrefix("2002::/16"), 2},     // 6to4
 }
 
 // Public reports whether ip is an address of the Internet: not loopback,
 // not private, not link-local, not otherwise reserved for local use.
 func Public(ip netip.Addr) bool {
 	ip = ip.Unmap()
+	for _, c := range carried {
+		if c.prefix.Contains(ip) {
+			b := ip.As16()
+			ip = netip.AddrFrom4([4]byte(b[c.at : c.at+4]))
+			break
+		}
+	}
 	if !ip.IsValid() || ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() {
 		return false

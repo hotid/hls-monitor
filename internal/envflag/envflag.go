@@ -11,9 +11,10 @@ import (
 	"time"
 )
 
-// String declares a string flag; env, when set, overrides def.
+// String declares a string flag; env, when set and not empty, overrides
+// def: a compose file passes a variable nobody set as an empty one.
 func String(fs *flag.FlagSet, p *string, name, env, def, usage string) {
-	if v, ok := os.LookupEnv(env); ok {
+	if v, ok := os.LookupEnv(env); ok && v != "" {
 		def = v
 	}
 	fs.StringVar(p, name, def, fmt.Sprintf("%s (env %s)", usage, env))

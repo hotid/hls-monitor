@@ -63,6 +63,7 @@ func currentAgent(c *gin.Context) *store.Agent {
 //	@Router		/api/agent/v1/enroll [post]
 func (s *Server) agentEnroll(c *gin.Context) {
 	var req agentproto.EnrollRequest
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, anonymousBody)
 	if err := c.ShouldBindJSON(&req); err != nil || req.Token == "" {
 		badRequest(c, "token is required")
 		return

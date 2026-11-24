@@ -41,3 +41,10 @@ node_modules/
 
 # Local deployment settings
 deploy/.env
+
+# What a running server or agent keeps: keys, queues, captures, backups
+/data/
+*.key
+metrics-queue/
+captures/
+*.tgz
