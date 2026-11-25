@@ -2,18 +2,18 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/hotid/hls-monitor/internal/ingest"
-	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
 )
 
 // An incident belongs to one stream. When a server is in trouble, every
@@ -30,9 +30,6 @@ const (
 	// to end.
 	serverWatchEvery    = 30 * time.Second
 	serverIncidentQuiet = 3 * serverWatchEvery
-	// KindNetworkLoss is the incident of a server the way to which loses
-	// packets; the others carry the kind of the streams' problem.
-	KindNetworkLoss = "network_loss"
 )
 
 // ServerWatchEvery is how often WatchServers is meant to be called.
@@ -41,32 +38,11 @@ const ServerWatchEvery = serverWatchEvery
 // serverKinds are the problems that can be a server's: those of answering
 // at all. What is wrong with the content of a stream is the stream's, on
 // however many streams of one server it shows.
-var serverKinds = map[string]bool{
-	probe.ProbPlaylistUnreachable: true, probe.ProbPlaylistHTTP: true, probe.ProbPlaylistParse: true,
-	probe.ProbPlaylistStale: true, probe.ProbPlaylistEmpty: true,
-	probe.ProbSegmentUnreachable: true, probe.ProbSegmentHTTP: true, probe.ProbSegmentTruncated: true, probe.ProbSegmentSlow: true,
-	probe.ProbKeyUnavailable: true, probe.ProbInitUnavailable: true,
-}
-
-// serverIncidentDetails is what a server's incident tells besides its message.
-type serverIncidentDetails struct {
-	// Streams had the problem at the latest look; Example is what one of
-	// them said.
-	Streams []streamRef `json:"streams,omitempty"`
-	Example string      `json:"example,omitempty"`
-	// For loss: the figures of the last five minutes.
-	Requests    float64 `json:"requests,omitempty"`
-	Retransmits float64 `json:"retransmits,omitempty"`
-}
-
-// splitNode takes apart "host ip", the way problems name a server
-// (probe.Endpoint.Node).
-func splitNode(node string) (host, ip string) {
-	host = strings.TrimSpace(node)
-	if i := strings.LastIndex(host, " "); i > 0 {
-		host, ip = host[:i], host[i+1:]
-	}
-	return host, ip
+var serverKinds = map[problemkind.Kind]bool{
+	problemkind.PlaylistUnreachable(): true, problemkind.PlaylistHTTP(): true, problemkind.PlaylistParse(): true,
+	problemkind.PlaylistStale(): true, problemkind.PlaylistEmpty(): true,
+	problemkind.SegmentUnreachable(): true, problemkind.SegmentHTTP(): true, problemkind.SegmentTruncated(): true, problemkind.SegmentSlow(): true,
+	problemkind.KeyUnavailable(): true, problemkind.InitUnavailable(): true,
 }
 
 // WatchServers looks for what is wrong with servers rather than with
@@ -81,10 +57,13 @@ func (s *Server) WatchServers(ctx context.Context) {
 		}
 		return
 	}
-	type key struct{ host, ip, kind string }
+	type key struct {
+		host, ip string
+		kind     problemkind.Kind
+	}
 	type group struct {
-		streams  map[int64]string
-		severity string
+		streams  map[id.Stream]string
+		severity severity.Severity
 		example  string
 	}
 	groups := map[key]*group{}
@@ -94,25 +73,24 @@ func (s *Server) WatchServers(ctx context.Context) {
 		if !serverKinds[in.Kind] || !in.Active || now.Sub(in.LastSeen) > 2*time.Minute {
 			continue
 		}
-		node := incidentServer(in.Details)
-		if node == "" {
+		at := incidentServer(in.Details)
+		if at.IsZero() {
 			continue
 		}
-		host, ip := splitNode(node)
-		k := key{host, ip, in.Kind}
+		k := key{at.Host(), at.IP(), in.Kind}
 		g := groups[k]
 		if g == nil {
-			g = &group{streams: map[int64]string{}, severity: probe.SevWarn}
+			g = &group{streams: map[id.Stream]string{}, severity: severity.Warn()}
 			groups[k] = g
 		}
 		g.streams[in.StreamID] = in.StreamName
 		g.example = in.Message
-		if in.Severity == probe.SevCrit {
-			g.severity = probe.SevCrit
+		if in.Severity == severity.Crit() {
+			g.severity = severity.Crit()
 		}
 	}
-	report := func(in store.ServerIncident, d serverIncidentDetails) {
-		in.Details, _ = json.Marshal(d)
+	report := func(in store.ServerIncident, d store.ServerIncidentDetails) {
+		in.Details = d
 		if err := s.st.ReportServerIncident(ctx, in, now.Add(-ingest.ReopenWithin), now); err != nil && ctx.Err() == nil {
 			s.log.Warn("cannot record an incident of a server", "server", in.Host, "kind", in.Kind, "error", err)
 		}
@@ -121,7 +99,7 @@ func (s *Server) WatchServers(ctx context.Context) {
 		if len(g.streams) < serverIncidentFrom {
 			continue
 		}
-		d := serverIncidentDetails{Example: g.example}
+		d := store.ServerIncidentDetails{Example: g.example}
 		for id, name := range g.streams {
 			d.Streams = append(d.Streams, streamRef{ID: id, Name: name})
 		}
@@ -134,7 +112,7 @@ func (s *Server) WatchServers(ctx context.Context) {
 	losing := map[[2]string]bool{}
 	if openNow, err := s.st.ListServerIncidents(ctx, true, 2000); err == nil {
 		for _, in := range openNow {
-			if in.Kind == KindNetworkLoss {
+			if in.Kind == problemkind.NetworkLoss() {
 				losing[[2]string{in.Host, in.IP}] = true
 			}
 		}
@@ -144,9 +122,9 @@ func (s *Server) WatchServers(ctx context.Context) {
 		if !n.Lossy && !still {
 			continue
 		}
-		report(store.ServerIncident{Host: k[0], IP: k[1], Kind: KindNetworkLoss, Severity: probe.SevWarn,
+		report(store.ServerIncident{Host: k[0], IP: k[1], Kind: problemkind.NetworkLoss(), Severity: severity.Warn(),
 			Message: fmt.Sprintf("%.1f %% of %.0f requests in five minutes needed a retransmission", 100*n.Retransmits/n.Requests, n.Requests)},
-			serverIncidentDetails{Requests: n.Requests, Retransmits: n.Retransmits})
+			store.ServerIncidentDetails{Requests: n.Requests, Retransmits: n.Retransmits})
 	}
 	if err := s.st.CloseServerIncidents(ctx, now.Add(-serverIncidentQuiet), now); err != nil && ctx.Err() == nil {
 		s.log.Warn("cannot end incidents of servers", "error", err)

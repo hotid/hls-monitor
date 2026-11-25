@@ -21,15 +21,18 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/spool"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/owner"
 )
 
 // Sample is one value of one series. Variant 0 means the series belongs to
 // the stream as a whole.
 type Sample struct {
-	Name    string
-	Stream  int64
-	Agent   int64
-	Variant int64
+	Name    metricname.Name
+	Stream  id.Stream
+	Agent   id.Agent
+	Variant id.Variant
 	// Server and IP, when set, name the server the value is about.
 	Server, IP string
 	Value      float64
@@ -173,20 +176,20 @@ func (c *Client) Write(samples []Sample) {
 	}
 	var b bytes.Buffer
 	for _, s := range samples {
-		if !ValidName(s.Name) || math.IsNaN(s.Value) || math.IsInf(s.Value, 0) {
+		if math.IsNaN(s.Value) || math.IsInf(s.Value, 0) {
 			continue
 		}
 		if s.Server != "" && !labelRe.MatchString(s.Server) {
 			continue // about a server that cannot be named
 		}
-		b.WriteString(s.Name)
+		b.WriteString(s.Name.String())
 		b.WriteString(`{stream="`)
-		b.WriteString(strconv.FormatInt(s.Stream, 10))
+		b.WriteString(s.Stream.String())
 		b.WriteString(`",agent="`)
-		b.WriteString(strconv.FormatInt(s.Agent, 10))
-		if s.Variant != 0 {
+		b.WriteString(s.Agent.String())
+		if !s.Variant.IsZero() {
 			b.WriteString(`",variant="`)
-			b.WriteString(strconv.FormatInt(s.Variant, 10))
+			b.WriteString(s.Variant.String())
 		}
 		if s.Server != "" {
 			b.WriteString(`",server="`)
@@ -474,14 +477,10 @@ func (c *Client) Query(ctx context.Context, expr string, at time.Time) ([]Series
 	return out, nil
 }
 
-// DeleteSeries removes every series that has the label with this value:
-// label is "stream" or "agent".
-func (c *Client) DeleteSeries(ctx context.Context, label string, id int64) error {
+// DeleteSeries removes every series of a stream or of an agent.
+func (c *Client) DeleteSeries(ctx context.Context, label owner.Kind, id int64) error {
 	if !c.Enabled() {
 		return nil
-	}
-	if !ValidName(label) {
-		return fmt.Errorf("invalid label %q", label)
 	}
 	q := url.Values{}
 	q.Set("match[]", fmt.Sprintf(`{%s="%d"}`, label, id))

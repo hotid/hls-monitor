@@ -29,6 +29,9 @@ import (
 	"github.com/hotid/hls-monitor/internal/ingest"
 	"github.com/hotid/hls-monitor/internal/metrics"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/role"
+	"github.com/hotid/hls-monitor/internal/types/status"
 )
 
 var quiet = slog.New(slog.DiscardHandler)
@@ -57,7 +60,7 @@ func newEnvWith(t *testing.T, change func(*api.Config)) *env {
 	}
 	t.Cleanup(func() { st.Close() })
 	hash, _ := auth.HashPassword("admin-password")
-	if _, err := st.CreateUser(ctx, "admin", hash, store.RoleAdmin, time.Now()); err != nil {
+	if _, err := st.CreateUser(ctx, "admin", hash, role.Admin(), time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	mx := metrics.New("", nil)
@@ -117,7 +120,7 @@ func (e *env) call(want int, method, path string, body, out any) {
 
 type enrollment struct {
 	Agent struct {
-		ID int64 `json:"id"`
+		ID id.Agent `json:"id"`
 	} `json:"agent"`
 	Token string `json:"token"`
 }
@@ -160,7 +163,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-func (e *env) state(streamID, agentID int64) *store.StreamState {
+func (e *env) state(streamID id.Stream, agentID id.Agent) *store.StreamState {
 	states, err := e.st.StreamStates(context.Background(), streamID)
 	if err != nil {
 		e.t.Fatal(err)
@@ -186,29 +189,32 @@ func TestAgentEndToEnd(t *testing.T) {
 		t.Errorf("key file mode = %v, want 0600", fi.Mode().Perm())
 	}
 	waitFor(t, "heartbeat", func() bool {
-		a, _ := e.st.GetAgent(context.Background(), en.Agent.ID)
+		a, _ := e.st.GetAgent(context.Background(), id.AgentOf(en.Agent.ID.Int64()))
 		return a != nil && a.Enrolled && a.LastSeen != nil && a.Version == "1.2.3" && a.ClockOffsetMs != nil
 	})
 
 	// A stream assigned to the agent starts being checked without a restart.
 	e.call(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{
-		"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "container", "interval_sec": 0.2 + 0.8, "agent_ids": []int64{en.Agent.ID},
+		"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "container", "interval_sec": 0.2 + 0.8, "agent_ids": []int64{en.Agent.ID.Int64()},
 	}, nil)
-	waitFor(t, "results from the agent", func() bool { s := e.state(1, en.Agent.ID); return s != nil && s.Status == "ok" })
-	if e.state(1, store.LocalAgentID) != nil {
+	waitFor(t, "results from the agent", func() bool {
+		s := e.state(id.StreamOf(1), id.AgentOf(en.Agent.ID.Int64()))
+		return s != nil && s.Status == status.OK()
+	})
+	if e.state(id.StreamOf(1), store.LocalAgentID()) != nil {
 		t.Error("the server must not check a stream assigned only to a remote agent")
 	}
-	segs, _ := e.st.ListSegments(context.Background(), store.SegmentFilter{StreamID: 1, AgentID: en.Agent.ID})
+	segs, _ := e.st.ListSegments(context.Background(), store.SegmentFilter{StreamID: id.StreamOf(1), AgentID: id.AgentOf(en.Agent.ID.Int64())})
 	if len(segs) == 0 {
 		t.Error("the agent's segment records did not reach the journal")
 	}
 
 	// The server goes away: checks continue; when it returns, the backlog arrives.
-	before := e.state(1, en.Agent.ID).CheckedAt
+	before := e.state(id.StreamOf(1), id.AgentOf(en.Agent.ID.Int64())).CheckedAt
 	e.down.Store(true)
 	time.Sleep(2500 * time.Millisecond)
 	e.down.Store(false)
-	waitFor(t, "delivery after the outage", func() bool { return e.state(1, en.Agent.ID).CheckedAt.After(before) })
+	waitFor(t, "delivery after the outage", func() bool { return e.state(id.StreamOf(1), id.AgentOf(en.Agent.ID.Int64())).CheckedAt.After(before) })
 
 	// Unassigning stops the checks.
 	e.call(http.StatusOK, "PUT", "/api/v1/streams/1", map[string]any{"name": "live", "url": e.origin.URL + "/master.m3u8", "agent_ids": []int64{}}, nil)
@@ -226,7 +232,7 @@ func TestAgentEndToEnd(t *testing.T) {
 
 func mustSegments(t *testing.T, st *store.Store) []*store.SegmentRecord {
 	t.Helper()
-	segs, err := st.ListSegments(context.Background(), store.SegmentFilter{StreamID: 1, Limit: 1000})
+	segs, err := st.ListSegments(context.Background(), store.SegmentFilter{StreamID: id.StreamOf(1), Limit: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +254,7 @@ func TestAgentRestartUsesSavedKey(t *testing.T) {
 	seen := time.Now()
 	stop = e.start("", keyFile)
 	waitFor(t, "heartbeat after restart", func() bool {
-		a, _ := e.st.GetAgent(context.Background(), en.Agent.ID)
+		a, _ := e.st.GetAgent(context.Background(), id.AgentOf(en.Agent.ID.Int64()))
 		return a.LastSeen != nil && a.LastSeen.After(seen)
 	})
 	_ = stop()
@@ -260,7 +266,7 @@ func TestAgentRestartUsesSavedKey(t *testing.T) {
 	e.start(again.Token, keyFile)
 	waitFor(t, "re-enrollment", func() bool {
 		key2, _ := os.ReadFile(keyFile)
-		a, _ := e.st.GetAgent(context.Background(), en.Agent.ID)
+		a, _ := e.st.GetAgent(context.Background(), id.AgentOf(en.Agent.ID.Int64()))
 		return !bytes.Equal(key1, key2) && a.Enrolled
 	})
 }
@@ -300,7 +306,7 @@ func TestWatchThroughAgent(t *testing.T) {
 	var en enrollment
 	e.call(http.StatusCreated, "POST", "/api/v1/agents", map[string]string{"name": "edge-1"}, &en)
 	e.call(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{
-		"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "header", "agent_ids": []int64{en.Agent.ID},
+		"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "header", "agent_ids": []int64{en.Agent.ID.Int64()},
 	}, nil)
 
 	type watch struct {
@@ -310,15 +316,15 @@ func TestWatchThroughAgent(t *testing.T) {
 			Available bool   `json:"available"`
 			Why       string `json:"why"`
 		} `json:"vantages"`
-		Vantage int64 `json:"vantage"`
+		Vantage id.Agent `json:"vantage"`
 		Sources []struct {
 			URL string `json:"url"`
 		} `json:"sources"`
 	}
-	path := "/api/v1/streams/1/watch?agent=" + strconv.FormatInt(en.Agent.ID, 10)
+	path := "/api/v1/streams/1/watch?agent=" + strconv.FormatInt(en.Agent.ID.Int64(), 10)
 	var w watch
 	e.call(http.StatusOK, "GET", path, nil, &w)
-	if len(w.Vantages) != 2 || !w.Vantages[0].Local || w.Vantages[1].Available || w.Vantages[1].Why != "offline" || w.Vantage != store.LocalAgentID {
+	if len(w.Vantages) != 2 || !w.Vantages[0].Local || w.Vantages[1].Available || w.Vantages[1].Why != "offline" || w.Vantage != store.LocalAgentID() {
 		t.Fatalf("before the agent is connected: %+v", w)
 	}
 
@@ -414,7 +420,7 @@ func TestDiagnosisFromAnAgent(t *testing.T) {
 	var en enrollment
 	e.call(http.StatusCreated, "POST", "/api/v1/agents", map[string]string{"name": "edge-1"}, &en)
 	e.call(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{
-		"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "header", "agent_ids": []int64{en.Agent.ID},
+		"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "header", "agent_ids": []int64{en.Agent.ID.Int64()},
 	}, nil)
 	path := fmt.Sprintf("/api/v1/streams/1/diagnose?seconds=3&agent=%d", en.Agent.ID)
 	// An agent that is not there cannot be asked.
@@ -471,7 +477,7 @@ func TestDiagnosisFromAnAgent(t *testing.T) {
 	})
 	// Nothing of it was stored: the agent's own checks are another matter,
 	// and what a diagnosis finds is for the one who watches it.
-	if got := e.state(1, en.Agent.ID); got != nil && got.Status == "" {
+	if got := e.state(id.StreamOf(1), id.AgentOf(en.Agent.ID.Int64())); got != nil && got.Status.IsZero() {
 		t.Errorf("state = %+v", got)
 	}
 }

@@ -8,12 +8,21 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/auth"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/agentkind"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/streamstatus"
+	"github.com/hotid/hls-monitor/internal/types/summarykey"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
 )
 
 func (s *Server) requireAPIToken(c *gin.Context) {
 	token := bearer(c)
 	if token == "" {
-		fail(c, http.StatusUnauthorized, "unauthorized", "API token required: Authorization: Bearer <token>")
+		fail(c, http.StatusUnauthorized, errcode.Unauthorized(), "API token required: Authorization: Bearer <token>")
 		return
 	}
 	hash := auth.HashToken(token)
@@ -22,7 +31,7 @@ func (s *Server) requireAPIToken(c *gin.Context) {
 		return
 	}
 	if !ok {
-		fail(c, http.StatusUnauthorized, "unauthorized", "unknown API token")
+		fail(c, http.StatusUnauthorized, errcode.Unauthorized(), "unknown API token")
 		return
 	}
 	_ = s.st.TouchAPIToken(c.Request.Context(), hash, s.now())
@@ -31,15 +40,15 @@ func (s *Server) requireAPIToken(c *gin.Context) {
 
 // statusCode turns a status into a number that monitoring systems can
 // compare: the higher, the worse.
-func statusCode(st string) int {
+func statusCode(st streamstatus.Status) int {
 	switch st {
-	case statusOK:
+	case streamstatus.OK():
 		return 0
-	case statusWarn:
+	case streamstatus.Warn():
 		return 1
-	case statusFail:
+	case streamstatus.Fail():
 		return 2
-	case statusNoData:
+	case streamstatus.NoData():
 		return 3
 	}
 	return -1 // disabled
@@ -47,11 +56,11 @@ func statusCode(st string) int {
 
 // extStream is a discovery row for a stream.
 type extStream struct {
-	ID      int64  `json:"id"`
-	Name    string `json:"name"`
-	URL     string `json:"url"`
-	Enabled bool   `json:"enabled"`
-	Level   string `json:"level"`
+	ID      id.Stream   `json:"id"`
+	Name    string      `json:"name"`
+	URL     string      `json:"url"`
+	Enabled bool        `json:"enabled"`
+	Level   level.Level `json:"level" enums:"playlist,header,segments,container"`
 }
 
 // extDiscoverStreams godoc
@@ -77,14 +86,14 @@ func (s *Server) extDiscoverStreams(c *gin.Context) {
 
 // extVariant is a discovery row for a variant of a stream.
 type extVariant struct {
-	ID         int64  `json:"id"`
-	StreamID   int64  `json:"stream_id"`
-	StreamName string `json:"stream_name"`
-	Kind       string `json:"kind"`
-	Key        string `json:"key"`
-	Name       string `json:"name"`
-	Bandwidth  int64  `json:"bandwidth"`
-	Resolution string `json:"resolution"`
+	ID         id.Variant       `json:"id"`
+	StreamID   id.Stream        `json:"stream_id"`
+	StreamName string           `json:"stream_name"`
+	Kind       variantkind.Kind `json:"kind" enums:"master,media,video,audio,subtitles"`
+	Key        variantkey.Key   `json:"key"`
+	Name       string           `json:"name"`
+	Bandwidth  int64            `json:"bandwidth"`
+	Resolution string           `json:"resolution"`
 }
 
 // extDiscoverVariants godoc
@@ -102,7 +111,7 @@ func (s *Server) extDiscoverVariants(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
-	names := map[int64]string{}
+	names := map[id.Stream]string{}
 	for _, st := range streams {
 		names[st.ID] = st.Name
 	}
@@ -120,12 +129,12 @@ func (s *Server) extDiscoverVariants(c *gin.Context) {
 
 // extAgent is a discovery row for an agent, with its current reachability.
 type extAgent struct {
-	ID       int64      `json:"id"`
-	Name     string     `json:"name"`
-	Kind     string     `json:"kind"`
-	Enabled  bool       `json:"enabled"`
-	Online   bool       `json:"online"`
-	LastSeen *time.Time `json:"last_seen"`
+	ID       id.Agent       `json:"id"`
+	Name     string         `json:"name"`
+	Kind     agentkind.Kind `json:"kind" enums:"local,remote"`
+	Enabled  bool           `json:"enabled"`
+	Online   bool           `json:"online"`
+	LastSeen *time.Time     `json:"last_seen"`
 }
 
 // extDiscoverAgents godoc
@@ -152,37 +161,37 @@ func (s *Server) extDiscoverAgents(c *gin.Context) {
 
 // extAgentStatus is the state of a stream as seen from one agent.
 type extAgentStatus struct {
-	AgentID    int64              `json:"agent_id"`
-	AgentName  string             `json:"agent_name"`
-	Status     string             `json:"status"`
-	StatusCode int                `json:"status_code"`
-	AgeSeconds *float64           `json:"age_seconds"`
-	Metrics    map[string]float64 `json:"metrics"`
+	AgentID    id.Agent                   `json:"agent_id"`
+	AgentName  string                     `json:"agent_name"`
+	Status     streamstatus.Status        `json:"status"`
+	StatusCode int                        `json:"status_code"`
+	AgeSeconds *float64                   `json:"age_seconds"`
+	Metrics    map[summarykey.Key]float64 `json:"metrics"`
 }
 
 // extStreamStatus is the current state of one stream in one document,
 // meant to be fetched once and split into dependent items.
 type extStreamStatusDoc struct {
-	ID         int64            `json:"id"`
-	Name       string           `json:"name"`
-	Status     string           `json:"status"`
-	StatusCode int              `json:"status_code" example:"0"`
-	Incidents  map[string]int   `json:"incidents"`
-	Agents     []extAgentStatus `json:"agents"`
-	Variants   []extVariantDoc  `json:"variants,omitempty"`
+	ID         id.Stream                 `json:"id"`
+	Name       string                    `json:"name"`
+	Status     streamstatus.Status       `json:"status"`
+	StatusCode int                       `json:"status_code" example:"0"`
+	Incidents  map[severity.Severity]int `json:"incidents"`
+	Agents     []extAgentStatus          `json:"agents"`
+	Variants   []extVariantDoc           `json:"variants,omitempty"`
 }
 
 // extVariantDoc is the latest state of a variant per agent.
 type extVariantDoc struct {
-	ID     int64                 `json:"id"`
-	Kind   string                `json:"kind"`
-	Key    string                `json:"key"`
+	ID     id.Variant            `json:"id"`
+	Kind   variantkind.Kind      `json:"kind"`
+	Key    variantkey.Key        `json:"key"`
 	States []*store.VariantState `json:"states"`
 }
 
 func (s *Server) extDoc(v *streamView, now time.Time) extStreamStatusDoc {
 	doc := extStreamStatusDoc{ID: v.ID, Name: v.Name, Status: v.Status, StatusCode: statusCode(v.Status),
-		Incidents: map[string]int{"warn": v.OpenIncidents["warn"], "crit": v.OpenIncidents["crit"]},
+		Incidents: map[severity.Severity]int{severity.Warn(): v.OpenIncidents[severity.Warn()], severity.Crit(): v.OpenIncidents[severity.Crit()]},
 		Agents:    make([]extAgentStatus, 0, len(v.Agents))}
 	for _, a := range v.Agents {
 		as := extAgentStatus{AgentID: a.AgentID, AgentName: a.AgentName, Status: a.Status, StatusCode: statusCode(a.Status), Metrics: a.Summary}
@@ -235,12 +244,12 @@ func (s *Server) extStatus(c *gin.Context) {
 //	@Failure	404				{object}	apiError
 //	@Router		/api/ext/v1/streams/{id}/status [get]
 func (s *Server) extStreamStatus(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
-	st, err := s.st.GetStream(ctx, id)
+	st, err := s.st.GetStream(ctx, streamID)
 	if s.storeError(c, err) {
 		return
 	}
@@ -250,15 +259,15 @@ func (s *Server) extStreamStatus(c *gin.Context) {
 	}
 	doc := s.extDoc(s.view(st, sc, false), sc.now)
 
-	variants, err := s.st.ListVariants(ctx, id)
+	variants, err := s.st.ListVariants(ctx, streamID)
 	if s.storeError(c, err) {
 		return
 	}
-	states, err := s.st.VariantStates(ctx, id)
+	states, err := s.st.VariantStates(ctx, streamID)
 	if s.storeError(c, err) {
 		return
 	}
-	byVariant := map[int64][]*store.VariantState{}
+	byVariant := map[id.Variant][]*store.VariantState{}
 	for _, vs := range states {
 		byVariant[vs.VariantID] = append(byVariant[vs.VariantID], vs)
 	}

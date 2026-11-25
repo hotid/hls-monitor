@@ -4,19 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"time"
-)
 
-// Roles.
-const (
-	RoleAdmin  = "admin"
-	RoleViewer = "viewer"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/role"
 )
 
 // User is a web interface account.
 type User struct {
-	ID           int64     `json:"id"`
+	ID           id.User   `json:"id"`
 	Username     string    `json:"username"`
-	Role         string    `json:"role"`
+	Role         role.Role `json:"role" enums:"admin,viewer"`
 	Disabled     bool      `json:"disabled"`
 	CreatedAt    time.Time `json:"created_at"`
 	PasswordHash string    `json:"-"`
@@ -35,22 +32,22 @@ func scanUser(row interface{ Scan(...any) error }) (*User, error) {
 }
 
 // CreateUser adds an account. It returns ErrConflict when the name is taken.
-func (s *Store) CreateUser(ctx context.Context, username, passwordHash, role string, now time.Time) (*User, error) {
+func (s *Store) CreateUser(ctx context.Context, username, passwordHash string, r role.Role, now time.Time) (*User, error) {
 	res, err := s.db.ExecContext(ctx,
 		"INSERT INTO users (username, password_hash, role, created_at) VALUES (?, ?, ?, ?)",
-		username, passwordHash, role, toMs(now))
+		username, passwordHash, r, toMs(now))
 	if isUnique(err) {
 		return nil, ErrConflict
 	}
 	if err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	return s.GetUser(ctx, id)
+	n, _ := res.LastInsertId()
+	return s.GetUser(ctx, id.UserOf(n))
 }
 
-func (s *Store) GetUser(ctx context.Context, id int64) (*User, error) {
-	return scanUser(s.db.QueryRowContext(ctx, "SELECT "+userCols+" FROM users WHERE id = ?", id))
+func (s *Store) GetUser(ctx context.Context, userID id.User) (*User, error) {
+	return scanUser(s.db.QueryRowContext(ctx, "SELECT "+userCols+" FROM users WHERE id = ?", userID))
 }
 
 func (s *Store) GetUserByName(ctx context.Context, username string) (*User, error) {
@@ -83,22 +80,22 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 
 // UserUpdate lists the fields to change; nil fields are left alone.
 type UserUpdate struct {
-	Role         *string
+	Role         *role.Role
 	Disabled     *bool
 	PasswordHash *string
 }
 
 // UpdateUser changes an account. It refuses, with ErrLastAdmin, a change
 // that would leave no enabled administrator.
-func (s *Store) UpdateUser(ctx context.Context, id int64, up UserUpdate) (*User, error) {
+func (s *Store) UpdateUser(ctx context.Context, userID id.User, up UserUpdate) (*User, error) {
 	err := s.Tx(ctx, func(tx *Tx) error {
-		u, err := scanUser(tx.q.QueryRowContext(ctx, "SELECT "+userCols+" FROM users WHERE id = ?", id))
+		u, err := scanUser(tx.q.QueryRowContext(ctx, "SELECT "+userCols+" FROM users WHERE id = ?", userID))
 		if err != nil {
 			return err
 		}
-		role, disabled, hash := u.Role, u.Disabled, u.PasswordHash
+		as, disabled, hash := u.Role, u.Disabled, u.PasswordHash
 		if up.Role != nil {
-			role = *up.Role
+			as = *up.Role
 		}
 		if up.Disabled != nil {
 			disabled = *up.Disabled
@@ -106,39 +103,39 @@ func (s *Store) UpdateUser(ctx context.Context, id int64, up UserUpdate) (*User,
 		if up.PasswordHash != nil {
 			hash = *up.PasswordHash
 		}
-		if u.Role == RoleAdmin && !u.Disabled && (role != RoleAdmin || disabled) {
-			if err := tx.requireOtherAdmin(ctx, id); err != nil {
+		if u.Role == role.Admin() && !u.Disabled && (as != role.Admin() || disabled) {
+			if err := tx.requireOtherAdmin(ctx, userID); err != nil {
 				return err
 			}
 		}
-		if _, err := tx.q.ExecContext(ctx, "UPDATE users SET role = ?, disabled = ?, password_hash = ? WHERE id = ?", role, disabled, hash, id); err != nil {
+		if _, err := tx.q.ExecContext(ctx, "UPDATE users SET role = ?, disabled = ?, password_hash = ? WHERE id = ?", as, disabled, hash, userID); err != nil {
 			return err
 		}
 		// Credentials or access changed: existing sessions must not outlive it.
 		if up.PasswordHash != nil || disabled {
-			_, err = tx.q.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", id)
+			_, err = tx.q.ExecContext(ctx, "DELETE FROM sessions WHERE user_id = ?", userID)
 		}
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.GetUser(ctx, id)
+	return s.GetUser(ctx, userID)
 }
 
 // DeleteUser removes an account unless it is the last enabled administrator.
-func (s *Store) DeleteUser(ctx context.Context, id int64) error {
+func (s *Store) DeleteUser(ctx context.Context, userID id.User) error {
 	return s.Tx(ctx, func(tx *Tx) error {
-		u, err := scanUser(tx.q.QueryRowContext(ctx, "SELECT "+userCols+" FROM users WHERE id = ?", id))
+		u, err := scanUser(tx.q.QueryRowContext(ctx, "SELECT "+userCols+" FROM users WHERE id = ?", userID))
 		if err != nil {
 			return err
 		}
-		if u.Role == RoleAdmin && !u.Disabled {
-			if err := tx.requireOtherAdmin(ctx, id); err != nil {
+		if u.Role == role.Admin() && !u.Disabled {
+			if err := tx.requireOtherAdmin(ctx, userID); err != nil {
 				return err
 			}
 		}
-		_, err = tx.q.ExecContext(ctx, "DELETE FROM users WHERE id = ?", id)
+		_, err = tx.q.ExecContext(ctx, "DELETE FROM users WHERE id = ?", userID)
 		return err
 	})
 }
@@ -150,9 +147,9 @@ type errorString string
 
 func (e errorString) Error() string { return string(e) }
 
-func (tx *Tx) requireOtherAdmin(ctx context.Context, exceptID int64) error {
+func (tx *Tx) requireOtherAdmin(ctx context.Context, exceptID id.User) error {
 	var n int
-	if err := tx.q.QueryRowContext(ctx, "SELECT count(*) FROM users WHERE role = 'admin' AND disabled = 0 AND id <> ?", exceptID).Scan(&n); err != nil {
+	if err := tx.q.QueryRowContext(ctx, "SELECT count(*) FROM users WHERE role = ? AND disabled = 0 AND id <> ?", role.Admin(), exceptID).Scan(&n); err != nil {
 		return err
 	}
 	if n == 0 {
@@ -162,7 +159,7 @@ func (tx *Tx) requireOtherAdmin(ctx context.Context, exceptID int64) error {
 }
 
 // CreateSession stores the hash of a session token.
-func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, userID int64, now, expires time.Time) error {
+func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, userID id.User, now, expires time.Time) error {
 	_, err := s.db.ExecContext(ctx,
 		"INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
 		tokenHash, userID, toMs(now), toMs(expires))
@@ -184,7 +181,7 @@ func (s *Store) DeleteSession(ctx context.Context, tokenHash []byte) error {
 
 // APIToken is a read-only token for external systems.
 type APIToken struct {
-	ID         int64      `json:"id"`
+	ID         id.Token   `json:"id"`
 	Name       string     `json:"name"`
 	CreatedAt  time.Time  `json:"created_at"`
 	LastUsedAt *time.Time `json:"last_used_at"`
@@ -198,8 +195,8 @@ func (s *Store) CreateAPIToken(ctx context.Context, name string, tokenHash []byt
 	if err != nil {
 		return nil, err
 	}
-	id, _ := res.LastInsertId()
-	return &APIToken{ID: id, Name: name, CreatedAt: fromMs(toMs(now))}, nil
+	n, _ := res.LastInsertId()
+	return &APIToken{ID: id.TokenOf(n), Name: name, CreatedAt: fromMs(toMs(now))}, nil
 }
 
 func (s *Store) ListAPITokens(ctx context.Context) ([]*APIToken, error) {
@@ -223,14 +220,14 @@ func (s *Store) ListAPITokens(ctx context.Context) ([]*APIToken, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) DeleteAPIToken(ctx context.Context, id int64) error {
-	return affected(s.db.ExecContext(ctx, "DELETE FROM api_tokens WHERE id = ?", id))
+func (s *Store) DeleteAPIToken(ctx context.Context, tokenID id.Token) error {
+	return affected(s.db.ExecContext(ctx, "DELETE FROM api_tokens WHERE id = ?", tokenID))
 }
 
 // APITokenValid reports whether a token hash is known.
 func (s *Store) APITokenValid(ctx context.Context, tokenHash []byte) (bool, error) {
-	var id int64
-	err := s.db.QueryRowContext(ctx, "SELECT id FROM api_tokens WHERE token_hash = ?", tokenHash).Scan(&id)
+	var known id.Token
+	err := s.db.QueryRowContext(ctx, "SELECT id FROM api_tokens WHERE token_hash = ?", tokenHash).Scan(&known)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}

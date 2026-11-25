@@ -4,15 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"time"
+
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 // StreamPicture is the latest look at a stream from one vantage point.
 type StreamPicture struct {
-	StreamID  int64     `json:"stream_id"`
-	AgentID   int64     `json:"agent_id"`
-	AgentName string    `json:"agent_name"`
-	Time      time.Time `json:"time"`
-	Variant   string    `json:"variant"`
+	StreamID  id.Stream      `json:"stream_id"`
+	AgentID   id.Agent       `json:"agent_id"`
+	AgentName string         `json:"agent_name"`
+	Time      time.Time      `json:"time"`
+	Variant   variantkey.Key `json:"variant"`
 	// HasPicture tells that there was a picture to look at; Luma is its
 	// mean brightness, 0 to 255, Dark the share of points all but black.
 	HasPicture bool    `json:"has_picture"`
@@ -43,7 +47,7 @@ func (tx *Tx) SavePicture(ctx context.Context, p StreamPicture) error {
 
 // SaveIncidentPictures keeps a picture as the evidence of the open
 // incidents of the given kinds of a stream seen from an agent.
-func (tx *Tx) SaveIncidentPictures(ctx context.Context, streamID, agentID int64, kinds []string, at time.Time, jpeg, cells []byte) error {
+func (tx *Tx) SaveIncidentPictures(ctx context.Context, streamID id.Stream, agentID id.Agent, kinds []problemkind.Kind, at time.Time, jpeg, cells []byte) error {
 	if len(kinds) == 0 || len(jpeg) == 0 {
 		return nil
 	}
@@ -60,7 +64,7 @@ func (tx *Tx) SaveIncidentPictures(ctx context.Context, streamID, agentID int64,
 
 // StreamPictures returns the latest looks at a stream, without the
 // pictures themselves; the local vantage point first.
-func (s *Store) StreamPictures(ctx context.Context, streamID int64) ([]StreamPicture, error) {
+func (s *Store) StreamPictures(ctx context.Context, streamID id.Stream) ([]StreamPicture, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.stream_id, p.agent_id, a.name, p.time, p.variant, p.has_picture, p.luma, p.dark, p.has_audio, p.audio_db
 		FROM stream_pictures p JOIN agents a ON a.id = p.agent_id WHERE p.stream_id = ? ORDER BY p.agent_id`, streamID)
@@ -83,20 +87,22 @@ func (s *Store) StreamPictures(ctx context.Context, streamID int64) ([]StreamPic
 
 // PictureRef says which look at a stream has a picture to show.
 type PictureRef struct {
-	AgentID int64     `json:"agent_id"`
+	AgentID id.Agent  `json:"agent_id"`
 	Time    time.Time `json:"time"`
 }
 
 // LatestPictures returns, per stream, the latest look that has a picture.
-func (s *Store) LatestPictures(ctx context.Context) (map[int64]PictureRef, error) {
+func (s *Store) LatestPictures(ctx context.Context) (map[id.Stream]PictureRef, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT stream_id, agent_id, time FROM stream_pictures WHERE has_picture = 1 AND jpeg IS NOT NULL")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[int64]PictureRef{}
+	out := map[id.Stream]PictureRef{}
 	for rows.Next() {
-		var stream, agent, at int64
+		var stream id.Stream
+		var agent id.Agent
+		var at int64
 		if err := rows.Scan(&stream, &agent, &at); err != nil {
 			return nil, err
 		}
@@ -109,12 +115,12 @@ func (s *Store) LatestPictures(ctx context.Context) (map[int64]PictureRef, error
 
 // PictureJPEG returns the picture of the latest look at a stream from an
 // agent and when it was taken; ErrNotFound when there is none.
-func (s *Store) PictureJPEG(ctx context.Context, streamID, agentID int64) ([]byte, time.Time, error) {
+func (s *Store) PictureJPEG(ctx context.Context, streamID id.Stream, agentID id.Agent) ([]byte, time.Time, error) {
 	return s.jpeg(ctx, "SELECT jpeg, time FROM stream_pictures WHERE stream_id = ? AND agent_id = ? AND jpeg IS NOT NULL", streamID, agentID)
 }
 
 // IncidentPictureJPEG returns the picture kept with an incident.
-func (s *Store) IncidentPictureJPEG(ctx context.Context, incidentID int64) ([]byte, time.Time, error) {
+func (s *Store) IncidentPictureJPEG(ctx context.Context, incidentID id.Incident) ([]byte, time.Time, error) {
 	return s.jpeg(ctx, "SELECT jpeg, time FROM incident_pictures WHERE incident_id = ?", incidentID)
 }
 

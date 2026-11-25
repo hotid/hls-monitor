@@ -11,6 +11,13 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/media"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/node"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
 )
 
 // variantState is what a checker remembers about one media playlist between cycles.
@@ -22,7 +29,7 @@ type variantState struct {
 	// lastCheck0 is the time of the check before the current one.
 	lastCheck0 time.Time
 	// lastServer is the server the previous playlist came from.
-	lastServer string
+	lastServer node.Node
 	recent     map[uint64]string
 	// dated is the program date-time the segments of the last playlist
 	// had, told or counted from the one before.
@@ -63,7 +70,7 @@ type variantState struct {
 	playWall, playMedia float64
 	playSegments        int
 	// stallDetails is the calculation that led to the current stall.
-	stallDetails []any
+	stallDetails []detail.Field
 	// lastCheck is when the playlist was last examined, lastText what it
 	// said then.
 	lastCheck time.Time
@@ -134,10 +141,10 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 	segs := playlistSegments(p)
 	n := len(segs)
 
-	cy.metric("hls_target_duration_seconds", v.Key, td)
-	cy.metric("hls_playlist_segments", v.Key, float64(n))
-	cy.metric("hls_discontinuity_sequence", v.Key, float64(p.DiscontinuitySeq))
-	cy.metric("hls_playlist_live", v.Key, b2f(!p.Closed))
+	cy.metric(metricname.TargetDurationSeconds(), v.Key, td)
+	cy.metric(metricname.PlaylistSegments(), v.Key, float64(n))
+	cy.metric(metricname.DiscontinuitySequence(), v.Key, float64(p.DiscontinuitySeq))
+	cy.metric(metricname.PlaylistLive(), v.Key, b2f(!p.Closed))
 	if !p.Closed {
 		cy.live(td)
 	}
@@ -146,20 +153,20 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 		cy.previous(v.Key, st.lastText, st.lastCheck)
 	}
 	if n == 0 {
-		cy.problem(ProbPlaylistEmpty, SevCrit, v.Key, "media playlist has no segments")
+		cy.problem(problemkind.PlaylistEmpty(), severity.Crit(), v.Key, "media playlist has no segments")
 		cy.snapshot(v.Key, plURL, resp.Body)
 		return edge{}
 	}
 	first, last := segs[0].seq, segs[n-1].seq
-	cy.metric("hls_media_sequence", v.Key, float64(last))
-	cy.about(v.Key, "target_duration", td, "playlist_segments", n, "first_sequence", first, "last_sequence", last)
+	cy.metric(metricname.MediaSequence(), v.Key, float64(last))
+	cy.about(v.Key, detail.TargetDuration(td), detail.PlaylistSegments(n), detail.FirstSequence(first), detail.LastSequence(last))
 	// Checks in between that could not read the playlist: what happened to
 	// it meanwhile is their consequence, not a finding of its own.
 	failedBetween := st.failedChecks
 	if !st.lastCheck.IsZero() {
-		cy.about(v.Key, "since_previous_check", now.Sub(st.lastCheck).Seconds())
+		cy.about(v.Key, detail.SincePreviousCheck(now.Sub(st.lastCheck).Seconds()))
 		if failedBetween > 0 {
-			cy.about(v.Key, "failed_checks_between", failedBetween, "last_failure", st.lastFailure)
+			cy.about(v.Key, detail.FailedChecksBetween(failedBetween), detail.LastFailure(st.lastFailure))
 		}
 	}
 	st.lastCheck0 = st.lastCheck
@@ -173,7 +180,7 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 	server := endpoint(plURL, resp).Node()
 	serverBefore := st.lastServer
 	st.lastServer = server
-	if server != serverBefore && serverBefore != "" {
+	if server != serverBefore && !serverBefore.IsZero() {
 		st.anotherServer()
 	}
 	if st.haveSeq {
@@ -181,18 +188,18 @@ func (c *Checker) checkMediaPlaylist(ctx context.Context, cy *cycle, v Variant, 
 		c.sequenceGoesOn(cy, st, pl, now)
 	}
 	if p.Closed && !st.closed && st.seen {
-		cy.problem(ProbStreamEnded, SevWarn, v.Key, "live playlist ended (EXT-X-ENDLIST appeared)")
+		cy.problem(problemkind.StreamEnded(), severity.Warn(), v.Key, "live playlist ended (EXT-X-ENDLIST appeared)")
 	}
 
 	selected, fresh := c.selectSegments(cy, v, st, p.Closed, segs)
 	failed := map[uint64]bool{}
 	st.window, st.windowTD = segs, td
-	if c.t.Level != LevelPlaylist {
+	if c.t.Level != level.Playlist() {
 		c.checkKeys(ctx, cy, v, plURL, selected, st)
 		c.checkSegments(ctx, cy, v, plURL, selected, st, resp, entry, failed)
 	}
 
-	if !p.Closed && c.t.Level != LevelPlaylist && v.Kind != KindSubtitles {
+	if !p.Closed && c.t.Level != level.Playlist() && v.Kind != variantkind.Subtitles() {
 		c.playerModel(cy, v, st, td, fresh, failed)
 	}
 	st.remember(p.Closed, segs, td)
@@ -251,7 +258,7 @@ type playlistRead struct {
 	url                  string
 	resp                 *httpx.Response
 	segs                 []plSegment
-	server, serverBefore string
+	server, serverBefore node.Node
 	// failedBetween counts the checks since the last one that read the
 	// playlist; promised is how long that one said its segments stay.
 	failedBetween int
@@ -272,29 +279,29 @@ func (c *Checker) sequenceGoesOn(cy *cycle, st *variantState, pl playlistRead, n
 		// packager starts over when it is restarted. A player that follows
 		// the numbers loses its place either way.
 		why := "the packager started its numbering over"
-		if pl.server != pl.serverBefore && pl.serverBefore != "" {
+		if pl.server != pl.serverBefore && !pl.serverBefore.IsZero() {
 			why = fmt.Sprintf("the playlist came from %s, the previous one from %s, and they number segments differently", pl.server, pl.serverBefore)
 		}
-		cy.problem(ProbSeqRenumbered, SevWarn, v.Key, "media sequence numbering changed from %d to %d: %s", st.lastSeq, last, why)
-		cy.detail(ProbSeqRenumbered, v.Key, "previous_last_sequence", st.lastSeq, "playlist_server_before", pl.serverBefore)
+		cy.problem(problemkind.SeqRenumbered(), severity.Warn(), v.Key, "media sequence numbering changed from %d to %d: %s", st.lastSeq, last, why)
+		cy.detail(problemkind.SeqRenumbered(), v.Key, detail.PreviousLastSequence(st.lastSeq), detail.PlaylistServerBefore(pl.serverBefore))
 		cy.snapshot(v.Key, pl.url, pl.resp.Body)
 		st.lostCount()
 	case last < st.lastSeq:
-		cy.problem(ProbSeqRegression, SevCrit, v.Key, "media sequence went back from %d to %d", st.lastSeq, last)
-		cy.detail(ProbSeqRegression, v.Key, "previous_last_sequence", st.lastSeq)
+		cy.problem(problemkind.SeqRegression(), severity.Crit(), v.Key, "media sequence went back from %d to %d", st.lastSeq, last)
+		cy.detail(problemkind.SeqRegression(), v.Key, detail.PreviousLastSequence(st.lastSeq))
 		cy.snapshot(v.Key, pl.url, pl.resp.Body)
 		st.lostCount()
 	case first > st.lastSeq+1:
 		missed := first - st.lastSeq - 1
-		cy.metric("hls_segments_missed", v.Key, float64(missed))
+		cy.metric(metricname.SegmentsMissed(), v.Key, float64(missed))
 		// After an outage the gap says nothing new: the outage is reported.
-		sev := SevWarn
+		sev := severity.Warn()
 		if pl.failedBetween > 0 {
-			sev = SevInfo
+			sev = severity.Info()
 		}
-		cy.problem(ProbSeqJump, sev, v.Key, "%d segments left the playlist between checks (%d → %d)", missed, st.lastSeq, first)
-		cy.doubt(ProbSeqJump, v.Key) // a late check misses segments of a healthy stream as well
-		cy.detail(ProbSeqJump, v.Key, "previous_last_sequence", st.lastSeq, "missed_segments", missed, "previous_playlist_keeps", pl.promised)
+		cy.problem(problemkind.SeqJump(), sev, v.Key, "%d segments left the playlist between checks (%d → %d)", missed, st.lastSeq, first)
+		cy.doubt(problemkind.SeqJump(), v.Key) // a late check misses segments of a healthy stream as well
+		cy.detail(problemkind.SeqJump(), v.Key, detail.PreviousLastSequence(st.lastSeq), detail.MissedSegments(missed), detail.PreviousPlaylistKeeps(pl.promised))
 		cy.snapshot(v.Key, pl.url, pl.resp.Body)
 	}
 	// The dates of a playlist that dates its first segment alone are
@@ -304,8 +311,8 @@ func (c *Checker) sequenceGoesOn(cy *cycle, st *variantState, pl playlistRead, n
 	for _, s := range segs {
 		// The same segment under another token is the same segment.
 		if old, ok := st.recent[s.seq]; ok && withoutQuery(old) != withoutQuery(s.seg.URI) {
-			cy.problem(ProbSegmentChanged, SevWarn, v.Key, "segment %d changed URI from %q to %q", s.seq, old, s.seg.URI)
-			cy.detail(ProbSegmentChanged, v.Key, "segment_sequence", s.seq, "uri_before", old, "uri_now", s.seg.URI)
+			cy.problem(problemkind.SegmentChanged(), severity.Warn(), v.Key, "segment %d changed URI from %q to %q", s.seq, old, s.seg.URI)
+			cy.detail(problemkind.SegmentChanged(), v.Key, detail.SegmentSequence(s.seq), detail.URIBefore(old), detail.URINow(s.seg.URI))
 			cy.snapshot(v.Key, pl.url, pl.resp.Body)
 		}
 		if old, ok := st.dated[s.seq]; ok && !s.at.IsZero() {
@@ -315,7 +322,7 @@ func (c *Checker) sequenceGoesOn(cy *cycle, st *variantState, pl playlistRead, n
 		}
 	}
 	if math.Abs(moved) > c.th.PDTDrift {
-		cy.problem(ProbPDTDiscontinuity, SevWarn, v.Key, "program date-time of segment %d moved by %+.3fs between two readings of the playlist", movedAt, moved)
+		cy.problem(problemkind.PDTDiscontinuity(), severity.Warn(), v.Key, "program date-time of segment %d moved by %+.3fs between two readings of the playlist", movedAt, moved)
 		cy.snapshot(v.Key, pl.url, pl.resp.Body)
 	}
 }
@@ -362,11 +369,11 @@ func (c *Checker) selectSegments(cy *cycle, v Variant, st *variantState, closed 
 			limit = 1
 		}
 		if len(selected) > limit {
-			cy.metric("hls_segments_skipped", v.Key, float64(len(selected)-limit))
+			cy.metric(metricname.SegmentsSkipped(), v.Key, float64(len(selected)-limit))
 			selected = selected[len(selected)-limit:]
 		}
 	}
-	cy.metric("hls_playlist_new_segments", v.Key, float64(len(fresh)))
+	cy.metric(metricname.PlaylistNewSegments(), v.Key, float64(len(fresh)))
 	return selected, fresh
 }
 
@@ -430,8 +437,8 @@ func (c *Checker) inspectPlaylist(cy *cycle, v Variant, plURL string, p *m3u8.Me
 			gaps++
 		}
 		if td > 0 && d > td+c.th.TargetDurationSlack {
-			cy.problem(ProbTargetDuration, SevWarn, v.Key, "segment %d lasts %.3fs, target duration is %.0fs", s.seq, d, td)
-			cy.detail(ProbTargetDuration, v.Key, "segment_sequence", s.seq, "segment_uri", s.seg.URI, "segment_duration", d, "allowed_excess", c.th.TargetDurationSlack)
+			cy.problem(problemkind.TargetDuration(), severity.Warn(), v.Key, "segment %d lasts %.3fs, target duration is %.0fs", s.seq, d, td)
+			cy.detail(problemkind.TargetDuration(), v.Key, detail.SegmentSequence(s.seq), detail.SegmentURI(s.seg.URI), detail.SegmentDuration(d), detail.AllowedExcess(c.th.TargetDurationSlack))
 			cy.snapshot(v.Key, plURL, resp.Body)
 		}
 		if i > 0 && !s.seg.Discontinuity {
@@ -442,58 +449,58 @@ func (c *Checker) inspectPlaylist(cy *cycle, v Variant, plURL string, p *m3u8.Me
 					maxDrift = drift
 				}
 				if math.Abs(drift) > c.th.PDTDrift {
-					cy.problem(ProbPDTDiscontinuity, SevWarn, v.Key, "program date-time jumps by %+.3fs at segment %d without a discontinuity tag", drift, s.seq)
+					cy.problem(problemkind.PDTDiscontinuity(), severity.Warn(), v.Key, "program date-time jumps by %+.3fs at segment %d without a discontinuity tag", drift, s.seq)
 					cy.snapshot(v.Key, plURL, resp.Body)
 				}
 			}
 		}
 	}
-	cy.metric("hls_playlist_window_seconds", v.Key, window)
-	cy.about(v.Key, "playlist_window", window, "segment_duration_min", minDur, "segment_duration_max", maxDur)
+	cy.metric(metricname.PlaylistWindowSeconds(), v.Key, window)
+	cy.about(v.Key, detail.PlaylistWindow(window), detail.SegmentDurationMin(minDur), detail.SegmentDurationMax(maxDur))
 	st.keeps = max(window-maxDur, 0)
 	if !p.Closed {
 		cy.slack(window - maxDur)
 	}
-	cy.metric("hls_segment_duration_max_seconds", v.Key, maxDur)
-	cy.metric("hls_segment_duration_min_seconds", v.Key, minDur)
-	cy.metric("hls_playlist_discontinuities", v.Key, float64(discontinuities))
-	cy.metric("hls_playlist_ad_markers", v.Key, float64(adMarkers))
-	cy.metric("hls_playlist_encrypted", v.Key, b2f(encrypted > 0))
-	cy.metric("hls_playlist_gap_segments", v.Key, float64(gaps))
-	cy.metric("hls_pdt_drift_seconds", v.Key, maxDrift)
+	cy.metric(metricname.SegmentDurationMaxSeconds(), v.Key, maxDur)
+	cy.metric(metricname.SegmentDurationMinSeconds(), v.Key, minDur)
+	cy.metric(metricname.PlaylistDiscontinuities(), v.Key, float64(discontinuities))
+	cy.metric(metricname.PlaylistAdMarkers(), v.Key, float64(adMarkers))
+	cy.metric(metricname.PlaylistEncrypted(), v.Key, b2f(encrypted > 0))
+	cy.metric(metricname.PlaylistGapSegments(), v.Key, float64(gaps))
+	cy.metric(metricname.PDTDriftSeconds(), v.Key, maxDrift)
 	if p.HasPartialSegments() {
-		cy.metric("hls_playlist_parts", v.Key, float64(len(p.PartialSegments)))
+		cy.metric(metricname.PlaylistParts(), v.Key, float64(len(p.PartialSegments)))
 	}
 
 	lastSeg := segs[n-1].seg
 	if !p.Closed && !segs[n-1].at.IsZero() {
 		edge := segs[n-1].at.Add(time.Duration(lastSeg.Duration * float64(time.Second)))
-		cy.metric("hls_live_latency_seconds", v.Key, now.Sub(edge).Seconds())
+		cy.metric(metricname.LiveLatencySeconds(), v.Key, now.Sub(edge).Seconds())
 	}
 
 	if st.seen && st.targetDuration > 0 && td != st.targetDuration {
 		// Not allowed by the specification, but some packagers do it all the
 		// time without harm to players: recorded, not treated as trouble.
-		cy.problem(ProbTargetDurChanged, SevInfo, v.Key, "target duration changed from %.0fs to %.0fs", st.targetDuration, td)
-		cy.detail(ProbTargetDurChanged, v.Key, "target_duration_before", st.targetDuration)
+		cy.problem(problemkind.TargetDurChanged(), severity.Info(), v.Key, "target duration changed from %.0fs to %.0fs", st.targetDuration, td)
+		cy.detail(problemkind.TargetDurChanged(), v.Key, detail.TargetDurationBefore(st.targetDuration))
 	}
 
 	// Freshness: a live playlist must keep changing.
 	sig := fmt.Sprintf("%d/%d/%s/%v", p.SeqNo, n, lastSeg.URI, p.Closed)
 	if sig != st.signature {
 		if !st.lastChange.IsZero() {
-			cy.metric("hls_playlist_update_interval_seconds", v.Key, now.Sub(st.lastChange).Seconds())
+			cy.metric(metricname.PlaylistUpdateIntervalSeconds(), v.Key, now.Sub(st.lastChange).Seconds())
 		}
 		st.signature = sig
 		st.lastChange = now
 	}
 	stale := now.Sub(st.lastChange)
 	if !p.Closed {
-		cy.metric("hls_playlist_stale_seconds", v.Key, stale.Seconds())
+		cy.metric(metricname.PlaylistStaleSeconds(), v.Key, stale.Seconds())
 		limit := max(time.Duration(c.th.StaleFactor*td*float64(time.Second)), c.th.StaleMin)
 		if stale > limit {
-			cy.problem(ProbPlaylistStale, SevCrit, v.Key, "playlist has not changed for %s (target duration %.0fs)", stale.Round(time.Second), td)
-			cy.detail(ProbPlaylistStale, v.Key, "unchanged_for", stale, "unchanged_limit", limit, "last_segment_uri", lastSeg.URI)
+			cy.problem(problemkind.PlaylistStale(), severity.Crit(), v.Key, "playlist has not changed for %s (target duration %.0fs)", stale.Round(time.Second), td)
+			cy.detail(problemkind.PlaylistStale(), v.Key, detail.UnchangedFor(stale), detail.UnchangedLimit(limit), detail.LastSegmentURI(lastSeg.URI))
 			cy.snapshot(v.Key, plURL, resp.Body)
 		}
 	}
@@ -525,12 +532,12 @@ func (c *Checker) checkKeys(ctx context.Context, cy *cycle, v Variant, plURL str
 			resp, err := c.get(ctx, httpx.Request{URL: u, MaxBody: 1 << 16}, c.timeout())
 			switch {
 			case err != nil:
-				cy.problem(ProbKeyUnavailable, SevCrit, v.Key, "encryption key request failed: %v", err)
+				cy.problem(problemkind.KeyUnavailable(), severity.Crit(), v.Key, "encryption key request failed: %v", err)
 				if timedOut(err) {
-					cy.doubt(ProbKeyUnavailable, v.Key)
+					cy.doubt(problemkind.KeyUnavailable(), v.Key)
 				}
 			case !resp.OK():
-				cy.problem(ProbKeyUnavailable, SevCrit, v.Key, "encryption key returned HTTP %d", resp.Status)
+				cy.problem(problemkind.KeyUnavailable(), severity.Crit(), v.Key, "encryption key returned HTTP %d", resp.Status)
 			default:
 				if st.keyOK == nil || len(st.keyOK) > 64 {
 					st.keyOK = map[string]bool{}
@@ -582,32 +589,32 @@ func (c *Checker) playerModel(cy *cycle, v Variant, st *variantState, td float64
 		if st.buffer < 0 {
 			stalls = 1
 			st.stalled = true
-			st.stallDetails = []any{
-				"buffer_at_start", 3 * td,
-				"buffer_before", before,
-				"cycle_elapsed", elapsed,
-				"cycle_media", gained,
-				"cycle_segments", got,
-				"cycle_failed_segments", lost,
-				"buffer_shortfall", -st.buffer,
-				"played_for", st.playWall,
-				"media_received", st.playMedia,
-				"segments_received", st.playSegments,
+			st.stallDetails = []detail.Field{
+				detail.BufferAtStart(3 * td),
+				detail.BufferBefore(before),
+				detail.CycleElapsed(elapsed),
+				detail.CycleMedia(gained),
+				detail.CycleSegments(got),
+				detail.CycleFailedSegments(lost),
+				detail.BufferShortfall(-st.buffer),
+				detail.PlayedFor(st.playWall),
+				detail.MediaReceived(st.playMedia),
+				detail.SegmentsReceived(st.playSegments),
 			}
 			if st.playWall > 0 {
-				st.stallDetails = append(st.stallDetails, "media_rate", st.playMedia/st.playWall)
+				st.stallDetails = append(st.stallDetails, detail.MediaRate(st.playMedia/st.playWall))
 			}
 			st.buffer = 0
 		}
 	}
 	st.bufTime = now
 	st.buffer = min(st.buffer, max(6*td, 30))
-	cy.metric("hls_buffer_seconds", v.Key, st.buffer)
-	cy.metric("hls_stalls", v.Key, stalls)
+	cy.metric(metricname.BufferSeconds(), v.Key, st.buffer)
+	cy.metric(metricname.Stalls(), v.Key, stalls)
 	if st.stalled {
-		cy.problem(ProbPlaybackStall, SevCrit, v.Key, "a player would have run out of buffer: segments arrive slower than real time")
-		cy.doubt(ProbPlaybackStall, v.Key)
-		cy.detail(ProbPlaybackStall, v.Key, st.stallDetails...)
+		cy.problem(problemkind.PlaybackStall(), severity.Crit(), v.Key, "a player would have run out of buffer: segments arrive slower than real time")
+		cy.doubt(problemkind.PlaybackStall(), v.Key)
+		cy.detail(problemkind.PlaybackStall(), v.Key, st.stallDetails...)
 	}
 }
 

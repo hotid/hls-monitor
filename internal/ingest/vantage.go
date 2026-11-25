@@ -6,6 +6,12 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 // One stream is checked from several places, and each sees where the
@@ -39,29 +45,29 @@ type seenEdge struct {
 }
 
 type vantageKey struct {
-	stream  int64
-	variant string
+	stream  id.Stream
+	variant variantkey.Key
 }
 
 type vantageState struct {
-	edges map[int64]seenEdge
+	edges map[id.Agent]seenEdge
 	// behind counts, by place, the results in a row that found it behind.
-	behind map[int64]int
+	behind map[id.Agent]int
 }
 
 // compareVantages notes where the playlists of a result end and adds a
 // problem to it when the place it comes from has for some checks been
 // seeing the stream behind what another place sees.
-func (in *Ingester) compareVantages(agentID int64, r *probe.Result, now time.Time) {
+func (in *Ingester) compareVantages(agentID id.Agent, r *probe.Result, now time.Time) {
 	if d := now.Sub(r.Time); d > vantageFresh || d < -vantageFresh {
 		return
 	}
-	latency, target := map[string]float64{}, map[string]float64{}
+	latency, target := map[variantkey.Key]float64{}, map[variantkey.Key]float64{}
 	for _, m := range r.Metrics {
 		switch m.Name {
-		case "hls_live_latency_seconds":
+		case metricname.LiveLatencySeconds():
 			latency[m.Variant] = m.Value
-		case "hls_target_duration_seconds":
+		case metricname.TargetDurationSeconds():
 			target[m.Variant] = m.Value
 		}
 	}
@@ -74,7 +80,7 @@ func (in *Ingester) compareVantages(agentID int64, r *probe.Result, now time.Tim
 		k := vantageKey{r.TargetID, variant}
 		st := in.vantages[k]
 		if st == nil {
-			st = &vantageState{edges: map[int64]seenEdge{}, behind: map[int64]int{}}
+			st = &vantageState{edges: map[id.Agent]seenEdge{}, behind: map[id.Agent]int{}}
 			in.vantages[k] = st
 		}
 		mine := seenEdge{edge: r.Time.Add(-time.Duration(lat * float64(time.Second))), when: r.Time, target: target[variant]}
@@ -83,7 +89,7 @@ func (in *Ingester) compareVantages(agentID int64, r *probe.Result, now time.Tim
 		// ends are brought to one moment by the time between the checks,
 		// each by its own clock — which on hosts kept by NTP agree to
 		// within milliseconds.
-		worst, ahead := 0.0, int64(0)
+		worst, ahead := 0.0, id.Agent{}
 		for other, e := range st.edges {
 			if other == agentID {
 				continue
@@ -106,9 +112,9 @@ func (in *Ingester) compareVantages(agentID int64, r *probe.Result, now time.Tim
 			continue
 		}
 		r.Problems = append(r.Problems, probe.Problem{
-			Kind: probe.ProbVantageBehind, Severity: probe.SevWarn, Variant: variant, Count: 1,
+			Kind: problemkind.VantageBehind(), Severity: severity.Warn(), Variant: variant, Count: 1,
 			Message: "the playlist seen from here ends " + round1(worst) + "s behind what another vantage point sees",
-			Details: map[string]any{"behind_seconds": math.Round(worst*10) / 10, "behind_limit": limit, "ahead_agent_id": ahead, "checks_in_a_row": st.behind[agentID]},
+			Details: detail.Of(detail.BehindSeconds(math.Round(worst*10)/10), detail.BehindLimit(limit), detail.AheadAgentID(ahead.Int64()), detail.ChecksInARow(st.behind[agentID])),
 		})
 	}
 }

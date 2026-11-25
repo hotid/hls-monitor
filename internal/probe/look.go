@@ -8,6 +8,15 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/media"
 	"github.com/hotid/hls-monitor/internal/picture"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
 )
 
 // A stream whose playlists and segments are all in order may still show
@@ -24,19 +33,12 @@ type Looker interface {
 	Busy() bool
 }
 
-// What a stream's picture is checked for (Target.Picture).
-const (
-	PictureCheck  = ""       // everything
-	PictureStatic = "static" // a picture that does not change is what it shows: radio, a test card
-	PictureOff    = "off"    // not looked at
-)
-
 // PictureProblem reports whether a problem is found by looking at the
 // picture or listening to the sound.
-func PictureProblem(kind string) bool {
+func PictureProblem(kind problemkind.Kind) bool {
 	switch kind {
-	case ProbPictureBlack, ProbPictureFrozen, ProbAudioSilent, ProbPictureSlate, ProbPictureLoop, ProbAudioLoop,
-		ProbAudioChannelSilent, ProbAudioQuiet, ProbAudioUndecodable:
+	case problemkind.PictureBlack(), problemkind.PictureFrozen(), problemkind.AudioSilent(), problemkind.PictureSlate(), problemkind.PictureLoop(), problemkind.AudioLoop(),
+		problemkind.AudioChannelSilent(), problemkind.AudioQuiet(), problemkind.AudioUndecodable():
 		return true
 	}
 	return false
@@ -46,7 +48,7 @@ func PictureProblem(kind string) bool {
 // interrupted for technical reasons" — as somebody marked it. One that
 // moves has several frames.
 type Slate struct {
-	ID     int64    `json:"id"`
+	ID     id.Slate `json:"id"`
 	Name   string   `json:"name"`
 	Frames [][]byte `json:"frames"`
 	// Keys are the coded frames of a clip, sorted: what it is known by
@@ -86,11 +88,6 @@ func slateOf(slates []Slate, cells []byte) *Slate {
 		}
 	}
 	return nil
-}
-
-// ValidPicture reports whether p is one of the settings above.
-func ValidPicture(p string) bool {
-	return p == PictureCheck || p == PictureStatic || p == PictureOff
 }
 
 const (
@@ -147,8 +144,8 @@ const (
 // Picture is what a look at a stream found: carried in the result to be
 // shown, and kept with an incident as its evidence.
 type Picture struct {
-	Variant string    `json:"variant"`
-	Time    time.Time `json:"time"`
+	Variant variantkey.Key `json:"variant"`
+	Time    time.Time      `json:"time"`
 	// JPEG is the picture, small; absent when the stream has none. Cells
 	// is the same shrunk further, to compare pictures by.
 	JPEG  []byte `json:"jpeg,omitempty"`
@@ -224,16 +221,27 @@ type looks struct {
 type standingProblem struct {
 	// at is when it was last found to stand, for what is found by other
 	// means than looks.
-	at                               time.Time
-	kind, severity, variant, message string
-	details                          []any
+	at       time.Time
+	kind     problemkind.Kind
+	severity severity.Severity
+	variant  variantkey.Key
+	// message is what is wrong, in words for a reader.
+	message string
+	details []detail.Field
+}
+
+// standKey is what a finding that stands between checks is about: a
+// playlist, or the sound of one.
+type standKey struct {
+	variant variantkey.Key
+	sound   bool
 }
 
 // beginLook decides at the start of a cycle whether this one looks.
 func (c *Checker) beginLook(start time.Time) {
 	l := &c.looks
 	l.due, l.taken = false, false
-	if c.Looker == nil || c.PictureEvery <= 0 || c.t.Picture == PictureOff || c.t.Level == LevelPlaylist {
+	if c.Looker == nil || c.PictureEvery <= 0 || c.t.Picture == picturemode.Off() || c.t.Level == level.Playlist() {
 		l.problems, l.soundProblems, l.unheard = nil, nil, run{}
 		return
 	}
@@ -246,7 +254,7 @@ func (c *Checker) beginLook(start time.Time) {
 	}
 	// Decoding costs processor time: a monitor that cannot keep up, or a
 	// decoder with a queue, puts the look off rather than fall behind.
-	if c.CatchUp || c.Looker.Busy() || (c.Overloaded != nil && c.Overloaded(start.Add(-c.PictureEvery)) != "") {
+	if c.CatchUp || c.Looker.Busy() || (c.Overloaded != nil && !c.Overloaded(start.Add(-c.PictureEvery)).IsZero()) {
 		return
 	}
 	l.due = true
@@ -259,7 +267,7 @@ func (c *Checker) wantsLook(v Variant) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	l := &c.looks
-	if !l.due || l.taken || (v.Kind != KindVideo && v.Kind != KindMedia) {
+	if !l.due || l.taken || (v.Kind != variantkind.Video() && v.Kind != variantkind.Media()) {
 		return false
 	}
 	l.taken = true
@@ -346,18 +354,18 @@ func (c *Checker) sawNothing(ctx context.Context, v Variant, err error, info *me
 		return
 	}
 	l.at = at.Add(min(lookStanding, c.PictureEvery) - c.PictureEvery)
-	details := []any{"decoder_says", err.Error(), "looks_in_a_row", l.nothing.n,
-		"since", l.nothing.since.UTC().Format(time.RFC3339), "looked_at", at.UTC().Format(time.RFC3339)}
+	details := []detail.Field{detail.DecoderSays(err.Error()), detail.LooksInARow(l.nothing.n),
+		detail.Since(l.nothing.since), detail.LookedAt(at)}
 	// What the container says of the video narrows it down: a track with
 	// packets in it and next to no pictures among them is not video that
 	// failed to decode, it is not video.
 	if video := videoOf(info); video != nil && video.Bytes > 0 {
-		details = append(details, "video_pictures", video.Frames, "video_packets", video.Packets)
+		details = append(details, detail.VideoPictures(video.Frames), detail.VideoPackets(video.Packets))
 		if d := video.Duration(); d > 0 {
-			details = append(details, "video_kbit_s", math.Round(float64(video.Bytes)*8/d/1000))
+			details = append(details, detail.VideoKbitS(math.Round(float64(video.Bytes)*8/d/1000)))
 		}
 	}
-	l.problems = []standingProblem{{kind: ProbMediaUndecodable, severity: SevCrit, variant: v.Key,
+	l.problems = []standingProblem{{kind: problemkind.MediaUndecodable(), severity: severity.Crit(), variant: v.Key,
 		message: "neither the picture nor the sound can be decoded", details: details}}
 }
 
@@ -366,9 +374,9 @@ func (c *Checker) sawNothing(ctx context.Context, v Variant, err error, info *me
 // next look to come soon. The lock is held.
 func (c *Checker) seePicture(cy *cycle, v Variant, f *picture.Frame, at time.Time) bool {
 	l := &c.looks
-	stand := func(kind, message string, details ...any) {
-		l.problems = append(l.problems, standingProblem{kind: kind, severity: SevCrit, variant: v.Key, message: message,
-			details: append(details, "looked_at", at.UTC().Format(time.RFC3339))})
+	stand := func(kind problemkind.Kind, message string, details ...detail.Field) {
+		l.problems = append(l.problems, standingProblem{kind: kind, severity: severity.Crit(), variant: v.Key, message: message,
+			details: append(details, detail.LookedAt(at))})
 	}
 	black := f.Luma < blackLuma && f.Dark >= blackShare
 	same := picture.Moved(l.cells, f.Cells) <= stillMoves
@@ -380,17 +388,17 @@ func (c *Checker) seePicture(cy *cycle, v Variant, f *picture.Frame, at time.Tim
 		l.black = run{}
 	}
 	l.black.note(black, at)
-	l.same.note(same && c.t.Picture != PictureStatic, at)
+	l.same.note(same && c.t.Picture != picturemode.Static(), at)
 	l.cells = f.Cells
-	cy.metric("hls_picture_luma", v.Key, f.Luma)
+	cy.metric(metricname.PictureLuma(), v.Key, f.Luma)
 	changed := 1.0
 	if same {
 		changed = 0
 	}
-	cy.metric("hls_picture_changed", v.Key, changed)
+	cy.metric(metricname.PictureChanged(), v.Key, changed)
 	if l.black.standing(at) {
-		stand(ProbPictureBlack, "the picture is black", "picture_luma", round1(f.Luma), "picture_dark_share", round3(f.Dark),
-			"looks_in_a_row", l.black.n, "since", l.black.since.UTC().Format(time.RFC3339))
+		stand(problemkind.PictureBlack(), "the picture is black", detail.PictureLuma(round1(f.Luma)), detail.PictureDarkShare(round3(f.Dark)),
+			detail.LooksInARow(l.black.n), detail.Since(l.black.since))
 	}
 	// A picture somebody marked as a slate is known at the first look,
 	// and is not told a second time as one that does not change.
@@ -399,14 +407,14 @@ func (c *Checker) seePicture(cy *cycle, v Variant, f *picture.Frame, at time.Tim
 		slate = slateOf(c.Slates(), f.Cells)
 	}
 	if slate != nil {
-		stand(ProbPictureSlate, "the stream shows the slate \""+slate.Name+"\"", "slate", slate.Name)
+		stand(problemkind.PictureSlate(), "the stream shows the slate \""+slate.Name+"\"", detail.Slate(slate.Name))
 	}
 	// A black screen does not change either; it is told as black. A dark
 	// notice with something blinking on it is black one look and not the
 	// next, and is told as what it is: a picture that stays.
 	if slate == nil && l.same.standing(at) && !l.black.standing(at) {
-		stand(ProbPictureFrozen, "the picture does not change", "looks_in_a_row", l.same.n+1,
-			"since", l.same.since.UTC().Format(time.RFC3339))
+		stand(problemkind.PictureFrozen(), "the picture does not change", detail.LooksInARow(l.same.n+1),
+			detail.Since(l.same.since))
 	}
 	return l.black.n > 0 || l.same.n > 0
 }
@@ -416,17 +424,17 @@ func (c *Checker) seePicture(cy *cycle, v Variant, f *picture.Frame, at time.Tim
 func (c *Checker) hear(cy *cycle, v Variant, f *picture.Frame, audio *media.Track, at time.Time) (suspect bool) {
 	l := &c.looks
 	l.soundProblems = nil
-	tell := func(severity, kind, message string, details ...any) {
-		l.soundProblems = append(l.soundProblems, standingProblem{kind: kind, severity: severity, variant: v.Key, message: message,
-			details: append(details, "looked_at", at.UTC().Format(time.RFC3339))})
+	tell := func(sev severity.Severity, kind problemkind.Kind, message string, details ...detail.Field) {
+		l.soundProblems = append(l.soundProblems, standingProblem{kind: kind, severity: sev, variant: v.Key, message: message,
+			details: append(details, detail.LookedAt(at))})
 	}
 	if f.HasAudio {
 		l.silent.note(f.AudioDB < silentBelow, at)
-		cy.metric("hls_audio_level_db", v.Key, f.AudioDB)
+		cy.metric(metricname.AudioLevelDB(), v.Key, f.AudioDB)
 		suspect = suspect || l.silent.n > 0
 		if l.silent.standing(at) {
-			tell(SevCrit, ProbAudioSilent, "the sound is silence", "audio_level_db", round1(f.AudioDB),
-				"looks_in_a_row", l.silent.n, "since", l.silent.since.UTC().Format(time.RFC3339))
+			tell(severity.Crit(), problemkind.AudioSilent(), "the sound is silence", detail.AudioLevelDB(round1(f.AudioDB)),
+				detail.LooksInARow(l.silent.n), detail.Since(l.silent.since))
 		}
 		// Left and right are the first two channels, whatever others
 		// there are: those are often silent with nothing wrong.
@@ -447,15 +455,15 @@ func (c *Checker) hear(cy *cycle, v Variant, f *picture.Frame, audio *media.Trac
 		suspect = suspect || l.oneSided.n > 0
 		if l.oneSided.standing(at) {
 			name := []string{"left", "right"}[side]
-			tell(SevWarn, ProbAudioChannelSilent, "the "+name+" channel of the sound is silent", "silent_channel", name,
-				"left_level_db", round1(f.ChannelDB[0]), "right_level_db", round1(f.ChannelDB[1]),
-				"looks_in_a_row", l.oneSided.n, "since", l.oneSided.since.UTC().Format(time.RFC3339))
+			tell(severity.Warn(), problemkind.AudioChannelSilent(), "the "+name+" channel of the sound is silent", detail.SilentChannel(name),
+				detail.LeftLevelDB(round1(f.ChannelDB[0])), detail.RightLevelDB(round1(f.ChannelDB[1])),
+				detail.LooksInARow(l.oneSided.n), detail.Since(l.oneSided.since))
 		}
 		// Too quiet is told of sound that is there: silence is told as silence.
 		l.quiet.note(f.AudioDB < quietBelow, at)
 		if l.quiet.n >= quietRuns && at.Sub(l.quiet.since) >= quietSpan && !l.silent.standing(at) {
-			tell(SevWarn, ProbAudioQuiet, "the sound is far too quiet", "audio_level_db", round1(f.AudioDB), "quiet_below_db", quietBelow,
-				"looks_in_a_row", l.quiet.n, "since", l.quiet.since.UTC().Format(time.RFC3339))
+			tell(severity.Warn(), problemkind.AudioQuiet(), "the sound is far too quiet", detail.AudioLevelDB(round1(f.AudioDB)), detail.QuietBelowDB(quietBelow),
+				detail.LooksInARow(l.quiet.n), detail.Since(l.quiet.since))
 		}
 	}
 	// Sound the container has, and the decoder made nothing of.
@@ -463,11 +471,11 @@ func (c *Checker) hear(cy *cycle, v Variant, f *picture.Frame, audio *media.Trac
 	l.deaf.note(deaf, at)
 	suspect = suspect || l.deaf.n > 0
 	if l.deaf.standing(at) {
-		details := []any{"audio_frames", audio.Frames, "looks_in_a_row", l.deaf.n, "since", l.deaf.since.UTC().Format(time.RFC3339)}
+		details := []detail.Field{detail.AudioFrames(audio.Frames), detail.LooksInARow(l.deaf.n), detail.Since(l.deaf.since)}
 		if f.AudioError != "" {
-			details = append(details, "decoder_says", f.AudioError)
+			details = append(details, detail.DecoderSays(f.AudioError))
 		}
-		tell(SevCrit, ProbAudioUndecodable, "the sound cannot be decoded", details...)
+		tell(severity.Crit(), problemkind.AudioUndecodable(), "the sound cannot be decoded", details...)
 	}
 	return suspect
 }
@@ -479,7 +487,7 @@ func (c *Checker) wantsListen(v Variant, encrypted bool) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	l := &c.looks
-	if !l.listen || v.Kind != KindAudio || c.Looker == nil {
+	if !l.listen || v.Kind != variantkind.Audio() || c.Looker == nil {
 		return false
 	}
 	// Sound that is there and encrypted is not listened to, and is not
@@ -557,12 +565,12 @@ func (c *Checker) reportLooks(cy *cycle) {
 	// A stream with no sound in it is told for information: it may never
 	// have had any.
 	if u := c.looks.unheard; u.n >= 2 && c.looks.shown != nil {
-		standing = append(standing, standingProblem{kind: ProbAudioAbsent, severity: SevInfo, variant: c.looks.shown.Variant,
-			message: "the stream has no sound", details: []any{"looks_in_a_row", u.n + 1, "since", u.since.UTC().Format(time.RFC3339)}})
+		standing = append(standing, standingProblem{kind: problemkind.AudioAbsent(), severity: severity.Info(), variant: c.looks.shown.Variant,
+			message: "the stream has no sound", details: []detail.Field{detail.LooksInARow(u.n + 1), detail.Since(u.since)}})
 	}
 	slate := false
 	for _, p := range standing {
-		slate = slate || p.kind == ProbPictureSlate
+		slate = slate || p.kind == problemkind.PictureSlate()
 	}
 	// What the coded frames tell. A playlist whose segments are no
 	// longer read says nothing.
@@ -571,7 +579,7 @@ func (c *Checker) reportLooks(cy *cycle) {
 		switch {
 		case c.now().Sub(p.at) > knownFor:
 			delete(c.loops, key)
-		case p.kind == ProbAudioLoop:
+		case p.kind == problemkind.AudioLoop():
 			sounds = append(sounds, p)
 		default:
 			clips = append(clips, p)
@@ -602,7 +610,7 @@ func (c *Checker) reportLooks(cy *cycle) {
 	case len(clips) > 0:
 		kept := standing[:0]
 		for _, p := range standing {
-			if p.kind != ProbPictureFrozen {
+			if p.kind != problemkind.PictureFrozen() {
 				kept = append(kept, p)
 			}
 		}

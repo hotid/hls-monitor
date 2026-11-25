@@ -11,6 +11,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/sourcekind"
+	"github.com/hotid/hls-monitor/internal/types/streamstatus"
 )
 
 // The API documentation of streamSources refers to this type.
@@ -27,7 +31,7 @@ var _ store.SourceSeen
 //	@Success	200		{array}	store.SourceSeen
 //	@Router		/api/v1/streams/{id}/sources [get]
 func (s *Server) streamSources(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
@@ -36,7 +40,7 @@ func (s *Server) streamSources(c *gin.Context) {
 		hours = 24
 	}
 	hours = min(hours, 720)
-	rows, err := s.st.ListSources(c.Request.Context(), id, s.now().Add(-time.Duration(hours)*time.Hour))
+	rows, err := s.st.ListSources(c.Request.Context(), streamID, s.now().Add(-time.Duration(hours)*time.Hour))
 	if s.storeError(c, err) {
 		return
 	}
@@ -64,7 +68,7 @@ type serverView struct {
 	// FailingStreams are up to ten of the streams in the failed state.
 	FailingStreams []streamRef `json:"failing_streams"`
 	// StreamIDs are all the streams counted in Streams.
-	StreamIDs []int64 `json:"stream_ids"`
+	StreamIDs []id.Stream `json:"stream_ids"`
 }
 
 // serverNetwork is what the checks saw of the way to one server.
@@ -125,10 +129,7 @@ func (s *Server) serverNetworks(ctx context.Context, at time.Time) map[[2]string
 }
 
 // streamRef is enough to name a stream and link to it.
-type streamRef struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-}
+type streamRef = store.StreamRef
 
 // servers godoc
 //
@@ -148,12 +149,12 @@ func (s *Server) servers(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
-	seen, err := s.st.ListSources(ctx, 0, sc.now.Add(-5*time.Minute))
+	seen, err := s.st.ListSources(ctx, id.Stream{}, sc.now.Add(-5*time.Minute))
 	if s.storeError(c, err) {
 		return
 	}
-	status := map[int64]string{}
-	names := map[int64]string{}
+	status := map[id.Stream]streamstatus.Status{}
+	names := map[id.Stream]string{}
 	for _, st := range streams {
 		status[st.ID] = s.view(st, sc, false).Status
 		names[st.ID] = st.Name
@@ -162,20 +163,20 @@ func (s *Server) servers(c *gin.Context) {
 	type key struct{ host, ip string }
 	type acc struct {
 		view    serverView
-		streams map[int64]bool
+		streams map[id.Stream]bool
 	}
 	byServer := map[key]*acc{}
 	for _, r := range seen {
 		k := key{r.Host, r.IP}
 		a := byServer[k]
 		if a == nil {
-			a = &acc{view: serverView{Host: r.Host, IP: r.IP, FailingStreams: []streamRef{}, StreamIDs: []int64{}}, streams: map[int64]bool{}}
+			a = &acc{view: serverView{Host: r.Host, IP: r.IP, FailingStreams: []streamRef{}, StreamIDs: []id.Stream{}}, streams: map[id.Stream]bool{}}
 			byServer[k] = a
 		}
 		if r.Software != "" {
 			a.view.Software = r.Software
 		}
-		if r.What == "playlist" {
+		if r.What == sourcekind.Playlist() {
 			a.view.Playlists = true
 		} else {
 			a.view.Segments = true
@@ -190,11 +191,11 @@ func (s *Server) servers(c *gin.Context) {
 		a.view.Streams++
 		a.view.StreamIDs = append(a.view.StreamIDs, r.StreamID)
 		switch status[r.StreamID] {
-		case statusOK:
+		case streamstatus.OK():
 			a.view.OK++
-		case statusWarn:
+		case streamstatus.Warn():
 			a.view.Warn++
-		case statusFail:
+		case streamstatus.Fail():
 			a.view.Fail++
 			if len(a.view.FailingStreams) < 10 {
 				a.view.FailingStreams = append(a.view.FailingStreams, streamRef{ID: r.StreamID, Name: names[r.StreamID]})
@@ -206,7 +207,7 @@ func (s *Server) servers(c *gin.Context) {
 	for k, a := range byServer {
 		a.view.Network = network[[2]string{k.host, k.ip}]
 		sort.Slice(a.view.FailingStreams, func(i, j int) bool { return a.view.FailingStreams[i].Name < a.view.FailingStreams[j].Name })
-		sort.Slice(a.view.StreamIDs, func(i, j int) bool { return a.view.StreamIDs[i] < a.view.StreamIDs[j] })
+		sort.Slice(a.view.StreamIDs, func(i, j int) bool { return a.view.StreamIDs[i].Compare(a.view.StreamIDs[j]) < 0 })
 		out = append(out, a.view)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -259,7 +260,7 @@ func (s *Server) serversNetwork(c *gin.Context) {
 		res, err := s.mx.QueryRange(c.Request.Context(), fmt.Sprintf(q.expr, sec), from, to, step)
 		if err != nil {
 			s.log.Warn("servers network query failed", "error", err)
-			fail(c, http.StatusBadGateway, "metrics_unavailable", "the time series storage is not available")
+			fail(c, http.StatusBadGateway, errcode.MetricsUnavailable(), "the time series storage is not available")
 			return
 		}
 		for _, r := range res {
@@ -400,7 +401,7 @@ func (s *Server) aggregate(c *gin.Context) {
 	wg.Wait()
 	if firstErr != nil {
 		s.log.Warn("aggregate query failed", "error", firstErr)
-		fail(c, http.StatusBadGateway, "metrics_unavailable", "the time series storage is not available")
+		fail(c, http.StatusBadGateway, errcode.MetricsUnavailable(), "the time series storage is not available")
 		return
 	}
 	c.JSON(http.StatusOK, out)

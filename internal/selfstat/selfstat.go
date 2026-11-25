@@ -16,12 +16,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-)
 
-// ReasonProcessor is the reason a process is overloaded for: what is
-// ready to run waits too long for a processor, whether because there are
-// too few of them or because the container's quota ran out.
-const ReasonProcessor = "processor"
+	"github.com/hotid/hls-monitor/internal/types/overload"
+)
 
 const (
 	period = 5 * time.Second
@@ -40,8 +37,8 @@ const (
 type Status struct {
 	// Overloaded tells that the process did not get the processor time it
 	// needed; Reason says how that showed.
-	Overloaded bool   `json:"overloaded"`
-	Reason     string `json:"reason,omitempty"`
+	Overloaded bool            `json:"overloaded"`
+	Reason     overload.Reason `json:"reason,omitzero" enums:"processor"`
 	// CPUCores is how many processors the process used, CPULimit how many
 	// it may use.
 	CPUCores float64 `json:"cpu_cores"`
@@ -76,7 +73,7 @@ type Monitor struct {
 	mu       sync.Mutex
 	status   Status
 	lastOver time.Time // when the latest overloaded sample was taken
-	reason   string
+	reason   overload.Reason
 
 	prev sample
 
@@ -193,7 +190,7 @@ func (m *Monitor) evaluate(prev, cur sample) Status {
 	st.SchedulerDelay = quantile(prev.sched, cur.sched, 0.99)
 	st.MemoryBytes, st.MemoryLimit = m.memory()
 	if cur.late >= delayLimit || st.SchedulerDelay >= delayLimit.Seconds() {
-		st.Overloaded, st.Reason = true, ReasonProcessor
+		st.Overloaded, st.Reason = true, overload.Processor()
 	}
 	return st
 }
@@ -224,17 +221,17 @@ func (m *Monitor) Status() Status {
 }
 
 // Overloaded tells what the process was short of at any time since the
-// given moment, and "" when it kept up. A nil monitor never is.
-func (m *Monitor) Overloaded(since time.Time) string {
+// given moment, and nothing when it kept up. A nil monitor never is.
+func (m *Monitor) Overloaded(since time.Time) overload.Reason {
 	if m == nil {
-		return ""
+		return overload.Reason{}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// A sample describes the seconds before it, and the next one is not
 	// taken yet: what began just after an overloaded sample belongs to it.
 	if m.lastOver.IsZero() || since.Sub(m.lastOver) > period {
-		return ""
+		return overload.Reason{}
 	}
 	return m.reason
 }

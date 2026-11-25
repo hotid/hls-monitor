@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/importstatus"
 )
 
 // Limits of one import: a list is pasted or uploaded by a person.
@@ -24,12 +25,9 @@ type listEntry struct {
 	Name  string `json:"name"`
 	URL   string `json:"url"`
 	Group string `json:"group,omitempty"`
-	// Status: "new" for a stream that would be added, "created" for one
-	// that was, "exists" when the address is checked already, "duplicate"
-	// when the list has it twice, "invalid" when it is not an address the
-	// monitor can check, "failed" when adding it went wrong.
-	Status string `json:"status" enums:"new,created,exists,duplicate,invalid,failed"`
-	Reason string `json:"reason,omitempty"`
+	// Status is what became of it, or would.
+	Status importstatus.Status `json:"status" swaggertype:"string" enums:"new,created,exists,duplicate,invalid,failed"`
+	Reason string              `json:"reason,omitempty"`
 }
 
 // parseChannelList reads a list of channels the way IPTV lists are kept:
@@ -184,25 +182,25 @@ func (s *Server) importStreams(c *gin.Context) {
 		in, msg := r.input()
 		switch {
 		case urls[e.URL] && !seenIn(res.Entries[:i], e.URL):
-			e.Status, e.Name = "exists", base
+			e.Status, e.Name = importstatus.Exists(), base
 			res.Existing++
 			continue
 		case seenIn(res.Entries[:i], e.URL):
-			e.Status, e.Name = "duplicate", base
+			e.Status, e.Name = importstatus.Duplicate(), base
 			continue
 		case msg != "":
-			e.Status, e.Reason, e.Name = "invalid", msg, base
+			e.Status, e.Reason, e.Name = importstatus.Invalid(), msg, base
 			res.Invalid++
 			continue
 		}
 		names[e.Name] = true
-		e.Status = "new"
+		e.Status = importstatus.New()
 		res.New++
 		if req.DryRun {
 			continue
 		}
 		if _, err := s.st.CreateStream(ctx, in, s.now()); err != nil {
-			e.Status, e.Reason = "failed", "could not be added"
+			e.Status, e.Reason = importstatus.Failed(), "could not be added"
 			if errors.Is(err, store.ErrNotFound) {
 				e.Reason = "agent_ids refers to an agent that does not exist"
 			} else if errors.Is(err, store.ErrConflict) {
@@ -212,7 +210,7 @@ func (s *Server) importStreams(c *gin.Context) {
 			res.Invalid++
 			continue
 		}
-		e.Status = "created"
+		e.Status = importstatus.Created()
 		res.Created++
 	}
 	if res.Created > 0 {

@@ -7,13 +7,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/hotid/hls-monitor/internal/probe"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/hotid/hls-monitor/internal/probe"
 
 	"github.com/hotid/hls-monitor/internal/agent"
 	"github.com/hotid/hls-monitor/internal/envflag"

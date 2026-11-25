@@ -23,9 +23,15 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/agentproto"
 	"github.com/hotid/hls-monitor/internal/httpx"
-	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/relay"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/agentkind"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/sourcekind"
+	"github.com/hotid/hls-monitor/internal/types/unavailable"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/watchsource"
 )
 
 // Watching a stream through the server: the server requests the playlists
@@ -50,10 +56,10 @@ const (
 
 // playToken is what a token says.
 type playToken struct {
-	URL    string `json:"u"`
-	Stream int64  `json:"s"`
+	URL    string    `json:"u"`
+	Stream id.Stream `json:"s"`
 	// Agent is who fetches: zero for the server itself.
-	Agent int64 `json:"a,omitempty"`
+	Agent id.Agent `json:"a,omitzero"`
 	// Expires is Unix seconds.
 	Expires int64 `json:"e"`
 	// Entry marks the address a source starts from; Inside tells that
@@ -90,13 +96,11 @@ func (s *Server) openPlay(token string) (playToken, bool) {
 
 // watchSource is one way to watch a stream.
 type watchSource struct {
-	// Kind is "configured" for the stream's own address, with whatever
-	// balancing and redirects lie behind it, and "server" for one
-	// particular server asked directly.
-	Kind     string `json:"kind"`
-	Host     string `json:"host,omitempty"`
-	IP       string `json:"ip,omitempty"`
-	Software string `json:"software,omitempty"`
+	// Kind is what is asked: the stream's own address or one server.
+	Kind     watchsource.Kind `json:"kind" swaggertype:"string" enums:"configured,server"`
+	Host     string           `json:"host,omitempty"`
+	IP       string           `json:"ip,omitempty"`
+	Software string           `json:"software,omitempty"`
 	// Seen tells that this server answered for this stream lately;
 	// otherwise it is known from other streams of the same site and may
 	// not have this one.
@@ -110,14 +114,13 @@ type watchSource struct {
 
 // watchVantage is a place a stream can be watched from.
 type watchVantage struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID   id.Agent `json:"id"`
+	Name string   `json:"name"`
 	// Local is the server itself.
 	Local bool `json:"local"`
-	// Available tells that it can be used now; otherwise Why is
-	// "offline" or "too_old" (an agent that does not take such requests).
-	Available bool   `json:"available"`
-	Why       string `json:"why,omitempty"`
+	// Available tells that it can be used now; otherwise Why says why not.
+	Available bool            `json:"available"`
+	Why       unavailable.Why `json:"why,omitzero" swaggertype:"string" enums:"offline,too_old"`
 }
 
 // watchResponse lists where a stream can be watched from and, for the
@@ -125,7 +128,7 @@ type watchVantage struct {
 type watchResponse struct {
 	Vantages []watchVantage `json:"vantages"`
 	// Vantage is the place the sources below are for.
-	Vantage int64         `json:"vantage"`
+	Vantage id.Agent      `json:"vantage"`
 	Sources []watchSource `json:"sources"`
 }
 
@@ -141,12 +144,12 @@ type watchResponse struct {
 //	@Failure		404	{object}	apiError
 //	@Router			/api/v1/streams/{id}/watch [get]
 func (s *Server) watchSources(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
-	st, err := s.st.GetStream(ctx, id)
+	st, err := s.st.GetStream(ctx, streamID)
 	if s.storeError(c, err) {
 		return
 	}
@@ -154,20 +157,20 @@ func (s *Server) watchSources(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
-	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+	sort.Slice(agents, func(i, j int) bool { return agents[i].ID.Compare(agents[j].ID) < 0 })
 	now := s.now()
-	resp := watchResponse{Vantage: store.LocalAgentID, Sources: []watchSource{}}
-	want := queryInt(c, "agent")
+	resp := watchResponse{Vantage: store.LocalAgentID(), Sources: []watchSource{}}
+	want := queryID[id.Agent](c, "agent")
 	for _, a := range agents {
-		v := watchVantage{ID: a.ID, Name: a.Name, Local: a.Kind == store.AgentLocal}
+		v := watchVantage{ID: a.ID, Name: a.Name, Local: a.Kind == agentkind.Local()}
 		switch {
 		case v.Local:
 			v.Available = true
 		case !a.Enabled || !s.agentOnline(a, now):
-			v.Why = "offline"
+			v.Why = unavailable.Offline()
 		default:
 			if rep := s.agentStatus(a); rep == nil || !rep.Fetches {
-				v.Why = "too_old"
+				v.Why = unavailable.TooOld()
 			} else {
 				v.Available = true
 			}
@@ -179,31 +182,31 @@ func (s *Server) watchSources(c *gin.Context) {
 	}
 	expires := now.Add(playTTL).Unix()
 	path := func(u string) string {
-		return "/api/v1/play/" + s.signPlay(playToken{URL: u, Stream: id, Agent: resp.Vantage, Expires: expires, Entry: true})
+		return "/api/v1/play/" + s.signPlay(playToken{URL: u, Stream: streamID, Agent: resp.Vantage, Expires: expires, Entry: true})
 	}
-	out := []watchSource{{Kind: "configured", Seen: true, Address: st.URL, URL: path(st.URL)}}
+	out := []watchSource{{Kind: watchsource.Configured(), Seen: true, Address: st.URL, URL: path(st.URL)}}
 
 	// Where the stream's own address led last time: asking another server
 	// directly means the same path on that server.
-	final := s.entryFinalURL(ctx, id)
+	final := s.entryFinalURL(ctx, streamID)
 	if final == nil {
 		resp.Sources = out
 		c.JSON(http.StatusOK, resp)
 		return
 	}
 	since := s.now().Add(-24 * time.Hour)
-	own, err := s.st.ListSources(ctx, id, since)
+	own, err := s.st.ListSources(ctx, streamID, since)
 	if s.storeError(c, err) {
 		return
 	}
-	all, err := s.st.ListSources(ctx, 0, since)
+	all, err := s.st.ListSources(ctx, id.Stream{}, since)
 	if s.storeError(c, err) {
 		return
 	}
 	configured, _ := url.Parse(st.URL)
 	servers := map[string]*watchSource{}
 	add := func(src *store.SourceSeen, seen bool) {
-		if src.What != "playlist" || src.Host == "" || !httpx.SameSite(hostname(src.Host), final.Hostname()) {
+		if src.What != sourcekind.Playlist() || src.Host == "" || !httpx.SameSite(hostname(src.Host), final.Hostname()) {
 			return
 		}
 		// The stream's own address is the first source already.
@@ -214,7 +217,7 @@ func (s *Server) watchSources(c *gin.Context) {
 		if w == nil {
 			u := *final
 			u.Host = src.Host
-			w = &watchSource{Kind: "server", Host: src.Host, Address: u.String(), URL: path(u.String())}
+			w = &watchSource{Kind: watchsource.Server(), Host: src.Host, Address: u.String(), URL: path(u.String())}
 			servers[src.Host] = w
 		}
 		if seen && !w.Seen {
@@ -230,7 +233,7 @@ func (s *Server) watchSources(c *gin.Context) {
 		add(src, true)
 	}
 	for _, src := range all {
-		if src.StreamID != id {
+		if src.StreamID != streamID {
 			add(src, false)
 		}
 	}
@@ -257,14 +260,14 @@ func hostname(hostport string) string {
 
 // entryFinalURL is the address the stream's entry playlist was last served
 // from, after redirects; nil when that is not known.
-func (s *Server) entryFinalURL(ctx context.Context, streamID int64) *url.URL {
+func (s *Server) entryFinalURL(ctx context.Context, streamID id.Stream) *url.URL {
 	variants, err := s.st.ListVariants(ctx, streamID)
 	if err != nil {
 		return nil
 	}
-	entry := map[int64]bool{}
+	entry := map[id.Variant]bool{}
 	for _, v := range variants {
-		if v.Key == probe.VariantMaster || v.Key == probe.VariantMedia {
+		if v.Key == variantkey.Master() || v.Key == variantkey.Media() {
 			entry[v.ID] = true
 		}
 	}
@@ -302,7 +305,7 @@ func (s *Server) entryFinalURL(ctx context.Context, streamID int64) *url.URL {
 func (s *Server) play(c *gin.Context) {
 	tok, ok := s.openPlay(c.Param("token"))
 	if !ok {
-		fail(c, http.StatusForbidden, "bad_token", "this address is not valid or has expired; open the stream again")
+		fail(c, http.StatusForbidden, errcode.BadToken(), "this address is not valid or has expired; open the stream again")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
@@ -319,7 +322,7 @@ func (s *Server) play(c *gin.Context) {
 	var res agentproto.FetchResult
 	var body []byte
 	info := fetchInfo{}
-	if tok.Agent == 0 || tok.Agent == store.LocalAgentID {
+	if tok.Agent.IsZero() || tok.Agent == store.LocalAgentID() {
 		res, body = s.fetchLocal(ctx, job)
 	} else {
 		res, body, info.Relay = s.fetchThroughAgent(ctx, tok.Agent, job)
@@ -343,10 +346,10 @@ func (s *Server) play(c *gin.Context) {
 	}
 	switch {
 	case res.Status == 0:
-		fail(c, http.StatusBadGateway, "upstream", "the origin did not answer: "+res.Error)
+		fail(c, http.StatusBadGateway, errcode.Upstream(), "the origin did not answer: "+res.Error)
 		return
 	case res.Error != "":
-		fail(c, http.StatusBadGateway, "upstream", "the answer of the origin broke off: "+res.Error)
+		fail(c, http.StatusBadGateway, errcode.Upstream(), "the answer of the origin broke off: "+res.Error)
 		return
 	}
 	ok200 := res.Status == http.StatusOK || res.Status == http.StatusPartialContent

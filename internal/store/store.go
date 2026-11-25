@@ -13,6 +13,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite" // database/sql driver "sqlite"
+
+	"github.com/hotid/hls-monitor/internal/types/id"
 )
 
 //go:embed migrations/*.sql
@@ -24,7 +26,7 @@ var (
 )
 
 // LocalAgentID is the agent that represents the server itself.
-const LocalAgentID int64 = 1
+func LocalAgentID() id.Agent { return id.AgentOf(1) }
 
 // Store is the SQLite-backed storage. It is safe for concurrent use.
 type Store struct {

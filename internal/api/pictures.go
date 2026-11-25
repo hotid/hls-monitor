@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/id"
 )
 
 // streamPictures godoc
@@ -21,16 +22,16 @@ import (
 //	@Success	200	{array}		store.StreamPicture
 //	@Router		/api/v1/streams/{id}/pictures [get]
 func (s *Server) streamPictures(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
-	rows, err := s.st.StreamPictures(c.Request.Context(), id)
+	rows, err := s.st.StreamPictures(c.Request.Context(), streamID)
 	if s.storeError(c, err) {
 		return
 	}
 	for i := range rows {
-		rows[i].OwnClip = s.ing.OwnClip(id, rows[i].AgentID)
+		rows[i].OwnClip = s.ing.OwnClip(streamID, rows[i].AgentID)
 	}
 	c.JSON(http.StatusOK, rows)
 }
@@ -47,15 +48,15 @@ func (s *Server) streamPictures(c *gin.Context) {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/streams/{id}/picture [get]
 func (s *Server) streamPicture(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
-	agent := queryInt(c, "agent")
-	if agent <= 0 {
-		agent = store.LocalAgentID
+	agent := queryID[id.Agent](c, "agent")
+	if agent.IsZero() {
+		agent = store.LocalAgentID()
 	}
-	b, at, err := s.st.PictureJPEG(c.Request.Context(), id, agent)
+	b, at, err := s.st.PictureJPEG(c.Request.Context(), streamID, agent)
 	if s.storeError(c, err) {
 		return
 	}
@@ -74,11 +75,11 @@ func (s *Server) streamPicture(c *gin.Context) {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/incidents/{id}/picture [get]
 func (s *Server) incidentPicture(c *gin.Context) {
-	id, ok := pathID(c)
+	incidentID, ok := pathID[id.Incident](c)
 	if !ok {
 		return
 	}
-	b, at, err := s.st.IncidentPictureJPEG(c.Request.Context(), id)
+	b, at, err := s.st.IncidentPictureJPEG(c.Request.Context(), incidentID)
 	if s.storeError(c, err) {
 		return
 	}

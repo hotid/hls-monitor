@@ -29,6 +29,8 @@ import (
 	"github.com/hotid/hls-monitor/internal/runner"
 	"github.com/hotid/hls-monitor/internal/selfstat"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/cookiesecure"
+	"github.com/hotid/hls-monitor/internal/types/role"
 	"github.com/hotid/hls-monitor/internal/webui"
 )
 
@@ -163,7 +165,7 @@ func run(cfg config, log *slog.Logger) error {
 		// database that cannot keep up slows the checks down instead of
 		// losing what they found.
 		for attempt := 1; ; attempt++ {
-			err := ing.Apply(actx, store.LocalAgentID, r)
+			err := ing.Apply(actx, store.LocalAgentID(), r)
 			if err == nil || errors.Is(err, store.ErrNotFound) || errors.Is(err, ingest.ErrStale) {
 				return
 			}
@@ -201,10 +203,14 @@ func run(cfg config, log *slog.Logger) error {
 	if basePath != "" && (!strings.HasPrefix(basePath, "/") || strings.ContainsAny(basePath, " \"'<>?#")) {
 		return fmt.Errorf("base path must look like /prefix, got %q", cfg.basePath)
 	}
+	secure, err := cookiesecure.Parse(strings.ToLower(strings.TrimSpace(cfg.cookieSecure)))
+	if err != nil {
+		return fmt.Errorf("cookie-secure must be auto, true or false, got %q", cfg.cookieSecure)
+	}
 	srv := api.New(api.Config{
 		Version:        version,
 		SessionTTL:     cfg.sessionTTL,
-		CookieSecure:   cfg.cookieSecure,
+		CookieSecure:   secure,
 		PublicURL:      cfg.publicURL,
 		AgentImage:     cfg.agentImage,
 		BasePath:       basePath,
@@ -287,7 +293,7 @@ func ensureAdmin(ctx context.Context, st *store.Store, cfg config, log *slog.Log
 	if err != nil {
 		return err
 	}
-	if _, err := st.CreateUser(ctx, cfg.adminUser, hash, store.RoleAdmin, time.Now()); err != nil {
+	if _, err := st.CreateUser(ctx, cfg.adminUser, hash, role.Admin(), time.Now()); err != nil {
 		return fmt.Errorf("create administrator: %w", err)
 	}
 	if generated {

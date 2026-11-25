@@ -24,6 +24,9 @@ import (
 	"github.com/hotid/hls-monitor/internal/runner"
 	"github.com/hotid/hls-monitor/internal/selfstat"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/cookiesecure"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/id"
 )
 
 // Config holds the settings of the HTTP layer.
@@ -33,8 +36,8 @@ type Config struct {
 	// none are.
 	Captures   *capture.Store
 	SessionTTL time.Duration
-	// CookieSecure is "true", "false" or "auto" (follow the request scheme).
-	CookieSecure string
+	// CookieSecure is when the session cookie is marked Secure.
+	CookieSecure cookiesecure.Mode
 	// PublicURL is how agents reach the server; shown in enrollment hints.
 	PublicURL string
 	// AgentImage is the image named in the command for starting an agent;
@@ -88,7 +91,7 @@ type Server struct {
 
 	// reports holds what each remote agent last told about itself.
 	reportsMu sync.Mutex
-	reports   map[int64]agentReport
+	reports   map[id.Agent]agentReport
 }
 
 // New builds the server. ui serves the web interface for every path that
@@ -96,6 +99,9 @@ type Server struct {
 func New(cfg Config, st *store.Store, mx *metrics.Client, ing *ingest.Ingester, local *runner.Runner, ui http.Handler, log *slog.Logger) *Server {
 	if log == nil {
 		log = slog.Default()
+	}
+	if cfg.CookieSecure.IsZero() {
+		cfg.CookieSecure = cookiesecure.Auto()
 	}
 	if cfg.SessionTTL <= 0 {
 		cfg.SessionTTL = 7 * 24 * time.Hour
@@ -106,7 +112,7 @@ func New(cfg Config, st *store.Store, mx *metrics.Client, ing *ingest.Ingester, 
 	if cfg.EnrollTTL <= 0 {
 		cfg.EnrollTTL = 24 * time.Hour
 	}
-	s := &Server{cfg: cfg, st: st, mx: mx, ing: ing, local: local, captures: cfg.Captures, log: log, now: time.Now, logins: newLoginLimiter(), diagnoses: make(chan struct{}, maxDiagnoses), reports: map[int64]agentReport{}}
+	s := &Server{cfg: cfg, st: st, mx: mx, ing: ing, local: local, captures: cfg.Captures, log: log, now: time.Now, logins: newLoginLimiter(), diagnoses: make(chan struct{}, maxDiagnoses), reports: map[id.Agent]agentReport{}}
 
 	s.fetchPoll, s.fetchHandOver = fetchPoll, fetchHandOver
 	s.playKey = cfg.PlayKey
@@ -219,7 +225,7 @@ func (s *Server) routes(ui http.Handler) {
 	r.NoRoute(func(c *gin.Context) {
 		p := c.Request.URL.Path
 		if strings.HasPrefix(p, "/api/") || ui == nil {
-			fail(c, http.StatusNotFound, "not_found", "no such endpoint")
+			fail(c, http.StatusNotFound, errcode.NotFound(), "no such endpoint")
 			return
 		}
 		// NoRoute presets 404; the interface handler decides the status itself.
@@ -227,21 +233,23 @@ func (s *Server) routes(ui http.Handler) {
 		ui.ServeHTTP(c.Writer, c.Request)
 	})
 	r.NoMethod(func(c *gin.Context) {
-		fail(c, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		fail(c, http.StatusMethodNotAllowed, errcode.MethodNotAllowed(), "method not allowed")
 	})
 }
 
 // apiError is the body of every error response.
 type apiError struct {
-	Error string `json:"error"`
-	Code  string `json:"code"`
+	Error string       `json:"error"`
+	Code  errcode.Code `json:"code" swaggertype:"string"`
 }
 
-func fail(c *gin.Context, status int, code, msg string) {
+func fail(c *gin.Context, status int, code errcode.Code, msg string) {
 	c.AbortWithStatusJSON(status, apiError{Error: msg, Code: code})
 }
 
-func badRequest(c *gin.Context, msg string) { fail(c, http.StatusBadRequest, "bad_request", msg) }
+func badRequest(c *gin.Context, msg string) {
+	fail(c, http.StatusBadRequest, errcode.BadRequest(), msg)
+}
 
 // storeError maps storage errors to responses; it reports whether err was non-nil.
 func (s *Server) storeError(c *gin.Context, err error) bool {
@@ -249,27 +257,48 @@ func (s *Server) storeError(c *gin.Context, err error) bool {
 	case err == nil:
 		return false
 	case errors.Is(err, store.ErrNotFound):
-		fail(c, http.StatusNotFound, "not_found", "not found")
+		fail(c, http.StatusNotFound, errcode.NotFound(), "not found")
 	case errors.Is(err, store.ErrConflict):
-		fail(c, http.StatusConflict, "conflict", "this name is already taken")
+		fail(c, http.StatusConflict, errcode.Conflict(), "this name is already taken")
 	case errors.Is(err, store.ErrLastAdmin), errors.Is(err, store.ErrLocalAgent):
-		fail(c, http.StatusConflict, "conflict", err.Error())
+		fail(c, http.StatusConflict, errcode.Conflict(), err.Error())
 	case errors.Is(err, context.Canceled):
 		c.Abort()
 	default:
 		s.log.Error("request failed", "path", c.FullPath(), "error", err)
-		fail(c, http.StatusInternalServerError, "internal", "internal error")
+		fail(c, http.StatusInternalServerError, errcode.Internal(), "internal error")
 	}
 	return true
 }
 
-func pathID(c *gin.Context) (int64, bool) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil || id <= 0 {
-		fail(c, http.StatusNotFound, "not_found", "not found")
-		return 0, false
+// identifier is an identifier of one of the kinds of package id, by a
+// pointer to which it can be read.
+type identifier[T any] interface {
+	*T
+	Parse(string) error
+	IsZero() bool
+}
+
+// pathID reads the identifier an address names, and answers the request
+// when it names none.
+func pathID[T any, P identifier[T]](c *gin.Context) (T, bool) {
+	var v T
+	if err := P(&v).Parse(c.Param("id")); err != nil || P(&v).IsZero() || c.Param("id")[0] == '-' {
+		fail(c, http.StatusNotFound, errcode.NotFound(), "not found")
+		var none T
+		return none, false
 	}
-	return id, true
+	return v, true
+}
+
+// queryID reads an identifier given in the query; one that is not given,
+// or is no number, is that of nothing.
+func queryID[T any, P identifier[T]](c *gin.Context, name string) T {
+	var v, none T
+	if P(&v).Parse(c.Query(name)) != nil {
+		return none
+	}
+	return v
 }
 
 func queryInt(c *gin.Context, name string) int64 {
@@ -330,7 +359,7 @@ func (s *Server) SyncLocal(ctx context.Context) {
 	if s.local == nil {
 		return
 	}
-	targets, err := s.st.TargetsForAgent(ctx, store.LocalAgentID)
+	targets, err := s.st.TargetsForAgent(ctx, store.LocalAgentID())
 	if err != nil {
 		s.log.Error("cannot load local targets", "error", err)
 		return

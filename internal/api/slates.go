@@ -7,13 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/id"
 )
 
 // Slates are pictures an operator puts on air in place of a channel. A
@@ -84,9 +85,9 @@ type slateRequest struct {
 	Name string `json:"name"`
 	// The picture: the latest look at a stream from a vantage point (the
 	// server's own by default), or the one kept with an incident.
-	StreamID   int64 `json:"stream_id"`
-	AgentID    int64 `json:"agent_id"`
-	IncidentID int64 `json:"incident_id"`
+	StreamID   id.Stream   `json:"stream_id"`
+	AgentID    id.Agent    `json:"agent_id"`
+	IncidentID id.Incident `json:"incident_id"`
 	// Own marks not a slate but a clip the channel itself plays over and
 	// over: a stream playing it is left alone from then on. It takes an
 	// incident of a clip going round (picture_loop, audio_loop), whose
@@ -119,24 +120,24 @@ func (s *Server) markSlate(c *gin.Context) {
 	case req.Name == "" || len(req.Name) > 100:
 		badRequest(c, "name must be 1 to 100 characters long")
 		return
-	case req.StreamID <= 0 && req.IncidentID <= 0:
+	case req.StreamID.IsZero() && req.IncidentID.IsZero():
 		badRequest(c, "stream_id or incident_id is required")
 		return
 	}
-	if req.AgentID <= 0 {
-		req.AgentID = store.LocalAgentID
+	if req.AgentID.IsZero() {
+		req.AgentID = store.LocalAgentID()
 	}
 	ctx := c.Request.Context()
 	sl, err := s.st.MarkSlate(ctx, req.Name, req.StreamID, req.AgentID, req.IncidentID, req.Own, s.now())
 	switch {
 	case errors.Is(err, store.ErrNoPicture) && req.Own:
-		fail(c, http.StatusNotFound, "no_clip", "there is nothing to know the clip by: only an incident of a clip going round can be marked so")
+		fail(c, http.StatusNotFound, errcode.NoClip(), "there is nothing to know the clip by: only an incident of a clip going round can be marked so")
 		return
 	case errors.Is(err, store.ErrNoPicture):
-		fail(c, http.StatusNotFound, "no_picture", "there is no picture to mark: the stream was not looked at yet")
+		fail(c, http.StatusNotFound, errcode.NoPicture(), "there is no picture to mark: the stream was not looked at yet")
 		return
 	case errors.Is(err, store.ErrConflict):
-		fail(c, http.StatusConflict, "conflict", "the name is taken: a slate and a channel's own clip cannot share one")
+		fail(c, http.StatusConflict, errcode.Conflict(), "the name is taken: a slate and a channel's own clip cannot share one")
 		return
 	}
 	if s.storeError(c, err) {
@@ -157,12 +158,12 @@ func (s *Server) markSlate(c *gin.Context) {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/slates/{id} [delete]
 func (s *Server) deleteSlate(c *gin.Context) {
-	id, ok := pathID(c)
+	slateID, ok := pathID[id.Slate](c)
 	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
-	if s.storeError(c, s.st.DeleteSlate(ctx, id)) {
+	if s.storeError(c, s.st.DeleteSlate(ctx, slateID)) {
 		return
 	}
 	s.LoadSlates(ctx)
@@ -180,12 +181,12 @@ func (s *Server) deleteSlate(c *gin.Context) {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/slates/frames/{id} [delete]
 func (s *Server) deleteSlateFrame(c *gin.Context) {
-	id, ok := pathID(c)
+	frameID, ok := pathID[id.Frame](c)
 	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
-	if s.storeError(c, s.st.DeleteSlateFrame(ctx, id)) {
+	if s.storeError(c, s.st.DeleteSlateFrame(ctx, frameID)) {
 		return
 	}
 	s.LoadSlates(ctx)
@@ -203,12 +204,11 @@ func (s *Server) deleteSlateFrame(c *gin.Context) {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/slates/frames/{id} [get]
 func (s *Server) slateFrame(c *gin.Context) {
-	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
-	if err != nil || id <= 0 {
-		fail(c, http.StatusNotFound, "not_found", "not found")
+	frameID, ok := pathID[id.Frame](c)
+	if !ok {
 		return
 	}
-	b, at, err := s.st.SlateFrameJPEG(c.Request.Context(), id)
+	b, at, err := s.st.SlateFrameJPEG(c.Request.Context(), frameID)
 	if s.storeError(c, err) {
 		return
 	}

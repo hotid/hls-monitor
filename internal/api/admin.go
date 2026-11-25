@@ -11,6 +11,8 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/auth"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/role"
 )
 
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
@@ -32,7 +34,7 @@ func (s *Server) listAgents(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
-	byID := map[int64]*store.Agent{}
+	byID := map[id.Agent]*store.Agent{}
 	for _, a := range agents {
 		byID[a.ID] = a
 	}
@@ -128,7 +130,7 @@ func (s *Server) createAgent(c *gin.Context) {
 //	@Failure	409		{object}	apiError
 //	@Router		/api/v1/agents/{id} [put]
 func (s *Server) updateAgent(c *gin.Context) {
-	id, ok := pathID(c)
+	agentID, ok := pathID[id.Agent](c)
 	if !ok {
 		return
 	}
@@ -138,7 +140,7 @@ func (s *Server) updateAgent(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	cur, err := s.st.GetAgent(ctx, id)
+	cur, err := s.st.GetAgent(ctx, agentID)
 	if s.storeError(c, err) {
 		return
 	}
@@ -153,12 +155,12 @@ func (s *Server) updateAgent(c *gin.Context) {
 		badRequest(c, "name must be 1 to 63 characters: letters, digits, dot, dash, underscore")
 		return
 	}
-	a, err := s.st.UpdateAgent(ctx, id, name, enabled)
+	a, err := s.st.UpdateAgent(ctx, agentID, name, enabled)
 	if s.storeError(c, err) {
 		return
 	}
 	if !enabled {
-		_ = s.st.CloseAgentIncidents(ctx, id, s.now())
+		_ = s.st.CloseAgentIncidents(ctx, agentID, s.now())
 	}
 	s.configChanged(ctx)
 	c.JSON(http.StatusOK, a)
@@ -174,16 +176,16 @@ func (s *Server) updateAgent(c *gin.Context) {
 //	@Failure	409	{object}	apiError
 //	@Router		/api/v1/agents/{id} [delete]
 func (s *Server) deleteAgent(c *gin.Context) {
-	id, ok := pathID(c)
+	agentID, ok := pathID[id.Agent](c)
 	if !ok {
 		return
 	}
-	if s.storeError(c, s.st.DeleteAgent(c.Request.Context(), id)) {
+	if s.storeError(c, s.st.DeleteAgent(c.Request.Context(), agentID)) {
 		return
 	}
 	if s.captures != nil {
-		if n := s.captures.Forget(0, id); n > 0 {
-			s.log.Info("the captures of a deleted agent were removed", "agent", id, "captures", n)
+		if n := s.captures.Forget(id.Stream{}, agentID); n > 0 {
+			s.log.Info("the captures of a deleted agent were removed", "agent", agentID, "captures", n)
 		}
 	}
 	s.purgeSeriesSoon()
@@ -202,7 +204,7 @@ func (s *Server) deleteAgent(c *gin.Context) {
 //	@Failure	409	{object}	apiError
 //	@Router		/api/v1/agents/{id}/token [post]
 func (s *Server) resetAgentToken(c *gin.Context) {
-	id, ok := pathID(c)
+	agentID, ok := pathID[id.Agent](c)
 	if !ok {
 		return
 	}
@@ -212,10 +214,10 @@ func (s *Server) resetAgentToken(c *gin.Context) {
 	}
 	ctx := c.Request.Context()
 	expires := s.now().Add(s.cfg.EnrollTTL)
-	if s.storeError(c, s.st.ResetAgentEnrollment(ctx, id, hash, expires)) {
+	if s.storeError(c, s.st.ResetAgentEnrollment(ctx, agentID, hash, expires)) {
 		return
 	}
-	a, err := s.st.GetAgent(ctx, id)
+	a, err := s.st.GetAgent(ctx, agentID)
 	if s.storeError(c, err) {
 		return
 	}
@@ -244,8 +246,6 @@ type userRequest struct {
 	Disabled *bool   `json:"disabled"`
 }
 
-func validRole(r string) bool { return r == store.RoleAdmin || r == store.RoleViewer }
-
 // createUser godoc
 //
 //	@Summary	Add a user
@@ -264,15 +264,15 @@ func (s *Server) createUser(c *gin.Context) {
 		return
 	}
 	req.Username = strings.TrimSpace(req.Username)
-	role := store.RoleViewer
+	as, roleErr := role.Viewer(), error(nil)
 	if req.Role != nil {
-		role = *req.Role
+		as, roleErr = role.Parse(*req.Role)
 	}
 	switch {
 	case !nameRe.MatchString(req.Username):
 		badRequest(c, "username must be 1 to 63 characters: letters, digits, dot, dash, underscore")
 		return
-	case !validRole(role):
+	case roleErr != nil:
 		badRequest(c, "role must be admin or viewer")
 		return
 	case req.Password == nil:
@@ -283,7 +283,7 @@ func (s *Server) createUser(c *gin.Context) {
 	if !ok {
 		return
 	}
-	u, err := s.st.CreateUser(c.Request.Context(), req.Username, hash, role, s.now())
+	u, err := s.st.CreateUser(c.Request.Context(), req.Username, hash, as, s.now())
 	if s.storeError(c, err) {
 		return
 	}
@@ -305,7 +305,7 @@ func (s *Server) createUser(c *gin.Context) {
 //	@Failure	409		{object}	apiError
 //	@Router		/api/v1/users/{id} [put]
 func (s *Server) updateUser(c *gin.Context) {
-	id, ok := pathID(c)
+	userID, ok := pathID[id.User](c)
 	if !ok {
 		return
 	}
@@ -314,8 +314,14 @@ func (s *Server) updateUser(c *gin.Context) {
 		badRequest(c, "invalid request body")
 		return
 	}
-	up := store.UserUpdate{Role: req.Role, Disabled: req.Disabled}
-	if req.Role != nil && !validRole(*req.Role) {
+	up := store.UserUpdate{Disabled: req.Disabled}
+	if req.Role != nil {
+		as, err := role.Parse(*req.Role)
+		if err == nil {
+			up.Role = &as
+		}
+	}
+	if req.Role != nil && up.Role == nil {
 		badRequest(c, "role must be admin or viewer")
 		return
 	}
@@ -326,7 +332,7 @@ func (s *Server) updateUser(c *gin.Context) {
 		}
 		up.PasswordHash = &hash
 	}
-	u, err := s.st.UpdateUser(c.Request.Context(), id, up)
+	u, err := s.st.UpdateUser(c.Request.Context(), userID, up)
 	if s.storeError(c, err) {
 		return
 	}
@@ -343,11 +349,11 @@ func (s *Server) updateUser(c *gin.Context) {
 //	@Failure	409	{object}	apiError
 //	@Router		/api/v1/users/{id} [delete]
 func (s *Server) deleteUser(c *gin.Context) {
-	id, ok := pathID(c)
+	userID, ok := pathID[id.User](c)
 	if !ok {
 		return
 	}
-	if s.storeError(c, s.st.DeleteUser(c.Request.Context(), id)) {
+	if s.storeError(c, s.st.DeleteUser(c.Request.Context(), userID)) {
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -421,11 +427,11 @@ func (s *Server) createToken(c *gin.Context) {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/tokens/{id} [delete]
 func (s *Server) deleteToken(c *gin.Context) {
-	id, ok := pathID(c)
+	tokenID, ok := pathID[id.Token](c)
 	if !ok {
 		return
 	}
-	if s.storeError(c, s.st.DeleteAPIToken(c.Request.Context(), id)) {
+	if s.storeError(c, s.st.DeleteAPIToken(c.Request.Context(), tokenID)) {
 		return
 	}
 	c.Status(http.StatusNoContent)

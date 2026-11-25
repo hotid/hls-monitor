@@ -377,6 +377,7 @@ curl 'http://localhost:8089/ctl/fail?status=404'  # следующий сегм�
 | `internal/metrics` | Клиент VictoriaMetrics |
 | `internal/api` | HTTP API |
 | `internal/agent`, `internal/agentproto` | Агент и его протокол |
+| `internal/types` | То, что монитор различает, каждое своим типом: виды проблем, важность, статусы, уровни, идентификаторы, имена метрик и показателей проблемы. Текстом их имена становятся только на выходе из программы: в JSON, в базе, на странице |
 | `internal/hlstest` | Имитатор потока для тестов |
 | `web/` | Интерфейс: Vue 3, TypeScript |
 | `deploy/` | Dockerfile и файлы compose |

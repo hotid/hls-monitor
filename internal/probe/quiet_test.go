@@ -9,6 +9,12 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/media"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 // encoded has ffmpeg make six seconds of MPEG-TS from a picture source
@@ -34,17 +40,17 @@ func encoded(t *testing.T, video, audio string, more ...string) *media.Info {
 
 // signsOf feeds the same segment to a checker for a minute and returns
 // what the sizes of its frames were told to be signs of.
-func signsOf(info *media.Info, setting string) map[string]bool {
-	c := New(Target{ID: 1, URL: "http://x/", Level: LevelContainer, Picture: setting}, nil)
+func signsOf(info *media.Info, setting picturemode.Mode) map[problemkind.Kind]bool {
+	c := New(Target{ID: id.StreamOf(1), URL: "http://x/", Level: level.Container(), Picture: setting}, nil)
 	st := &variantState{}
 	at := time.Now()
 	for i := 0; i < 10; i++ {
 		at = at.Add(6 * time.Second)
-		c.noteSizes(Variant{Key: "v"}, st, info, at)
+		c.noteSizes(Variant{Key: variantkey.OfURI("v")}, st, info, at)
 	}
-	out := map[string]bool{}
+	out := map[problemkind.Kind]bool{}
 	for _, p := range c.signs {
-		out[p.kind] = p.severity == SevWarn && p.details != nil
+		out[p.kind] = p.severity == severity.Warn() && p.details != nil
 	}
 	return out
 }
@@ -55,22 +61,22 @@ func TestSignsInTheSizesOfFrames(t *testing.T) {
 
 	// A black screen in silence, padded to a constant rate or not.
 	for _, more := range [][]string{nil, cbr} {
-		got := signsOf(encoded(t, "color=c=black:"+size, "anullsrc=sample_rate=48000", more...), PictureCheck)
-		if !got[ProbPictureFrozen] || !got[ProbAudioSilent] {
+		got := signsOf(encoded(t, "color=c=black:"+size, "anullsrc=sample_rate=48000", more...), picturemode.Check())
+		if !got[problemkind.PictureFrozen()] || !got[problemkind.AudioSilent()] {
 			t.Errorf("black and silent (%v): %v", more, got)
 		}
 	}
 	// A still picture with a tone: the picture alone.
 	still := encoded(t, "smptebars="+size, "sine=frequency=440:sample_rate=48000")
-	if got := signsOf(still, PictureCheck); !got[ProbPictureFrozen] || got[ProbAudioSilent] {
+	if got := signsOf(still, picturemode.Check()); !got[problemkind.PictureFrozen()] || got[problemkind.AudioSilent()] {
 		t.Errorf("still with a tone: %v", got)
 	}
 	// Where a still picture is what the stream shows, it is not a sign.
-	if got := signsOf(still, PictureStatic); len(got) != 0 {
+	if got := signsOf(still, picturemode.Static()); len(got) != 0 {
 		t.Errorf("a stream of still pictures: %v", got)
 	}
 	// Something moving, with sound.
-	if got := signsOf(encoded(t, "testsrc2="+size, "sine=frequency=440:sample_rate=48000"), PictureCheck); len(got) != 0 {
+	if got := signsOf(encoded(t, "testsrc2="+size, "sine=frequency=440:sample_rate=48000"), picturemode.Check()); len(got) != 0 {
 		t.Errorf("a moving picture: %v", got)
 	}
 }
@@ -90,7 +96,7 @@ func TestRealSegmentsShowNoSigns(t *testing.T) {
 			t.Fatal(err)
 		}
 		info := media.Analyze(data, nil)
-		if got := signsOf(info, PictureCheck); len(got) != 0 {
+		if got := signsOf(info, picturemode.Check()); len(got) != 0 {
 			t.Errorf("%s: %v", filepath.Base(name), got)
 		}
 		if v := info.Video(); v != nil && v.PlainFrames >= stillFrames && v.Width > 0 {

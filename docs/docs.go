@@ -2683,13 +2683,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/internal_api.readiness"
+                            "$ref": "#/definitions/internal_api.readyAnswer"
                         }
                     },
                     "503": {
                         "description": "Service Unavailable",
                         "schema": {
-                            "$ref": "#/definitions/internal_api.readiness"
+                            "$ref": "#/definitions/internal_api.readyAnswer"
                         }
                     }
                 }
@@ -2877,6 +2877,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "results": {
+                    "description": "Results has nil in place of a result that could not be read.",
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Result"
@@ -2939,7 +2940,10 @@ const docTemplate = `{
                 },
                 "overloaded": {
                     "description": "Overloaded names what the agent's host is short of, if anything.",
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "processor"
+                    ]
                 },
                 "queue_bytes": {
                     "type": "integer"
@@ -3021,7 +3025,12 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "state": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "pending",
+                        "kept",
+                        "found"
+                    ]
                 },
                 "stream_id": {
                     "type": "integer"
@@ -3065,8 +3074,15 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "role": {
-                    "description": "Role is what it is: \"evidence\" (the bytes the check read),\n\"segment\", \"init\", \"playlist\" or \"master\".",
-                    "type": "string"
+                    "description": "Role is what it is.",
+                    "type": "string",
+                    "enum": [
+                        "evidence",
+                        "segment",
+                        "init",
+                        "playlist",
+                        "master"
+                    ]
                 },
                 "seq": {
                     "description": "Seq and Duration are those of a segment in its playlist; Position\nis where it stands to the one the finding is about: 0, before (\u003c0)\nor after (\u003e0).",
@@ -3162,7 +3178,14 @@ const docTemplate = `{
                     ]
                 },
                 "container": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "ts",
+                        "fmp4",
+                        "aac",
+                        "vtt",
+                        "unknown"
+                    ]
                 },
                 "error": {
                     "description": "Error is set when the segment could not be parsed completely.",
@@ -3249,6 +3272,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "codec": {
+                    "description": "Codec is not set when the container does not say.",
                     "type": "string"
                 },
                 "end_pts": {
@@ -3278,7 +3302,12 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "kind": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "video",
+                        "audio",
+                        "other"
+                    ]
                 },
                 "level": {
                     "type": "string"
@@ -3291,8 +3320,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "range": {
-                    "description": "Range is the dynamic range of the picture when it is a high one:\n\"PQ\" (HDR10, Dolby Vision) or \"HLG\"; empty for standard.",
-                    "type": "string"
+                    "description": "Range is the dynamic range of the picture when it is a high one;\nnot set for standard.",
+                    "type": "string",
+                    "enum": [
+                        "PQ",
+                        "HLG"
+                    ]
                 },
                 "sample_rate": {
                     "type": "integer"
@@ -3380,32 +3413,6 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_hotid_hls-monitor_internal_probe.Level": {
-            "type": "string",
-            "enum": [
-                "playlist",
-                "header",
-                "segments",
-                "container"
-            ],
-            "x-enum-comments": {
-                "LevelContainer": "plus container analysis",
-                "LevelPlaylist": "playlists only",
-                "LevelSegments": "plus segment downloads"
-            },
-            "x-enum-descriptions": [
-                "playlists only",
-                "",
-                "plus segment downloads",
-                "plus container analysis"
-            ],
-            "x-enum-varnames": [
-                "LevelPlaylist",
-                "LevelHeader",
-                "LevelSegments",
-                "LevelContainer"
-            ]
-        },
         "github_com_hotid_hls-monitor_internal_probe.Metric": {
             "type": "object",
             "properties": {
@@ -3476,9 +3483,8 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "details": {
-                    "description": "Details are the figures the conclusion was drawn from: what was\nrequested, what came back and what it was compared with. Keys are\nstable identifiers; values are numbers, strings or lists of strings.",
-                    "type": "object",
-                    "additionalProperties": {}
+                    "description": "Details are the figures the conclusion was drawn from: what was\nrequested, what came back and what it was compared with.",
+                    "type": "object"
                 },
                 "kind": {
                     "type": "string"
@@ -3487,7 +3493,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "severity": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "info",
+                        "warn",
+                        "crit"
+                    ]
                 },
                 "variant": {
                     "type": "string"
@@ -3505,7 +3516,10 @@ const docTemplate = `{
                 },
                 "overloaded": {
                     "description": "Overloaded names what the checking process itself was short of during\nthe cycle; empty when it kept up. Findings that rest on timing alone\nare left out of such a result: a monitor that cannot keep up measures\nits own delay, not the stream's.",
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "processor"
+                    ]
                 },
                 "own_clip": {
                     "description": "OwnClip names the clip the stream is found to play that is known to\nbe the channel's own, and so no fault.",
@@ -3545,7 +3559,12 @@ const docTemplate = `{
                     }
                 },
                 "status": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "warn",
+                        "fail"
+                    ]
                 },
                 "target_id": {
                     "type": "integer"
@@ -3569,7 +3588,11 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "cache": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "hit",
+                        "miss"
+                    ]
                 },
                 "connect_ms": {
                     "type": "number"
@@ -3740,14 +3763,20 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "level": {
-                    "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Level"
+                    "type": "string",
+                    "enum": [
+                        "playlist",
+                        "header",
+                        "segments",
+                        "container"
+                    ]
                 },
                 "max_segments": {
                     "description": "MaxSegments limits segment downloads per variant per cycle; zero means 3.",
                     "type": "integer"
                 },
                 "picture": {
-                    "description": "Picture says what the picture and the sound are checked for: all of\nit by default, PictureStatic when a picture that does not change is\nwhat the stream shows, PictureOff not to look at all.",
+                    "description": "Picture says what the picture and the sound are checked for.",
                     "type": "string"
                 },
                 "revision": {
@@ -3785,7 +3814,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "kind": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "master",
+                        "media",
+                        "video",
+                        "audio",
+                        "subtitles"
+                    ]
                 },
                 "language": {
                     "type": "string"
@@ -3879,7 +3915,10 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "reason": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "processor"
+                    ]
                 },
                 "scheduler_delay_seconds": {
                     "description": "SchedulerDelay is how long the slowest one in a hundred goroutines\nwaited for a processor after becoming ready, in seconds.",
@@ -3926,7 +3965,11 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "kind": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "local",
+                        "remote"
+                    ]
                 },
                 "last_seen": {
                     "type": "string"
@@ -3985,7 +4028,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "severity": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "info",
+                        "warn",
+                        "crit"
+                    ]
                 },
                 "started_at": {
                     "type": "string"
@@ -4079,7 +4127,11 @@ const docTemplate = `{
             "properties": {
                 "details": {
                     "description": "Details name the streams concerned at the latest look.",
-                    "type": "object"
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.ServerIncidentDetails"
+                        }
+                    ]
                 },
                 "ended_at": {
                     "type": "string"
@@ -4110,7 +4162,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "severity": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "info",
+                        "warn",
+                        "crit"
+                    ]
                 },
                 "started_at": {
                     "type": "string"
@@ -4118,6 +4175,28 @@ const docTemplate = `{
                 "streams": {
                     "description": "Streams is the largest number of streams that had the problem at once.",
                     "type": "integer"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_store.ServerIncidentDetails": {
+            "type": "object",
+            "properties": {
+                "example": {
+                    "type": "string"
+                },
+                "requests": {
+                    "description": "For loss: the figures of the last five minutes.",
+                    "type": "number"
+                },
+                "retransmits": {
+                    "type": "number"
+                },
+                "streams": {
+                    "description": "Streams had the problem at the latest look; Example is what one of\nthem said.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_store.StreamRef"
+                    }
                 }
             }
         },
@@ -4230,8 +4309,11 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "what": {
-                    "description": "playlist or segment",
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "playlist",
+                        "segment"
+                    ]
                 }
             }
         },
@@ -4276,6 +4358,17 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_hotid_hls-monitor_internal_store.StreamRef": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
         "github_com_hotid_hls-monitor_internal_store.Usage": {
             "type": "object",
             "properties": {
@@ -4314,7 +4407,11 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "role": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "admin",
+                        "viewer"
+                    ]
                 },
                 "username": {
                     "type": "string"
@@ -4438,7 +4535,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "warn",
+                        "fail",
+                        "nodata",
+                        "disabled"
+                    ]
                 },
                 "summary": {
                     "type": "object",
@@ -4471,7 +4575,11 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "kind": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "local",
+                        "remote"
+                    ]
                 },
                 "last_seen": {
                     "type": "string"
@@ -4582,7 +4690,13 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "level": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "playlist",
+                        "header",
+                        "segments",
+                        "container"
+                    ]
                 },
                 "n": {
                     "description": "Cycle: its number from one, how long it took and everything it found.",
@@ -4605,8 +4719,13 @@ const docTemplate = `{
                     "type": "number"
                 },
                 "type": {
-                    "description": "Type is \"start\", \"cycle\" or \"end\".",
-                    "type": "string"
+                    "description": "Type is what the line tells.",
+                    "type": "string",
+                    "enum": [
+                        "start",
+                        "cycle",
+                        "end"
+                    ]
                 },
                 "url": {
                     "description": "Start: what is being checked and for how long.",
@@ -4645,7 +4764,11 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "kind": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "local",
+                        "remote"
+                    ]
                 },
                 "last_seen": {
                     "type": "string"
@@ -4695,7 +4818,13 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "level": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "playlist",
+                        "header",
+                        "segments",
+                        "container"
+                    ]
                 },
                 "name": {
                     "type": "string"
@@ -4754,7 +4883,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "kind": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "master",
+                        "media",
+                        "video",
+                        "audio",
+                        "subtitles"
+                    ]
                 },
                 "name": {
                     "type": "string"
@@ -4864,8 +5000,14 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "vantage": {
-                    "description": "Vantage sums them up: \"all\" saw it, \"some\", \"only_this\" one, or\n\"single\" when there is nothing to compare with.",
-                    "type": "string"
+                    "description": "Vantage sums them up.",
+                    "type": "string",
+                    "enum": [
+                        "all",
+                        "some",
+                        "only_this",
+                        "single"
+                    ]
                 }
             }
         },
@@ -4882,7 +5024,7 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "status": {
-                    "description": "Status: \"new\" for a stream that would be added, \"created\" for one\nthat was, \"exists\" when the address is checked already, \"duplicate\"\nwhen the list has it twice, \"invalid\" when it is not an address the\nmonitor can check, \"failed\" when adding it went wrong.",
+                    "description": "Status is what became of it, or would.",
                     "type": "string",
                     "enum": [
                         "new",
@@ -4933,10 +5075,7 @@ const docTemplate = `{
                     }
                 },
                 "counts": {
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "integer"
-                    }
+                    "$ref": "#/definitions/internal_api.streamCounts"
                 },
                 "incidents": {
                     "type": "array",
@@ -4973,19 +5112,40 @@ const docTemplate = `{
                 }
             }
         },
-        "internal_api.readiness": {
+        "internal_api.readinessChecks": {
             "type": "object",
             "properties": {
                 "checks": {
-                    "description": "Checks: database, time_series (\"ok\", \"down\", \"disabled\"), load\n(\"ok\" or what the process is short of), checks (\"ok\", \"behind\").",
-                    "type": "object",
-                    "additionalProperties": {
-                        "type": "string"
-                    }
+                    "description": "Checks is ok, or behind when checks start later than they should.",
+                    "type": "string"
+                },
+                "database": {
+                    "description": "Database is ok or down.",
+                    "type": "string"
+                },
+                "load": {
+                    "description": "Load is ok or what the process is short of.",
+                    "type": "string"
+                },
+                "time_series": {
+                    "description": "TimeSeries is ok, down, or disabled when none is configured.",
+                    "type": "string"
+                }
+            }
+        },
+        "internal_api.readyAnswer": {
+            "type": "object",
+            "properties": {
+                "checks": {
+                    "$ref": "#/definitions/internal_api.readinessChecks"
                 },
                 "status": {
-                    "description": "Status is \"ok\", \"degraded\" when the server works but something\nneeds attention, \"unavailable\" when it cannot do its job.",
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "degraded",
+                        "unavailable"
+                    ]
                 }
             }
         },
@@ -5176,6 +5336,29 @@ const docTemplate = `{
                 }
             }
         },
+        "internal_api.streamCounts": {
+            "type": "object",
+            "properties": {
+                "disabled": {
+                    "type": "integer"
+                },
+                "fail": {
+                    "type": "integer"
+                },
+                "nodata": {
+                    "type": "integer"
+                },
+                "ok": {
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                },
+                "warn": {
+                    "type": "integer"
+                }
+            }
+        },
         "internal_api.streamDetail": {
             "type": "object",
             "properties": {
@@ -5231,7 +5414,7 @@ const docTemplate = `{
                     }
                 },
                 "picture": {
-                    "description": "Picture is what the picture and the sound are checked for: \"\" for\neverything, \"static\" when a still picture is what the stream shows,\n\"off\" not to look.",
+                    "description": "Picture is what the picture and the sound are checked for.",
                     "type": "string"
                 },
                 "picture_ref": {
@@ -5246,7 +5429,14 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "status": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "warn",
+                        "fail",
+                        "nodata",
+                        "disabled"
+                    ]
                 },
                 "timeout_sec": {
                     "type": "number"
@@ -5385,7 +5575,7 @@ const docTemplate = `{
                     }
                 },
                 "picture": {
-                    "description": "Picture is what the picture and the sound are checked for: \"\" for\neverything, \"static\" when a still picture is what the stream shows,\n\"off\" not to look.",
+                    "description": "Picture is what the picture and the sound are checked for.",
                     "type": "string"
                 },
                 "picture_ref": {
@@ -5400,7 +5590,14 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "status": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "warn",
+                        "fail",
+                        "nodata",
+                        "disabled"
+                    ]
                 },
                 "timeout_sec": {
                     "type": "number"
@@ -5543,7 +5740,14 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "kind": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "master",
+                        "media",
+                        "video",
+                        "audio",
+                        "subtitles"
+                    ]
                 },
                 "language": {
                     "type": "string"
@@ -5606,8 +5810,12 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "kind": {
-                    "description": "Kind is \"configured\" for the stream's own address, with whatever\nbalancing and redirects lie behind it, and \"server\" for one\nparticular server asked directly.",
-                    "type": "string"
+                    "description": "Kind is what is asked: the stream's own address or one server.",
+                    "type": "string",
+                    "enum": [
+                        "configured",
+                        "server"
+                    ]
                 },
                 "last_seen": {
                     "type": "string"
@@ -5628,7 +5836,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "available": {
-                    "description": "Available tells that it can be used now; otherwise Why is\n\"offline\" or \"too_old\" (an agent that does not take such requests).",
+                    "description": "Available tells that it can be used now; otherwise Why says why not.",
                     "type": "boolean"
                 },
                 "id": {
@@ -5642,7 +5850,11 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "why": {
-                    "type": "string"
+                    "type": "string",
+                    "enum": [
+                        "offline",
+                        "too_old"
+                    ]
                 }
             }
         }

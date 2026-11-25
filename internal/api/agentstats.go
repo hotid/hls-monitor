@@ -3,11 +3,12 @@ package api
 import (
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/hotid/hls-monitor/internal/types/id"
 )
 
 // agentStats is what a vantage point did over the last minutes.
@@ -33,8 +34,8 @@ type agentStats struct {
 
 type agentStatsResponse struct {
 	// Window is the time the rates and counts are over, in seconds.
-	Window int                   `json:"window_seconds"`
-	Agents map[string]agentStats `json:"agents"`
+	Window int                     `json:"window_seconds"`
+	Agents map[id.Agent]agentStats `json:"agents"`
 	// Metrics is false when the time series storage did not answer: the
 	// figures that come from it are zero then.
 	Metrics bool `json:"metrics"`
@@ -69,13 +70,13 @@ var agentQueries = []struct {
 //	@Router		/api/v1/agents/stats [get]
 func (s *Server) agentsStats(c *gin.Context) {
 	ctx := c.Request.Context()
-	out := agentStatsResponse{Window: agentStatsWindow, Agents: map[string]agentStats{}, Metrics: true}
+	out := agentStatsResponse{Window: agentStatsWindow, Agents: map[id.Agent]agentStats{}, Metrics: true}
 	open, err := s.st.OpenIncidentsByAgent(ctx)
 	if s.storeError(c, err) {
 		return
 	}
-	for id, n := range open {
-		out.Agents[strconv.FormatInt(id, 10)] = agentStats{IncidentsCrit: n[0], IncidentsWarn: n[1]}
+	for of, n := range open {
+		out.Agents[of] = agentStats{IncidentsCrit: n[0], IncidentsWarn: n[1]}
 	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -95,13 +96,13 @@ func (s *Server) agentsStats(c *gin.Context) {
 				return
 			}
 			for _, series := range res {
-				id := series.Labels["agent"]
-				if id == "" || len(series.Points) == 0 {
+				var of id.Agent
+				if of.Parse(series.Labels["agent"]) != nil || len(series.Points) == 0 {
 					continue
 				}
-				a := out.Agents[id]
+				a := out.Agents[of]
 				q.set(&a, series.Points[len(series.Points)-1][1])
-				out.Agents[id] = a
+				out.Agents[of] = a
 			}
 		}()
 	}

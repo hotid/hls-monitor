@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/hotid/hls-monitor/internal/hlstest"
+	"github.com/hotid/hls-monitor/internal/types/codec"
+	"github.com/hotid/hls-monitor/internal/types/container"
 )
 
 func read(t *testing.T, parts ...string) []byte {
@@ -29,7 +31,7 @@ func checkTracks(t *testing.T, info *Info, wantVideoCodec, wantAudioCodec string
 	if v == nil || a == nil {
 		t.Fatalf("want video and audio tracks, got %+v", info.Tracks)
 	}
-	if v.Codec != wantVideoCodec || a.Codec != wantAudioCodec {
+	if v.Codec.String() != wantVideoCodec || a.Codec.String() != wantAudioCodec {
 		t.Errorf("codecs = %s/%s, want %s/%s", v.Codec, a.Codec, wantVideoCodec, wantAudioCodec)
 	}
 	if v.Width != 160 || v.Height != 90 {
@@ -66,7 +68,7 @@ func checkTracks(t *testing.T, info *Info, wantVideoCodec, wantAudioCodec string
 
 func TestAnalyzeTS(t *testing.T) {
 	info := Analyze(read(t, "ts", "seg1.ts"), nil)
-	if info.Container != ContainerTS {
+	if info.Container != container.TS() {
 		t.Fatalf("container = %s", info.Container)
 	}
 	if !info.HasPAT || !info.HasPMT {
@@ -121,7 +123,7 @@ func TestAnalyzeFMP4(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := Analyze(read(t, "fmp4", "seg1.m4s"), init)
-	if info.Container != ContainerFMP4 {
+	if info.Container != container.FMP4() {
 		t.Fatalf("container = %s", info.Container)
 	}
 	checkTracks(t, info, "avc1", "mp4a")
@@ -149,7 +151,7 @@ func TestGarbage(t *testing.T) {
 		"truncated": read(t, "fmp4", "seg1.m4s")[:300],
 	} {
 		info := Analyze(data, nil)
-		if name != "truncated" && info.Container != ContainerUnknown {
+		if name != "truncated" && info.Container != container.Unknown() {
 			t.Errorf("%s: container = %s, want unknown", name, info.Container)
 		}
 		if name == "truncated" && info.Error == "" {
@@ -204,7 +206,7 @@ func TestRecoveryPointIsKeyframe(t *testing.T) {
 
 	scan := func(data []byte) pictureScan {
 		var v videoScanner
-		return v.scan("h264", data, false)
+		return v.scan(codec.H264(), data, false)
 	}
 	if sc := scan(join(aud, sei, slice)); sc.keys != 1 || !sc.firstKey {
 		t.Errorf("slice after a recovery point: %+v; want a keyframe", sc)
@@ -284,13 +286,13 @@ func TestCountPictures(t *testing.T) {
 		"a delimiter without a picture":     {join(aud), 0},
 	} {
 		var v videoScanner
-		if got := v.scan("h264", c.data, false).halves / 2; got != c.want {
+		if got := v.scan(codec.H264(), c.data, false).halves / 2; got != c.want {
 			t.Errorf("%s: %d, want %d", name, got, c.want)
 		}
 	}
 	// HEVC: a slice starts a picture when the first bit after the two header bytes is set; types 16 to 23 are keyframes.
 	var v videoScanner
-	sc := v.scan("hevc", join(nal(35<<1, 1), nal(19<<1, 1, 0x80), nal(19<<1, 1, 0x00), nal(35<<1, 1), nal(1<<1, 1, 0x80)), false)
+	sc := v.scan(codec.HEVC(), join(nal(35<<1, 1), nal(19<<1, 1, 0x80), nal(19<<1, 1, 0x00), nal(35<<1, 1), nal(1<<1, 1, 0x80)), false)
 	if sc.halves != 4 || sc.keys != 1 || !sc.firstKey {
 		t.Errorf("hevc: %+v, want two frames, the first a keyframe", sc)
 	}
@@ -311,13 +313,13 @@ func TestH264FieldPictures(t *testing.T) {
 	}
 	frame := []byte{0, 0, 1, 0x41, 0b11100000, 0, 0xff}
 	v := videoScanner{fieldsPossible: true, frameNumBits: 4}
-	sc := v.scan("h264", bytes.Join([][]byte{field(0x65, false), field(0x65, true), field(0x41, false), field(0x41, true), frame}, nil), false)
+	sc := v.scan(codec.H264(), bytes.Join([][]byte{field(0x65, false), field(0x65, true), field(0x41, false), field(0x41, true), frame}, nil), false)
 	if sc.halves != 6 || sc.keys != 1 || !sc.firstKey {
 		t.Errorf("two field pairs and a frame: %+v; want 6 half frames and 1 keyframe", sc)
 	}
 	// A field pair split between two packets is still one keyframe.
 	v = videoScanner{fieldsPossible: true, frameNumBits: 4}
-	a, b := v.scan("h264", field(0x65, false), false), v.scan("h264", field(0x65, true), false)
+	a, b := v.scan(codec.H264(), field(0x65, false), false), v.scan(codec.H264(), field(0x65, true), false)
 	if a.keys+b.keys != 1 || a.halves+b.halves != 2 {
 		t.Errorf("a keyframe in two packets: %+v and %+v", a, b)
 	}
@@ -330,12 +332,12 @@ func TestMPEG2Pictures(t *testing.T) {
 	ext := func(structure byte) []byte { return []byte{0, 0, 1, 0xb5, 0x8f, 0xff, 0xf0 | structure, 0x80} }
 	slice := []byte{0, 0, 1, 0x01, 0x12, 0x34}
 	var v videoScanner
-	sc := v.scan("mpeg2video", bytes.Join([][]byte{seq, pic(1), ext(3), slice, slice, pic(2), ext(3), slice, pic(3), ext(3), slice}, nil), false)
+	sc := v.scan(codec.MPEG2Video(), bytes.Join([][]byte{seq, pic(1), ext(3), slice, slice, pic(2), ext(3), slice, pic(3), ext(3), slice}, nil), false)
 	if sc.halves != 6 || sc.keys != 1 || !sc.firstKey || sc.width != 720 || sc.height != 576 {
 		t.Errorf("I, P and B frames: %+v; want 3 frames, 1 keyframe, 720x576", sc)
 	}
 	v = videoScanner{}
-	sc = v.scan("mpeg2video", bytes.Join([][]byte{pic(1), ext(1), slice, pic(2), ext(2), slice}, nil), false)
+	sc = v.scan(codec.MPEG2Video(), bytes.Join([][]byte{pic(1), ext(1), slice, pic(2), ext(2), slice}, nil), false)
 	if sc.halves != 2 || sc.keys != 1 {
 		t.Errorf("an I field and a P field: %+v; want one frame, one keyframe", sc)
 	}

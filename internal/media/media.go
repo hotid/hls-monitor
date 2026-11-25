@@ -5,38 +5,29 @@ package media
 import (
 	"bytes"
 	"fmt"
-)
 
-// Container kinds reported in Info.Container.
-const (
-	ContainerTS      = "ts"
-	ContainerFMP4    = "fmp4"
-	ContainerAAC     = "aac"
-	ContainerVTT     = "vtt"
-	ContainerUnknown = "unknown"
-)
-
-// Track kinds.
-const (
-	KindVideo = "video"
-	KindAudio = "audio"
-	KindOther = "other"
+	"github.com/hotid/hls-monitor/internal/types/codec"
+	"github.com/hotid/hls-monitor/internal/types/codecfamily"
+	"github.com/hotid/hls-monitor/internal/types/container"
+	"github.com/hotid/hls-monitor/internal/types/trackkind"
+	"github.com/hotid/hls-monitor/internal/types/videorange"
 )
 
 // Track describes one elementary stream found in a segment.
 type Track struct {
-	ID    uint32 `json:"id"` // PID for TS, track ID for fMP4
-	Kind  string `json:"kind"`
-	Codec string `json:"codec"`
+	ID   uint32         `json:"id"` // PID for TS, track ID for fMP4
+	Kind trackkind.Kind `json:"kind" enums:"video,audio,other"`
+	// Codec is not set when the container does not say.
+	Codec codec.Codec `json:"codec,omitzero"`
 
 	Width   int     `json:"width,omitempty"`
 	Height  int     `json:"height,omitempty"`
 	Profile string  `json:"profile,omitempty"`
 	Level   string  `json:"level,omitempty"`
 	FPS     float64 `json:"fps,omitempty"`
-	// Range is the dynamic range of the picture when it is a high one:
-	// "PQ" (HDR10, Dolby Vision) or "HLG"; empty for standard.
-	Range string `json:"range,omitempty"`
+	// Range is the dynamic range of the picture when it is a high one;
+	// not set for standard.
+	Range videorange.Range `json:"range,omitzero" enums:"PQ,HLG"`
 
 	SampleRate int `json:"sample_rate,omitempty"`
 	Channels   int `json:"channels,omitempty"`
@@ -93,8 +84,8 @@ func (t *Track) Bitrate() float64 {
 
 // Info is the result of analysing one segment.
 type Info struct {
-	Container string  `json:"container"`
-	Tracks    []Track `json:"tracks,omitempty"`
+	Container container.Kind `json:"container" enums:"ts,fmp4,aac,vtt,unknown"`
+	Tracks    []Track        `json:"tracks,omitempty"`
 
 	// MPEG-TS specifics.
 	Packets         int  `json:"packets,omitempty"`
@@ -122,12 +113,12 @@ type Info struct {
 }
 
 // Video returns the first video track or nil.
-func (i *Info) Video() *Track { return i.first(KindVideo) }
+func (i *Info) Video() *Track { return i.first(trackkind.Video()) }
 
 // Audio returns the first audio track or nil.
-func (i *Info) Audio() *Track { return i.first(KindAudio) }
+func (i *Info) Audio() *Track { return i.first(trackkind.Audio()) }
 
-func (i *Info) first(kind string) *Track {
+func (i *Info) first(kind trackkind.Kind) *Track {
 	for n := range i.Tracks {
 		if i.Tracks[n].Kind == kind {
 			return &i.Tracks[n]
@@ -137,22 +128,22 @@ func (i *Info) first(kind string) *Track {
 }
 
 // Detect guesses the container from the first bytes of a segment.
-func Detect(data []byte) string {
+func Detect(data []byte) container.Kind {
 	switch {
 	case len(data) >= 188 && data[0] == 0x47 && (len(data) < 376 || data[188] == 0x47):
-		return ContainerTS
+		return container.TS()
 	case len(data) >= 8 && isMP4BoxType(data[4:8]):
-		return ContainerFMP4
+		return container.FMP4()
 	case bytes.HasPrefix(data, []byte("WEBVTT")) || bytes.HasPrefix(data, []byte("\xef\xbb\xbfWEBVTT")):
-		return ContainerVTT
+		return container.VTT()
 	case bytes.HasPrefix(data, []byte("ID3")) || (len(data) >= 2 && data[0] == 0xff && data[1]&0xf6 == 0xf0):
-		return ContainerAAC
+		return container.AAC()
 	}
 	// A TS segment may start with garbage; accept it if sync bytes line up later.
 	if off := findTSSync(data, 0); off >= 0 && off < 188*4 {
-		return ContainerTS
+		return container.TS()
 	}
-	return ContainerUnknown
+	return container.Unknown()
 }
 
 func isMP4BoxType(b []byte) bool {
@@ -174,23 +165,26 @@ func Analyze(data []byte, init *Init) *Info {
 		}
 	}()
 	switch info.Container {
-	case ContainerTS:
+	case container.TS():
 		analyzeTS(data, info)
-	case ContainerFMP4:
+	case container.FMP4():
 		analyzeFMP4(data, init, info)
-	case ContainerAAC:
+	case container.AAC():
 		analyzePackedAAC(data, info)
 	}
 	return info
 }
 
-// ProfileName names the profile of H.264 ("h264") or HEVC ("hevc") by its
-// number, the way a parsed track has it.
-func ProfileName(codec string, idc uint32) string {
-	if codec == "hevc" {
+// ProfileName names the profile of H.264 or of HEVC by its number, the way
+// a parsed track has it; empty for another coding.
+func ProfileName(of codecfamily.Family, idc uint32) string {
+	switch of {
+	case codecfamily.HEVC():
 		return hevcProfile(idc)
+	case codecfamily.H264():
+		return h264Profile(idc)
 	}
-	return h264Profile(idc)
+	return ""
 }
 
 func h264Profile(idc uint32) string {

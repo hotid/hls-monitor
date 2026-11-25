@@ -9,6 +9,13 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hotid/hls-monitor/internal/types/agentkind"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/owner"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/role"
 )
 
 func open(t *testing.T) *Store {
@@ -30,7 +37,7 @@ func TestReopenKeepsData(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	if _, err := s.CreateStream(ctx, StreamInput{Name: "one", URL: "http://x/a.m3u8", Enabled: true, Level: "segments", AgentIDs: []int64{LocalAgentID}}, now); err != nil {
+	if _, err := s.CreateStream(ctx, StreamInput{Name: "one", URL: "http://x/a.m3u8", Enabled: true, Level: level.Segments(), Picture: picturemode.Check(), AgentIDs: []id.Agent{LocalAgentID()}}, now); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
@@ -49,11 +56,11 @@ func TestReopenKeepsData(t *testing.T) {
 func TestUsersAndSessions(t *testing.T) {
 	s := open(t)
 	now := time.Now()
-	admin, err := s.CreateUser(ctx, "Admin", "hash", RoleAdmin, now)
+	admin, err := s.CreateUser(ctx, "Admin", "hash", role.Admin(), now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CreateUser(ctx, "admin", "hash", RoleViewer, now); !errors.Is(err, ErrConflict) {
+	if _, err := s.CreateUser(ctx, "admin", "hash", role.Viewer(), now); !errors.Is(err, ErrConflict) {
 		t.Fatalf("usernames must be unique ignoring case, got %v", err)
 	}
 	if u, err := s.GetUserByName(ctx, "ADMIN"); err != nil || u.ID != admin.ID {
@@ -61,7 +68,7 @@ func TestUsersAndSessions(t *testing.T) {
 	}
 
 	// The last administrator cannot be demoted, disabled or deleted.
-	viewer, disabled := RoleViewer, true
+	viewer, disabled := role.Viewer(), true
 	if _, err := s.UpdateUser(ctx, admin.ID, UserUpdate{Role: &viewer}); !errors.Is(err, ErrLastAdmin) {
 		t.Errorf("demoting the last admin: %v", err)
 	}
@@ -84,7 +91,7 @@ func TestUsersAndSessions(t *testing.T) {
 	}
 
 	// With a second admin the first can be disabled, which ends its sessions.
-	if _, err := s.CreateUser(ctx, "second", "hash", RoleAdmin, now); err != nil {
+	if _, err := s.CreateUser(ctx, "second", "hash", role.Admin(), now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.UpdateUser(ctx, admin.ID, UserUpdate{Disabled: &disabled}); err != nil {
@@ -102,7 +109,7 @@ func TestAgentEnrollmentIsOneShot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Enrolled || a.Kind != AgentRemote {
+	if a.Enrolled || a.Kind != agentkind.Remote() {
 		t.Fatalf("new agent = %+v", a)
 	}
 
@@ -130,7 +137,7 @@ func TestAgentEnrollmentIsOneShot(t *testing.T) {
 		t.Fatalf("enrollment succeeded %d times, want exactly 1", wins)
 	}
 
-	if err := s.DeleteAgent(ctx, LocalAgentID); !errors.Is(err, ErrLocalAgent) {
+	if err := s.DeleteAgent(ctx, LocalAgentID()); !errors.Is(err, ErrLocalAgent) {
 		t.Errorf("the local agent must not be deletable: %v", err)
 	}
 }
@@ -140,8 +147,8 @@ func TestStreamAssignment(t *testing.T) {
 	now := time.Now()
 	remote, _ := s.CreateAgent(ctx, "edge-1", []byte("e"), now.Add(time.Hour), now)
 
-	in := StreamInput{Name: "news", URL: "http://x/a.m3u8", Enabled: true, Level: "container",
-		Headers: map[string]string{"Authorization": "Bearer x"}, AgentIDs: []int64{LocalAgentID, remote.ID}}
+	in := StreamInput{Name: "news", URL: "http://x/a.m3u8", Enabled: true, Level: level.Container(), Picture: picturemode.Check(),
+		Headers: map[string]string{"Authorization": "Bearer x"}, AgentIDs: []id.Agent{LocalAgentID(), remote.ID}}
 	st, err := s.CreateStream(ctx, in, now)
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +157,7 @@ func TestStreamAssignment(t *testing.T) {
 		t.Errorf("duplicate name: %v", err)
 	}
 	bad := in
-	bad.Name, bad.AgentIDs = "other", []int64{999}
+	bad.Name, bad.AgentIDs = "other", []id.Agent{id.AgentOf(999)}
 	if _, err := s.CreateStream(ctx, bad, now); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown agent: %v", err)
 	}
@@ -159,11 +166,11 @@ func TestStreamAssignment(t *testing.T) {
 	}
 
 	targets, err := s.TargetsForAgent(ctx, remote.ID)
-	if err != nil || len(targets) != 1 || targets[0].Headers["Authorization"] != "Bearer x" || targets[0].Level != "container" {
+	if err != nil || len(targets) != 1 || targets[0].Headers["Authorization"] != "Bearer x" || targets[0].Level != level.Container() {
 		t.Fatalf("targets = %+v, err %v", targets, err)
 	}
 
-	in.AgentIDs = []int64{LocalAgentID}
+	in.AgentIDs = []id.Agent{LocalAgentID()}
 	up, err := s.UpdateStream(ctx, st.ID, in, now)
 	if err != nil || up.Revision != st.Revision+1 {
 		t.Fatalf("update: %+v %v", up, err)
@@ -175,7 +182,7 @@ func TestStreamAssignment(t *testing.T) {
 	if err := s.SetStreamEnabled(ctx, st.ID, false, now); err != nil {
 		t.Fatal(err)
 	}
-	if targets, _ := s.TargetsForAgent(ctx, LocalAgentID); len(targets) != 0 {
+	if targets, _ := s.TargetsForAgent(ctx, LocalAgentID()); len(targets) != 0 {
 		t.Errorf("disabled stream still handed out: %+v", targets)
 	}
 	if err := s.DeleteStream(ctx, st.ID); err != nil {
@@ -202,7 +209,7 @@ func TestStreamsRebuildKeepsReferences(t *testing.T) {
 		`INSERT INTO stream_agents (stream_id, agent_id) VALUES (7, 1)`,
 		`INSERT INTO variants (id, stream_id, key, kind, first_seen, last_seen) VALUES (3, 7, 'media', 'media', 1, 1)`,
 		`INSERT INTO stream_state (stream_id, agent_id, status, checked_at) VALUES (7, 1, 'ok', 1)`,
-		`INSERT INTO incidents (stream_id, agent_id, variant_id, kind, severity, message, started_at, last_seen) VALUES (7, 1, 3, 'k', 'warn', 'm', 1, 1)`,
+		`INSERT INTO incidents (stream_id, agent_id, variant_id, kind, severity, message, started_at, last_seen) VALUES (7, 1, 3, 'playlist_stale', 'warn', 'm', 1, 1)`,
 	} {
 		if _, err := db.Exec(q); err != nil {
 			t.Fatalf("%s: %v", q, err)
@@ -218,28 +225,28 @@ func TestStreamsRebuildKeepsReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	st, err := s.GetStream(ctx, 7)
-	if err != nil || st.Name != "old" || st.Level != "container" || len(st.AgentIDs) != 1 {
+	st, err := s.GetStream(ctx, id.StreamOf(7))
+	if err != nil || st.Name != "old" || st.Level != level.Container() || len(st.AgentIDs) != 1 {
 		t.Fatalf("stream after the rebuild = %+v, err %v", st, err)
 	}
-	if v, _ := s.ListVariants(ctx, 7); len(v) != 1 {
+	if v, _ := s.ListVariants(ctx, id.StreamOf(7)); len(v) != 1 {
 		t.Errorf("variants lost: %+v", v)
 	}
-	if states, _ := s.StreamStates(ctx, 7); len(states) != 1 {
+	if states, _ := s.StreamStates(ctx, id.StreamOf(7)); len(states) != 1 {
 		t.Errorf("state lost: %+v", states)
 	}
-	if inc, _ := s.ListIncidents(ctx, IncidentFilter{StreamID: 7}); len(inc) != 1 {
+	if inc, _ := s.ListIncidents(ctx, IncidentFilter{StreamID: id.StreamOf(7)}); len(inc) != 1 {
 		t.Errorf("incidents lost: %+v", inc)
 	}
-	in := StreamInput{Name: "new", URL: "http://x/c.m3u8", Enabled: true, Level: "header", AgentIDs: []int64{LocalAgentID}}
+	in := StreamInput{Name: "new", URL: "http://x/c.m3u8", Enabled: true, Level: level.Header(), Picture: picturemode.Check(), AgentIDs: []id.Agent{LocalAgentID()}}
 	if _, err := s.CreateStream(ctx, in, time.Now()); err != nil {
 		t.Fatalf("the header level must be accepted now: %v", err)
 	}
 	// Foreign keys are enforced again: deleting a stream takes its rows along.
-	if err := s.DeleteStream(ctx, 7); err != nil {
+	if err := s.DeleteStream(ctx, id.StreamOf(7)); err != nil {
 		t.Fatal(err)
 	}
-	if v, _ := s.ListVariants(ctx, 7); len(v) != 0 {
+	if v, _ := s.ListVariants(ctx, id.StreamOf(7)); len(v) != 0 {
 		t.Errorf("deleting a stream no longer cascades: %+v", v)
 	}
 }
@@ -256,18 +263,18 @@ func TestRetiredIdentifiers(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	stream := func(name string) int64 {
-		s, err := st.CreateStream(ctx, StreamInput{Name: name, URL: "http://x/" + name + ".m3u8", Enabled: true, Level: "header", AgentIDs: []int64{LocalAgentID}}, now)
+		s, err := st.CreateStream(ctx, StreamInput{Name: name, URL: "http://x/" + name + ".m3u8", Enabled: true, Level: level.Header(), Picture: picturemode.Check(), AgentIDs: []id.Agent{LocalAgentID()}}, now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return s.ID
+		return s.ID.Int64()
 	}
 	agent := func(name string) int64 {
 		a, err := st.CreateAgent(ctx, name, []byte(name), now.Add(time.Hour), now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return a.ID
+		return a.ID.Int64()
 	}
 
 	a, b := stream("a"), stream("b")
@@ -276,13 +283,13 @@ func TestRetiredIdentifiers(t *testing.T) {
 	}
 	// The newest one is deleted: without the record of it, its number
 	// would be the next one given out.
-	if err := st.DeleteStream(ctx, b); err != nil {
+	if err := st.DeleteStream(ctx, id.StreamOf(b)); err != nil {
 		t.Fatal(err)
 	}
 	if c := stream("c"); c != 3 {
 		t.Errorf("a new stream got id %d: the id of the deleted one, or not the next", c)
 	}
-	if err := st.DeleteStream(ctx, a); err != nil {
+	if err := st.DeleteStream(ctx, id.StreamOf(a)); err != nil {
 		t.Fatal(err)
 	}
 	if d := stream("d"); d != 4 {
@@ -290,10 +297,10 @@ func TestRetiredIdentifiers(t *testing.T) {
 	}
 
 	first := agent("edge-1")
-	if first != LocalAgentID+1 {
+	if first != LocalAgentID().Int64()+1 {
 		t.Fatalf("agent id = %d", first)
 	}
-	if err := st.DeleteAgent(ctx, first); err != nil {
+	if err := st.DeleteAgent(ctx, id.AgentOf(first)); err != nil {
 		t.Fatal(err)
 	}
 	if second := agent("edge-2"); second != first+1 {
@@ -311,7 +318,7 @@ func TestRetiredIdentifiers(t *testing.T) {
 	if !seen["stream/1"] || !seen["stream/2"] || !seen["agent/2"] {
 		t.Errorf("pending deletions = %+v", pending)
 	}
-	if err := st.SeriesDeleted(ctx, "stream", 1); err != nil {
+	if err := st.SeriesDeleted(ctx, owner.Stream(), 1); err != nil {
 		t.Fatal(err)
 	}
 	if pending, _ = st.SeriesDeletions(ctx); len(pending) != 2 {

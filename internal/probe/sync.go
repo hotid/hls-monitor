@@ -3,6 +3,13 @@ package probe
 import (
 	"math"
 	"time"
+
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
 )
 
 // anchor is where one segment of a playlist starts on the timeline of its
@@ -91,21 +98,21 @@ func (a anchor) place(segs []plSegment) (float64, bool) {
 func (c *Checker) renditionsInStep(cy *cycle, edges []edge) {
 	var ref *edge
 	for i := range edges {
-		if e := &edges[i]; e.ok && e.live && e.kind == KindVideo {
+		if e := &edges[i]; e.ok && e.live && e.kind == variantkind.Video() {
 			ref = e
 			break
 		}
 	}
-	seen := map[string]bool{}
+	seen := map[variantkey.Key]bool{}
 	now := c.now()
 	for i := range edges {
 		e := &edges[i]
-		if ref == nil || e == ref || !e.ok || !e.live || e.kind == KindSubtitles {
+		if ref == nil || e == ref || !e.ok || !e.live || e.kind == variantkind.Subtitles() {
 			continue
 		}
 		seen[e.key] = true
 		if c.steps == nil {
-			c.steps = map[string]*inStep{}
+			c.steps = map[variantkey.Key]*inStep{}
 		}
 		s := c.steps[e.key]
 		if s == nil {
@@ -121,7 +128,7 @@ func (c *Checker) renditionsInStep(cy *cycle, edges []edge) {
 				s.once = true
 			}
 			if s.once || math.Abs(d) < ownTimeline {
-				cy.metric("hls_variant_offset_seconds", e.key, d)
+				cy.metric(metricname.VariantOffsetSeconds(), e.key, d)
 				if math.Abs(d) > limit {
 					apart = true
 					report = func() {
@@ -129,8 +136,8 @@ func (c *Checker) renditionsInStep(cy *cycle, edges []edge) {
 						if d > 0 {
 							how = "ahead of"
 						}
-						cy.problem(ProbVariantsOutOfSync, SevWarn, e.key, "the playlist is %.1fs %s the picture (%s) by the timestamps in the segments", math.Abs(d), how, ref.key)
-						cy.detail(ProbVariantsOutOfSync, e.key, "rendition_offset", d, "rendition_offset_limit", limit, "compared_with", ref.key)
+						cy.problem(problemkind.VariantsOutOfSync(), severity.Warn(), e.key, "the playlist is %.1fs %s the picture (%s) by the timestamps in the segments", math.Abs(d), how, ref.key)
+						cy.detail(problemkind.VariantsOutOfSync(), e.key, detail.RenditionOffset(d), detail.RenditionOffsetLimit(limit), detail.ComparedWith(ref.key))
 					}
 				}
 			}
@@ -155,8 +162,8 @@ func (c *Checker) renditionsInStep(cy *cycle, edges []edge) {
 					if moved > 0 {
 						how = "ran ahead of"
 					}
-					cy.problem(ProbVariantsOutOfSync, SevWarn, e.key, "the playlist %s the picture (%s) by %d segments, counting by their numbers", how, ref.key, abs64(moved))
-					cy.detail(ProbVariantsOutOfSync, e.key, "segments_moved", moved, "segments_moved_limit", stepSegments, "compared_with", ref.key)
+					cy.problem(problemkind.VariantsOutOfSync(), severity.Warn(), e.key, "the playlist %s the picture (%s) by %d segments, counting by their numbers", how, ref.key, abs64(moved))
+					cy.detail(problemkind.VariantsOutOfSync(), e.key, detail.SegmentsMoved(moved), detail.SegmentsMovedLimit(stepSegments), detail.ComparedWith(ref.key))
 				}
 			}
 		}

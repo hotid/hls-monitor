@@ -8,6 +8,17 @@ import (
 	"github.com/hotid/hls-monitor/internal/hlstest"
 	"github.com/hotid/hls-monitor/internal/media"
 	"github.com/hotid/hls-monitor/internal/picture"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/overload"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/trackkind"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
 )
 
 // stubLooker shows the checker whatever a test wants it to see.
@@ -58,19 +69,19 @@ var (
 	quietFrame = picture.Frame{HasPicture: true, Luma: 120, Dark: 0.1, Cells: flat(120), HasAudio: true, AudioDB: picture.Silent}
 )
 
-func lookFixture(t *testing.T, level Level) (*fixture, *stubLooker) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level)
+func lookFixture(t *testing.T, lv level.Level) (*fixture, *stubLooker) {
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", lv)
 	s := &stubLooker{frame: liveFrame}
 	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
 	// The origin of the tests plays three segments round and round, which
 	// is a clip going round to whoever reads their container: the tests
 	// of looks at the level of whole segments are of the looks alone.
-	f.c.blind = level == LevelSegments
+	f.c.blind = lv == level.Segments()
 	return f, s
 }
 
 // watch runs cycles for a while and tells in which of them the problem was reported.
-func watch(f *fixture, d time.Duration, kind string) (reported, cycles int) {
+func watch(f *fixture, d time.Duration, kind problemkind.Kind) (reported, cycles int) {
 	for end := f.clock.Add(d); f.clock.Before(end); {
 		cycles++
 		if hasProblem(f.step(1), kind) != nil {
@@ -81,82 +92,82 @@ func watch(f *fixture, d time.Duration, kind string) (reported, cycles int) {
 }
 
 func TestBlackPicture(t *testing.T) {
-	f, s := lookFixture(t, LevelSegments)
+	f, s := lookFixture(t, level.Segments())
 	first := f.step(1)
 	if first.Picture == nil || !first.Picture.HasPicture || first.Picture.Luma != 120 || len(first.Picture.JPEG) == 0 {
 		t.Fatalf("the first cycle looks at the stream: %+v", first.Picture)
 	}
-	if v, ok := metric(first, "hls_picture_luma", VariantMedia); !ok || v != 120 {
+	if v, ok := metric(first, metricname.PictureLuma(), variantkey.Media()); !ok || v != 120 {
 		t.Errorf("hls_picture_luma = %v, %v", v, ok)
 	}
 	// Nothing wrong: one look in five minutes, and no more.
-	if n, _ := watch(f, 4*time.Minute, ProbPictureBlack); n != 0 || s.looks != 1 {
+	if n, _ := watch(f, 4*time.Minute, problemkind.PictureBlack()); n != 0 || s.looks != 1 {
 		t.Fatalf("an ordinary stream: reported %d times, looked %d times", n, s.looks)
 	}
 
 	// The screen goes black. One black picture is a dark scene; the
 	// checker looks again soon, and a minute of it is a finding.
 	s.frame = blackFrame
-	if n, _ := watch(f, 100*time.Second, ProbPictureBlack); n != 0 {
+	if n, _ := watch(f, 100*time.Second, problemkind.PictureBlack()); n != 0 {
 		t.Fatalf("reported after %d looks, before a minute of black had passed", s.looks)
 	}
 	if s.looks < 3 {
 		t.Fatalf("a black picture was looked at again %d times in a hundred seconds", s.looks-1)
 	}
-	n, cycles := watch(f, 2*time.Minute, ProbPictureBlack)
+	n, cycles := watch(f, 2*time.Minute, problemkind.PictureBlack())
 	if n < cycles-15 {
 		t.Fatalf("black for minutes: reported in %d of %d cycles", n, cycles)
 	}
 	// It stands between looks: an incident ends when its problem is not reported.
-	if n, cycles := watch(f, 30*time.Second, ProbPictureBlack); n != cycles {
+	if n, cycles := watch(f, 30*time.Second, problemkind.PictureBlack()); n != cycles {
 		t.Errorf("between looks the problem was reported in %d of %d cycles", n, cycles)
 	}
-	p := hasProblem(f.step(1), ProbPictureBlack)
-	if p == nil || p.Severity != SevCrit || p.Details["picture_luma"] != 16.0 {
+	p := hasProblem(f.step(1), problemkind.PictureBlack())
+	if p == nil || p.Severity != severity.Crit() || num(p.Details, detail.KeyPictureLuma()) != 16.0 {
 		t.Fatalf("problem = %+v", p)
 	}
 
 	// The picture is back: the next look ends it.
 	s.frame = liveFrame
 	before := s.looks
-	watch(f, 70*time.Second, ProbPictureBlack)
+	watch(f, 70*time.Second, problemkind.PictureBlack())
 	// With a finding standing the stream is looked at once a minute, not
 	// every twenty seconds for ever.
 	if n := s.looks - before; n < 1 || n > 2 {
 		t.Errorf("%d looks in seventy seconds with a finding standing", n)
 	}
-	if n, _ := watch(f, time.Minute, ProbPictureBlack); n != 0 {
+	if n, _ := watch(f, time.Minute, problemkind.PictureBlack()); n != 0 {
 		t.Errorf("still reported in %d cycles after the picture came back", n)
 	}
 }
 
 func TestFrozenPictureAndSilence(t *testing.T) {
-	f, s := lookFixture(t, LevelSegments)
+	f, s := lookFixture(t, level.Segments())
 	// The same picture look after look, and it has sound: frozen. That
 	// it does not change shows at the second look, a period after the
 	// first; from then on the checker looks again soon.
-	if n, _ := watch(f, 4*time.Minute, ProbPictureFrozen); n != 0 || s.looks != 1 {
+	if n, _ := watch(f, 4*time.Minute, problemkind.PictureFrozen()); n != 0 || s.looks != 1 {
 		t.Fatalf("before the second look: reported %d times after %d looks", n, s.looks)
 	}
-	if n, _ := watch(f, 4*time.Minute, ProbPictureFrozen); n == 0 {
+	if n, _ := watch(f, 4*time.Minute, problemkind.PictureFrozen()); n == 0 {
 		t.Fatalf("the same picture for eight minutes (%d looks) was not reported", s.looks)
 	}
-	if hasProblem(f.step(1), ProbAudioSilent) != nil {
+	if hasProblem(f.step(1), problemkind.AudioSilent()) != nil {
 		t.Error("a tone was reported as silence")
 	}
 	// The picture moves again, in silence.
 	s.frame = quietFrame
-	watch(f, 70*time.Second, ProbPictureFrozen)
+	watch(f, 70*time.Second, problemkind.PictureFrozen())
 	// It looks much the same as a whole, and moves in one place: someone talking.
 	var silent, frozen int
 	for i := 0; i < 120; i++ {
 		s.frame.Cells = flat(120)
 		s.frame.Cells[200] = byte(60 + 10*(s.looks%5)) // never the 120 of the rest
 		r := f.step(1)
-		if hasProblem(r, ProbAudioSilent) != nil {
+		if hasProblem(r, problemkind.AudioSilent()) != nil {
 			silent++
 		}
-		if i > 45 && hasProblem(r, ProbPictureFrozen) != nil {
+		if i > 45 && hasProblem(r, problemkind.PictureFrozen()) != nil {
 			frozen++
 		}
 	}
@@ -166,20 +177,20 @@ func TestFrozenPictureAndSilence(t *testing.T) {
 }
 
 func TestStaticPictureIsWhatSomeStreamsShow(t *testing.T) {
-	f, s := lookFixture(t, LevelSegments)
-	f.c.t.Picture = PictureStatic
-	if n, _ := watch(f, 4*time.Minute, ProbPictureFrozen); n != 0 {
+	f, s := lookFixture(t, level.Segments())
+	f.c.t.Picture = picturemode.Static()
+	if n, _ := watch(f, 4*time.Minute, problemkind.PictureFrozen()); n != 0 {
 		t.Errorf("a stream said to show a still picture was reported frozen %d times", n)
 	}
 	// Black is still black.
 	s.frame = blackFrame
-	if n, _ := watch(f, 4*time.Minute, ProbPictureBlack); n == 0 {
+	if n, _ := watch(f, 4*time.Minute, problemkind.PictureBlack()); n == 0 {
 		t.Error("a black screen was not reported on a stream with a still picture")
 	}
 
-	off, so := lookFixture(t, LevelSegments)
-	off.c.t.Picture = PictureOff
-	watch(off, time.Minute, ProbPictureBlack)
+	off, so := lookFixture(t, level.Segments())
+	off.c.t.Picture = picturemode.Off()
+	watch(off, time.Minute, problemkind.PictureBlack())
 	if so.looks != 0 {
 		t.Errorf("a stream not to be looked at was looked at %d times", so.looks)
 	}
@@ -187,15 +198,15 @@ func TestStaticPictureIsWhatSomeStreamsShow(t *testing.T) {
 
 func TestLookIsPutOff(t *testing.T) {
 	// A decoder with a queue, or a monitor that cannot keep up, waits.
-	f, s := lookFixture(t, LevelSegments)
+	f, s := lookFixture(t, level.Segments())
 	s.busy = true
-	watch(f, time.Minute, ProbPictureBlack)
+	watch(f, time.Minute, problemkind.PictureBlack())
 	if s.looks != 0 {
 		t.Fatalf("looked %d times while the decoder was busy", s.looks)
 	}
 	s.busy = false
-	f.c.Overloaded = func(time.Time) string { return "processor" }
-	watch(f, time.Minute, ProbPictureBlack)
+	f.c.Overloaded = func(time.Time) overload.Reason { return overload.Processor() }
+	watch(f, time.Minute, problemkind.PictureBlack())
 	if s.looks != 0 {
 		t.Fatalf("looked %d times while overloaded", s.looks)
 	}
@@ -205,8 +216,8 @@ func TestLookIsPutOff(t *testing.T) {
 	}
 
 	// Where only playlists are checked there is nothing to look at.
-	p, sp := lookFixture(t, LevelPlaylist)
-	watch(p, time.Minute, ProbPictureBlack)
+	p, sp := lookFixture(t, level.Playlist())
+	watch(p, time.Minute, problemkind.PictureBlack())
 	if sp.looks != 0 {
 		t.Errorf("looked %d times at a stream whose segments are not fetched", sp.looks)
 	}
@@ -215,7 +226,7 @@ func TestLookIsPutOff(t *testing.T) {
 func TestDarkSceneIsNotABlackScreen(t *testing.T) {
 	// A night scene, the credits: as dark as a black screen, look after
 	// look, with something moving in it.
-	f, s := lookFixture(t, LevelSegments)
+	f, s := lookFixture(t, level.Segments())
 	var frozen, black int
 	for i := 0; i < 300; i++ {
 		cells := flat(3)
@@ -224,10 +235,10 @@ func TestDarkSceneIsNotABlackScreen(t *testing.T) {
 		}
 		s.frame = picture.Frame{HasPicture: true, Luma: 4, Dark: 0.99, Cells: cells, HasAudio: true, AudioDB: -20}
 		r := f.step(1)
-		if hasProblem(r, ProbPictureFrozen) != nil {
+		if hasProblem(r, problemkind.PictureFrozen()) != nil {
 			frozen++
 		}
-		if hasProblem(r, ProbPictureBlack) != nil {
+		if hasProblem(r, problemkind.PictureBlack()) != nil {
 			black++
 		}
 	}
@@ -239,7 +250,7 @@ func TestDarkSceneIsNotABlackScreen(t *testing.T) {
 func TestDarkNoticeIsAPictureThatStays(t *testing.T) {
 	// A dark slate with something blinking: all but black one look, not
 	// quite the next, the same picture all along.
-	f, s := lookFixture(t, LevelSegments)
+	f, s := lookFixture(t, level.Segments())
 	dark := picture.Frame{HasPicture: true, Luma: 8, Dark: 0.984, Cells: flat(8), HasAudio: true, AudioDB: -20}
 	lighter := dark
 	lighter.Dark, lighter.Luma = 0.975, 8.6
@@ -250,10 +261,10 @@ func TestDarkNoticeIsAPictureThatStays(t *testing.T) {
 			s.frame = lighter
 		}
 		r := f.step(1)
-		if hasProblem(r, ProbPictureFrozen) != nil {
+		if hasProblem(r, problemkind.PictureFrozen()) != nil {
 			frozen++
 		}
-		if hasProblem(r, ProbPictureBlack) != nil {
+		if hasProblem(r, problemkind.PictureBlack()) != nil {
 			black++
 		}
 	}
@@ -263,13 +274,15 @@ func TestDarkNoticeIsAPictureThatStays(t *testing.T) {
 }
 
 func TestKnownSlate(t *testing.T) {
-	f, s := lookFixture(t, LevelSegments)
+	f, s := lookFixture(t, level.Segments())
 	notice := flat(70)
 	notice[100], notice[101] = 200, 200 // something written on it
-	f.c.Slates = func() []Slate { return []Slate{{ID: 7, Name: "technical break", Frames: [][]byte{flat(10), notice}}} }
+	f.c.Slates = func() []Slate {
+		return []Slate{{ID: id.SlateOf(7), Name: "technical break", Frames: [][]byte{flat(10), notice}}}
+	}
 
 	// An ordinary picture is not it.
-	if n, _ := watch(f, time.Minute, ProbPictureSlate); n != 0 {
+	if n, _ := watch(f, time.Minute, problemkind.PictureSlate()); n != 0 {
 		t.Fatalf("an ordinary picture was taken for the slate %d times", n)
 	}
 	// The slate goes on air, coded anew, a little off the one that was
@@ -280,22 +293,22 @@ func TestKnownSlate(t *testing.T) {
 	before := s.looks
 	var first *Problem
 	for i := 0; i < 200 && first == nil; i++ {
-		first = hasProblem(f.step(1), ProbPictureSlate)
+		first = hasProblem(f.step(1), problemkind.PictureSlate())
 	}
 	if first == nil || s.looks != before+1 {
 		t.Fatalf("the slate was not known at the first look (%d looks): %+v", s.looks-before, first)
 	}
-	if first.Severity != SevCrit || first.Details["slate"] != "technical break" {
+	if first.Severity != severity.Crit() || first.Details.Text(detail.KeySlate()) != "technical break" {
 		t.Errorf("problem = %+v", first)
 	}
 	// It stands still, and is told once, as the slate it is.
 	var slate, frozen, cycles int
 	for end := f.clock.Add(5 * time.Minute); f.clock.Before(end); cycles++ {
 		r := f.step(1)
-		if hasProblem(r, ProbPictureSlate) != nil {
+		if hasProblem(r, problemkind.PictureSlate()) != nil {
 			slate++
 		}
-		if hasProblem(r, ProbPictureFrozen) != nil {
+		if hasProblem(r, problemkind.PictureFrozen()) != nil {
 			frozen++
 		}
 	}
@@ -310,7 +323,7 @@ func TestSlateWithSomethingBlinkingOnIt(t *testing.T) {
 	for i := range card {
 		card[i] = byte(40 + 120*(i/8%2))
 	}
-	slates := []Slate{{ID: 1, Name: "card", Frames: [][]byte{card}}, {ID: 2, Name: "dark", Frames: [][]byte{flat(8)}}}
+	slates := []Slate{{ID: id.SlateOf(1), Name: "card", Frames: [][]byte{card}}, {ID: id.SlateOf(2), Name: "dark", Frames: [][]byte{flat(8)}}}
 
 	// The same card with a clock in a corner showing another time.
 	clock := append([]byte(nil), card...)
@@ -347,10 +360,10 @@ func TestLookFetchesWholePackets(t *testing.T) {
 	}
 	// At the level that reads the beginning of segments, a cycle that
 	// looks reads more of one of them, and finds nothing wrong for it.
-	f, s := lookFixture(t, LevelHeader)
+	f, s := lookFixture(t, level.Header())
 	for i := 0; i < 5; i++ {
 		r := f.step(1)
-		if p := hasProblem(r, ProbTSSync); p != nil {
+		if p := hasProblem(r, problemkind.TSSync()); p != nil {
 			t.Fatalf("cycle %d: %+v", i, p)
 		}
 		wantClean(t, r)
@@ -363,94 +376,94 @@ func TestLookFetchesWholePackets(t *testing.T) {
 func TestNothingCanBeDecoded(t *testing.T) {
 	// A stream whose container is in order and whose contents are garbage:
 	// the decoder makes nothing of it, look after look.
-	f, s := lookFixture(t, LevelHeader)
+	f, s := lookFixture(t, level.Header())
 	s.err = picture.ErrNothing
-	if n, _ := watch(f, 50*time.Second, ProbMediaUndecodable); n != 0 {
+	if n, _ := watch(f, 50*time.Second, problemkind.MediaUndecodable()); n != 0 {
 		t.Fatalf("told after %d looks, in under a minute", s.looks)
 	}
 	// The segments of the fixture go round, which is found on the way
 	// and brings one look forward: a minute of looks may end a look later.
-	n, cycles := watch(f, 3*time.Minute, ProbMediaUndecodable)
+	n, cycles := watch(f, 3*time.Minute, problemkind.MediaUndecodable())
 	if n < cycles-15 || s.looks < 4 || s.looks > 9 {
 		t.Fatalf("reported in %d of %d cycles, after %d looks", n, cycles, s.looks)
 	}
 	// What the container said of the video goes with it.
-	if p := hasProblem(f.step(1), ProbMediaUndecodable); p == nil || p.Details["video_pictures"] == nil || p.Details["video_packets"] == nil || p.Details["video_kbit_s"] == nil {
+	if p := hasProblem(f.step(1), problemkind.MediaUndecodable()); p == nil || !p.Details.Has(detail.KeyVideoPictures()) || !p.Details.Has(detail.KeyVideoPackets()) || !p.Details.Has(detail.KeyVideoKbitS()) {
 		t.Errorf("what the container says is missing: %+v", p)
 	}
 	// It decodes again: over at the next look.
 	s.err = nil
-	if n, _ := watch(f, 3*time.Minute, ProbMediaUndecodable); n > 15 {
+	if n, _ := watch(f, 3*time.Minute, problemkind.MediaUndecodable()); n > 15 {
 		t.Errorf("still reported in %d cycles after it decoded", n)
 	}
-	if hasProblem(f.step(1), ProbMediaUndecodable) != nil {
+	if hasProblem(f.step(1), problemkind.MediaUndecodable()) != nil {
 		t.Error("still reported")
 	}
 
 	// One segment that would not decode among good ones is nothing.
-	f, s = lookFixture(t, LevelHeader)
+	f, s = lookFixture(t, level.Header())
 	f.step(1)
 	s.err = picture.ErrNothing
 	f.clock = f.clock.Add(5 * time.Minute)
 	f.step(1)
 	s.err = nil
-	if n, _ := watch(f, 6*time.Minute, ProbMediaUndecodable); n != 0 {
+	if n, _ := watch(f, 6*time.Minute, problemkind.MediaUndecodable()); n != 0 {
 		t.Errorf("one bad look was reported in %d cycles", n)
 	}
 }
 
 func TestOneChannelOfTheSoundIsSilent(t *testing.T) {
-	f, s := lookFixture(t, LevelSegments)
+	f, s := lookFixture(t, level.Segments())
 	s.frame = liveFrame
 	s.frame.ChannelDB = []float64{-20, picture.Silent}
-	if n, _ := watch(f, 50*time.Second, ProbAudioChannelSilent); n != 0 {
+	if n, _ := watch(f, 50*time.Second, problemkind.AudioChannelSilent()); n != 0 {
 		t.Fatalf("told after %d looks, in under a minute", s.looks)
 	}
-	watch(f, time.Minute, ProbAudioChannelSilent)
-	p := hasProblem(f.step(1), ProbAudioChannelSilent)
-	if p == nil || p.Severity != SevWarn || p.Details["silent_channel"] != "right" || p.Details["left_level_db"] != -20.0 {
+	watch(f, time.Minute, problemkind.AudioChannelSilent())
+	p := hasProblem(f.step(1), problemkind.AudioChannelSilent())
+	if p == nil || p.Severity != severity.Warn() || p.Details.Text(detail.KeySilentChannel()) != "right" || num(p.Details, detail.KeyLeftLevelDB()) != -20.0 {
 		t.Fatalf("problem = %+v", p)
 	}
 	// Both quiet is a pause, not a channel that is missing; and channels
 	// behind the first two may be silent as they like.
 	s.frame.ChannelDB = []float64{-60, picture.Silent}
-	watch(f, 2*time.Minute, ProbAudioChannelSilent)
-	if hasProblem(f.step(1), ProbAudioChannelSilent) != nil {
+	watch(f, 2*time.Minute, problemkind.AudioChannelSilent())
+	if hasProblem(f.step(1), problemkind.AudioChannelSilent()) != nil {
 		t.Error("a pause was told as a silent channel")
 	}
 	s.frame.ChannelDB = []float64{-20, -22, -25, picture.Silent, picture.Silent, picture.Silent}
-	if n, _ := watch(f, 3*time.Minute, ProbAudioChannelSilent); n != 0 {
+	if n, _ := watch(f, 3*time.Minute, problemkind.AudioChannelSilent()); n != 0 {
 		t.Errorf("silent channels behind the first two were told %d times", n)
 	}
 }
 
 func TestSoundFarTooQuiet(t *testing.T) {
-	f, s := lookFixture(t, LevelSegments)
+	f, s := lookFixture(t, level.Segments())
 	s.frame = liveFrame
 	s.frame.AudioDB = -52
 	// A quiet hour is a quiet film.
 	for end := f.clock.Add(time.Hour); f.clock.Before(end); {
-		if hasProblem(f.step(1), ProbAudioQuiet) != nil {
+		if hasProblem(f.step(1), problemkind.AudioQuiet()) != nil {
 			t.Fatal("an hour of quiet sound was told")
 		}
 	}
 	// One loud look and the count begins anew.
 	s.frame.AudioDB = -20
-	watch(f, 6*time.Minute, ProbAudioQuiet)
+	watch(f, 6*time.Minute, problemkind.AudioQuiet())
 	s.frame.AudioDB = -52
-	if n, _ := watch(f, 90*time.Minute, ProbAudioQuiet); n != 0 {
+	if n, _ := watch(f, 90*time.Minute, problemkind.AudioQuiet()); n != 0 {
 		t.Fatalf("told %d times within ninety minutes of a loud look", n)
 	}
-	watch(f, 40*time.Minute, ProbAudioQuiet)
-	p := hasProblem(f.step(1), ProbAudioQuiet)
-	if p == nil || p.Severity != SevWarn || p.Details["audio_level_db"] != -52.0 {
+	watch(f, 40*time.Minute, problemkind.AudioQuiet())
+	p := hasProblem(f.step(1), problemkind.AudioQuiet())
+	if p == nil || p.Severity != severity.Warn() || num(p.Details, detail.KeyAudioLevelDB()) != -52.0 {
 		t.Fatalf("problem = %+v", p)
 	}
 	// Silence is told as silence, not as sound too quiet.
 	s.frame.AudioDB = picture.Silent
-	watch(f, 3*time.Minute, ProbAudioSilent)
+	watch(f, 3*time.Minute, problemkind.AudioSilent())
 	r := f.step(1)
-	if hasProblem(r, ProbAudioSilent) == nil || hasProblem(r, ProbAudioQuiet) != nil {
+	if hasProblem(r, problemkind.AudioSilent()) == nil || hasProblem(r, problemkind.AudioQuiet()) != nil {
 		t.Errorf("silence: %+v", r.Problems)
 	}
 }
@@ -458,20 +471,20 @@ func TestSoundFarTooQuiet(t *testing.T) {
 func TestSoundThatDoesNotDecode(t *testing.T) {
 	// The container has sound, the decoder shows the picture and makes
 	// nothing of the sound.
-	f, s := lookFixture(t, LevelContainer)
+	f, s := lookFixture(t, level.Container())
 	s.frame = liveFrame
 	s.frame.HasAudio, s.frame.AudioError = false, "channel element 1.0 is not allocated"
-	if n, _ := watch(f, 50*time.Second, ProbAudioUndecodable); n != 0 {
+	if n, _ := watch(f, 50*time.Second, problemkind.AudioUndecodable()); n != 0 {
 		t.Fatalf("told after %d looks, in under a minute", s.looks)
 	}
-	watch(f, time.Minute, ProbAudioUndecodable)
-	p := hasProblem(f.step(1), ProbAudioUndecodable)
-	if p == nil || p.Severity != SevCrit || p.Details["decoder_says"] != "channel element 1.0 is not allocated" {
+	watch(f, time.Minute, problemkind.AudioUndecodable())
+	p := hasProblem(f.step(1), problemkind.AudioUndecodable())
+	if p == nil || p.Severity != severity.Crit() || p.Details.Text(detail.KeyDecoderSays()) != "channel element 1.0 is not allocated" {
 		t.Fatalf("problem = %+v", p)
 	}
 	s.frame = liveFrame
-	watch(f, 2*time.Minute, ProbAudioUndecodable)
-	if hasProblem(f.step(1), ProbAudioUndecodable) != nil {
+	watch(f, 2*time.Minute, problemkind.AudioUndecodable())
+	if hasProblem(f.step(1), problemkind.AudioUndecodable()) != nil {
 		t.Error("still told after the sound was heard")
 	}
 }
@@ -479,7 +492,7 @@ func TestSoundThatDoesNotDecode(t *testing.T) {
 func TestSoundInAPlaylistOfItsOwn(t *testing.T) {
 	// The segments of the picture have no sound in them: it is in a
 	// playlist of its own, and is listened to there after every look.
-	f := newFixture(t, hlstest.Options{SoundApart: true}, "/master.m3u8", LevelContainer)
+	f := newFixture(t, hlstest.Options{SoundApart: true}, "/master.m3u8", level.Container())
 	s := &stubLooker{frame: liveFrame}
 	s.frame.HasAudio, s.frame.NoSound = false, true
 	s.heard = &picture.Frame{HasAudio: true, AudioDB: -20, ChannelDB: []float64{-20, -21}}
@@ -495,25 +508,25 @@ func TestSoundInAPlaylistOfItsOwn(t *testing.T) {
 	}
 	// Silence there is silence of the stream, and is listened to again soon.
 	s.heard = &picture.Frame{HasAudio: true, AudioDB: picture.Silent, ChannelDB: []float64{picture.Silent, picture.Silent}}
-	watch(f, 7*time.Minute, ProbAudioSilent)
-	if p := hasProblem(f.step(1), ProbAudioSilent); p == nil || s.listens < 4 {
+	watch(f, 7*time.Minute, problemkind.AudioSilent())
+	if p := hasProblem(f.step(1), problemkind.AudioSilent()); p == nil || s.listens < 4 {
 		t.Fatalf("silence in the playlist of sound: %+v after %d listens", p, s.listens)
 	}
 	// It stands through the looks at the picture, which has nothing to say of it.
-	if n, cycles := watch(f, 3*time.Minute, ProbAudioSilent); n != cycles {
+	if n, cycles := watch(f, 3*time.Minute, problemkind.AudioSilent()); n != cycles {
 		t.Errorf("silence was told in %d of %d cycles", n, cycles)
 	}
 	// Sound nothing can be made of is sound that does not decode.
 	s.heard = nil
-	watch(f, 3*time.Minute, ProbAudioUndecodable)
+	watch(f, 3*time.Minute, problemkind.AudioUndecodable())
 	r := f.step(1)
-	if hasProblem(r, ProbAudioUndecodable) == nil || hasProblem(r, ProbAudioSilent) != nil {
+	if hasProblem(r, problemkind.AudioUndecodable()) == nil || hasProblem(r, problemkind.AudioSilent()) != nil {
 		t.Fatalf("sound that does not decode: %+v", r.Problems)
 	}
 	// And it is over when the sound is back.
 	s.heard = &picture.Frame{HasAudio: true, AudioDB: -20, ChannelDB: []float64{-20, -21}}
-	watch(f, 3*time.Minute, ProbAudioUndecodable)
-	if r := f.step(1); hasProblem(r, ProbAudioUndecodable) != nil || hasProblem(r, ProbAudioSilent) != nil {
+	watch(f, 3*time.Minute, problemkind.AudioUndecodable())
+	if r := f.step(1); hasProblem(r, problemkind.AudioUndecodable()) != nil || hasProblem(r, problemkind.AudioSilent()) != nil {
 		t.Errorf("still told: %+v", r.Problems)
 	}
 }
@@ -522,15 +535,15 @@ func TestMoreIsFetchedWhereTheSoundComesLate(t *testing.T) {
 	// A stream of many megabits: the beginning of a segment has the
 	// picture and next to none of the sound, by its container. From then
 	// on more of a segment is fetched for a look.
-	c := New(Target{ID: 1, URL: "http://x/", Level: LevelHeader}, nil)
+	c := New(Target{ID: id.StreamOf(1), URL: "http://x/", Level: level.Header(), Picture: picturemode.Check()}, nil)
 	s := &stubLooker{frame: liveFrame}
 	s.frame.HasAudio = false
 	c.Looker, c.PictureEvery = s, 5*time.Minute
 	if c.lookSize() != lookBytes {
 		t.Fatalf("a look fetches %d bytes to begin with", c.lookSize())
 	}
-	few := &media.Info{Tracks: []media.Track{{Kind: media.KindVideo, Frames: 12}, {Kind: media.KindAudio, Frames: 3}}}
-	c.look(context.Background(), &cycle{res: &Result{}}, Variant{Key: "v", Kind: KindVideo}, []byte{0x47}, nil, few, time.Now())
+	few := &media.Info{Tracks: []media.Track{{Kind: trackkind.Video(), Frames: 12}, {Kind: trackkind.Audio(), Frames: 3}}}
+	c.look(context.Background(), &cycle{res: &Result{}}, Variant{Key: variantkey.OfURI("v"), Kind: variantkind.Video()}, []byte{0x47}, nil, few, time.Now())
 	if c.lookSize() != lookBytesMore || lookBytesMore%188 != 0 {
 		t.Fatalf("after a look with a picture and three frames of sound a look fetches %d bytes", c.lookSize())
 	}
@@ -544,43 +557,43 @@ func TestStreamWithNoSound(t *testing.T) {
 	// The picture and no sound, and no playlist of sound either: told for
 	// information, after a few looks. (The container of the fixture's
 	// segments has sound in it, and is not read here.)
-	f := newFixture(t, hlstest.Options{}, "/master.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{}, "/master.m3u8", level.Segments())
 	f.c.blind = true
 	s := &stubLooker{frame: liveFrame}
 	s.frame.HasAudio, s.frame.NoSound = false, true
 	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
 	// One look says nothing yet: the sound may be listened to next.
-	if r := f.step(1); hasProblem(r, ProbAudioAbsent) != nil || s.looks != 1 {
+	if r := f.step(1); hasProblem(r, problemkind.AudioAbsent()) != nil || s.looks != 1 {
 		t.Fatalf("told after %d looks", s.looks)
 	}
-	watch(f, 6*time.Minute, ProbAudioAbsent)
-	p := hasProblem(f.step(1), ProbAudioAbsent)
-	if p == nil || p.Severity != SevInfo || s.listens != 0 {
+	watch(f, 6*time.Minute, problemkind.AudioAbsent())
+	p := hasProblem(f.step(1), problemkind.AudioAbsent())
+	if p == nil || p.Severity != severity.Info() || s.listens != 0 {
 		t.Fatalf("problem = %+v, %d listens", p, s.listens)
 	}
 	// Sound that came with the picture ends it.
 	s.frame = liveFrame
-	watch(f, 6*time.Minute, ProbAudioAbsent)
-	if hasProblem(f.step(1), ProbAudioAbsent) != nil {
+	watch(f, 6*time.Minute, problemkind.AudioAbsent())
+	if hasProblem(f.step(1), problemkind.AudioAbsent()) != nil {
 		t.Error("still told after sound was heard")
 	}
 
 	// A decoder that found no sound where the container has it was given
 	// too little: that is not a stream without sound.
-	f = newFixture(t, hlstest.Options{}, "/master.m3u8", LevelContainer)
+	f = newFixture(t, hlstest.Options{}, "/master.m3u8", level.Container())
 	s = &stubLooker{frame: liveFrame}
 	s.frame.HasAudio, s.frame.NoSound = false, true
 	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
-	if n, _ := watch(f, 15*time.Minute, ProbAudioAbsent); n != 0 {
+	if n, _ := watch(f, 15*time.Minute, problemkind.AudioAbsent()); n != 0 {
 		t.Errorf("told %d times of a stream whose container has sound", n)
 	}
 
 	// A stream that keeps its sound in a playlist of its own has sound.
-	f = newFixture(t, hlstest.Options{SoundApart: true}, "/master.m3u8", LevelContainer)
+	f = newFixture(t, hlstest.Options{SoundApart: true}, "/master.m3u8", level.Container())
 	s = &stubLooker{frame: liveFrame, heard: &picture.Frame{HasAudio: true, AudioDB: -20}}
 	s.frame.HasAudio, s.frame.NoSound = false, true
 	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
-	if n, _ := watch(f, 20*time.Minute, ProbAudioAbsent); n != 0 || s.listens < 3 {
+	if n, _ := watch(f, 20*time.Minute, problemkind.AudioAbsent()); n != 0 || s.listens < 3 {
 		t.Errorf("sound in a playlist of its own: told as missing %d times, %d listens", n, s.listens)
 	}
 }

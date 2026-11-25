@@ -8,29 +8,31 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/owner"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
 )
 
 // Stream is a monitored HLS stream.
 type Stream struct {
-	ID          int64             `json:"id"`
+	ID          id.Stream         `json:"id"`
 	Name        string            `json:"name"`
 	URL         string            `json:"url"`
 	Enabled     bool              `json:"enabled"`
-	Level       string            `json:"level"`
+	Level       level.Level       `json:"level"`
 	IntervalSec float64           `json:"interval_sec"`
 	TimeoutSec  float64           `json:"timeout_sec"`
 	MaxSegments int               `json:"max_segments"`
 	Headers     map[string]string `json:"headers"`
 	Insecure    bool              `json:"insecure"`
-	// Picture is what the picture and the sound are checked for: "" for
-	// everything, "static" when a still picture is what the stream shows,
-	// "off" not to look.
-	Picture   string    `json:"picture"`
-	Notes     string    `json:"notes"`
-	Revision  int64     `json:"revision"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	AgentIDs  []int64   `json:"agent_ids"`
+	// Picture is what the picture and the sound are checked for.
+	Picture   picturemode.Mode `json:"picture"`
+	Notes     string           `json:"notes"`
+	Revision  int64            `json:"revision"`
+	CreatedAt time.Time        `json:"created_at"`
+	UpdatedAt time.Time        `json:"updated_at"`
+	AgentIDs  []id.Agent       `json:"agent_ids"`
 }
 
 // StreamInput is what can be set when creating or editing a stream.
@@ -38,15 +40,15 @@ type StreamInput struct {
 	Name        string
 	URL         string
 	Enabled     bool
-	Level       string
+	Level       level.Level
 	IntervalSec float64
 	TimeoutSec  float64
 	MaxSegments int
 	Headers     map[string]string
 	Insecure    bool
-	Picture     string
+	Picture     picturemode.Mode
 	Notes       string
-	AgentIDs    []int64
+	AgentIDs    []id.Agent
 }
 
 const streamCols = "id, name, url, enabled, level, interval_sec, timeout_sec, max_segments, headers, insecure, picture, notes, revision, created_at, updated_at"
@@ -62,7 +64,7 @@ func scanStream(row interface{ Scan(...any) error }) (*Stream, error) {
 	st.Headers = map[string]string{}
 	_ = json.Unmarshal([]byte(headers), &st.Headers)
 	st.CreatedAt, st.UpdatedAt = fromMs(created), fromMs(updated)
-	st.AgentIDs = []int64{}
+	st.AgentIDs = []id.Agent{}
 	return &st, nil
 }
 
@@ -74,11 +76,11 @@ func headersJSON(h map[string]string) string {
 	return string(b)
 }
 
-func (tx *Tx) setStreamAgents(ctx context.Context, streamID int64, agentIDs []int64) error {
+func (tx *Tx) setStreamAgents(ctx context.Context, streamID id.Stream, agentIDs []id.Agent) error {
 	if _, err := tx.q.ExecContext(ctx, "DELETE FROM stream_agents WHERE stream_id = ?", streamID); err != nil {
 		return err
 	}
-	seen := map[int64]bool{}
+	seen := map[id.Agent]bool{}
 	for _, id := range agentIDs {
 		if seen[id] {
 			continue
@@ -108,47 +110,48 @@ func (tx *Tx) setStreamAgents(ctx context.Context, streamID int64, agentIDs []in
 // CreateStream adds a stream. It returns ErrConflict when the name is taken
 // and ErrNotFound when an agent does not exist.
 func (s *Store) CreateStream(ctx context.Context, in StreamInput, now time.Time) (*Stream, error) {
-	var id int64
+	var made id.Stream
 	err := s.Tx(ctx, func(tx *Tx) error {
 		res, err := tx.q.ExecContext(ctx, `
 			INSERT INTO streams (id, name, url, enabled, level, interval_sec, timeout_sec, max_segments, headers, insecure, picture, notes, created_at, updated_at)
-			VALUES (`+nextID("streams", "stream")+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			VALUES (`+nextID(owner.Stream())+`, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			in.Name, in.URL, in.Enabled, in.Level, in.IntervalSec, in.TimeoutSec, in.MaxSegments,
 			headersJSON(in.Headers), in.Insecure, in.Picture, in.Notes, toMs(now), toMs(now))
 		if err != nil {
 			return err
 		}
-		id, _ = res.LastInsertId()
-		return tx.setStreamAgents(ctx, id, in.AgentIDs)
+		n, _ := res.LastInsertId()
+		made = id.StreamOf(n)
+		return tx.setStreamAgents(ctx, made, in.AgentIDs)
 	})
 	if err != nil {
 		return nil, mapStreamErr(err)
 	}
-	return s.GetStream(ctx, id)
+	return s.GetStream(ctx, made)
 }
 
 // UpdateStream replaces the settings of a stream and bumps its revision.
-func (s *Store) UpdateStream(ctx context.Context, id int64, in StreamInput, now time.Time) (*Stream, error) {
+func (s *Store) UpdateStream(ctx context.Context, streamID id.Stream, in StreamInput, now time.Time) (*Stream, error) {
 	err := s.Tx(ctx, func(tx *Tx) error {
 		err := affected(tx.q.ExecContext(ctx, `
 			UPDATE streams SET name = ?, url = ?, enabled = ?, level = ?, interval_sec = ?, timeout_sec = ?, max_segments = ?,
 				headers = ?, insecure = ?, picture = ?, notes = ?, revision = revision + 1, updated_at = ?
 			WHERE id = ?`,
 			in.Name, in.URL, in.Enabled, in.Level, in.IntervalSec, in.TimeoutSec, in.MaxSegments,
-			headersJSON(in.Headers), in.Insecure, in.Picture, in.Notes, toMs(now), id))
+			headersJSON(in.Headers), in.Insecure, in.Picture, in.Notes, toMs(now), streamID))
 		if err != nil {
 			return err
 		}
-		if err := tx.setStreamAgents(ctx, id, in.AgentIDs); err != nil {
+		if err := tx.setStreamAgents(ctx, streamID, in.AgentIDs); err != nil {
 			return err
 		}
 		// Incidents reported by agents that no longer check the stream are over.
-		return tx.closeIncidents(ctx, "stream_id = ? AND agent_id NOT IN (SELECT agent_id FROM stream_agents WHERE stream_id = ?)", now, id, id)
+		return tx.closeIncidents(ctx, "stream_id = ? AND agent_id NOT IN (SELECT agent_id FROM stream_agents WHERE stream_id = ?)", now, streamID, streamID)
 	})
 	if err != nil {
 		return nil, mapStreamErr(err)
 	}
-	return s.GetStream(ctx, id)
+	return s.GetStream(ctx, streamID)
 }
 
 func mapStreamErr(err error) error {
@@ -166,40 +169,51 @@ func containsFK(err error) bool {
 }
 
 // SetStreamEnabled switches monitoring of a stream on or off.
-func (s *Store) SetStreamEnabled(ctx context.Context, id int64, enabled bool, now time.Time) error {
+func (s *Store) SetStreamEnabled(ctx context.Context, streamID id.Stream, enabled bool, now time.Time) error {
 	return s.Tx(ctx, func(tx *Tx) error {
 		err := affected(tx.q.ExecContext(ctx,
-			"UPDATE streams SET enabled = ?, revision = revision + 1, updated_at = ? WHERE id = ?", enabled, toMs(now), id))
+			"UPDATE streams SET enabled = ?, revision = revision + 1, updated_at = ? WHERE id = ?", enabled, toMs(now), streamID))
 		if err != nil || enabled {
 			return err
 		}
-		return tx.closeIncidents(ctx, "stream_id = ?", now, id)
+		return tx.closeIncidents(ctx, "stream_id = ?", now, streamID)
 	})
 }
 
 // DeleteStream removes a stream with all its history.
-func (s *Store) DeleteStream(ctx context.Context, id int64) error {
+func (s *Store) DeleteStream(ctx context.Context, streamID id.Stream) error {
 	err := s.Tx(ctx, func(tx *Tx) error {
-		if err := affected(tx.q.ExecContext(ctx, "DELETE FROM streams WHERE id = ?", id)); err != nil {
+		if err := affected(tx.q.ExecContext(ctx, "DELETE FROM streams WHERE id = ?", streamID)); err != nil {
 			return err
 		}
-		return tx.retire(ctx, "stream", id)
+		return tx.retire(ctx, owner.Stream(), streamID.Int64())
 	})
 	if err != nil {
 		return err
 	}
-	return s.dropJournal(ctx, "stream_id", id)
+	return s.dropJournal(ctx, owner.Stream(), streamID.Int64())
 }
 
 // nextID is the SQL of the identifier for a new row: above every one in
 // use and every one retired.
-func nextID(table, kind string) string {
-	return `(SELECT MAX(COALESCE((SELECT MAX(id) FROM ` + table + `), 0), COALESCE((SELECT last FROM retired_ids WHERE kind = '` + kind + `'), 0)) + 1)`
+func nextID(of owner.Kind) string {
+	return `(SELECT MAX(COALESCE((SELECT MAX(id) FROM ` + tableOf(of) + `), 0), COALESCE((SELECT last FROM retired_ids WHERE kind = '` + of.String() + `'), 0)) + 1)`
+}
+
+// tableOf is the table the rows of a kind are kept in.
+func tableOf(of owner.Kind) string {
+	switch of {
+	case owner.Stream():
+		return "streams"
+	case owner.Agent():
+		return "agents"
+	}
+	panic("store: rows of a kind that was never set")
 }
 
 // retire records that an identifier is never to be given out again and
 // that its time series are to be deleted.
-func (tx *Tx) retire(ctx context.Context, kind string, id int64) error {
+func (tx *Tx) retire(ctx context.Context, kind owner.Kind, id int64) error {
 	if _, err := tx.q.ExecContext(ctx, `
 		INSERT INTO retired_ids (kind, last) VALUES (?, ?)
 		ON CONFLICT (kind) DO UPDATE SET last = MAX(last, excluded.last)`, kind, id); err != nil {
@@ -214,7 +228,7 @@ func (tx *Tx) retire(ctx context.Context, kind string, id int64) error {
 // SeriesDeletion is a set of time series waiting to be deleted: every
 // series whose label has this value.
 type SeriesDeletion struct {
-	Label     string
+	Label     owner.Kind
 	ID        int64
 	CreatedAt time.Time
 }
@@ -241,23 +255,23 @@ func (s *Store) SeriesDeletions(ctx context.Context) ([]SeriesDeletion, error) {
 }
 
 // SeriesDeleted forgets a deletion that has been carried out.
-func (s *Store) SeriesDeleted(ctx context.Context, label string, id int64) error {
+func (s *Store) SeriesDeleted(ctx context.Context, label owner.Kind, id int64) error {
 	_, err := s.db.ExecContext(ctx, "DELETE FROM series_deletions WHERE label = ? AND id = ?", label, id)
 	return err
 }
 
-func (s *Store) GetStream(ctx context.Context, id int64) (*Stream, error) {
-	st, err := scanStream(s.db.QueryRowContext(ctx, "SELECT "+streamCols+" FROM streams WHERE id = ?", id))
+func (s *Store) GetStream(ctx context.Context, streamID id.Stream) (*Stream, error) {
+	st, err := scanStream(s.db.QueryRowContext(ctx, "SELECT "+streamCols+" FROM streams WHERE id = ?", streamID))
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT agent_id FROM stream_agents WHERE stream_id = ? ORDER BY agent_id", id)
+	rows, err := s.db.QueryContext(ctx, "SELECT agent_id FROM stream_agents WHERE stream_id = ? ORDER BY agent_id", streamID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var a int64
+		var a id.Agent
 		if err := rows.Scan(&a); err != nil {
 			return nil, err
 		}
@@ -273,7 +287,7 @@ func (s *Store) ListStreams(ctx context.Context) ([]*Stream, error) {
 	}
 	defer rows.Close()
 	out := []*Stream{}
-	byID := map[int64]*Stream{}
+	byID := map[id.Stream]*Stream{}
 	for rows.Next() {
 		st, err := scanStream(rows)
 		if err != nil {
@@ -291,7 +305,8 @@ func (s *Store) ListStreams(ctx context.Context) ([]*Stream, error) {
 	}
 	defer links.Close()
 	for links.Next() {
-		var sid, aid int64
+		var sid id.Stream
+		var aid id.Agent
 		if err := links.Scan(&sid, &aid); err != nil {
 			return nil, err
 		}
@@ -304,7 +319,7 @@ func (s *Store) ListStreams(ctx context.Context) ([]*Stream, error) {
 
 // TargetsForAgent lists what an agent has to check: enabled streams
 // assigned to it, provided the agent itself is enabled.
-func (s *Store) TargetsForAgent(ctx context.Context, agentID int64) ([]probe.Target, error) {
+func (s *Store) TargetsForAgent(ctx context.Context, agentID id.Agent) ([]probe.Target, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT `+streamCols+` FROM streams
 		WHERE enabled = 1
@@ -323,7 +338,7 @@ func (s *Store) TargetsForAgent(ctx context.Context, agentID int64) ([]probe.Tar
 		out = append(out, probe.Target{
 			ID:          st.ID,
 			URL:         st.URL,
-			Level:       probe.Level(st.Level),
+			Level:       st.Level,
 			IntervalSec: st.IntervalSec,
 			TimeoutSec:  st.TimeoutSec,
 			MaxSegments: st.MaxSegments,
@@ -333,12 +348,12 @@ func (s *Store) TargetsForAgent(ctx context.Context, agentID int64) ([]probe.Tar
 			Revision:    st.Revision,
 		})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	sort.Slice(out, func(i, j int) bool { return out[i].ID.Compare(out[j].ID) < 0 })
 	return out, rows.Err()
 }
 
 // StreamAssigned reports whether an enabled stream is assigned to the agent.
-func (s *Store) StreamAssigned(ctx context.Context, streamID, agentID int64) (bool, error) {
+func (s *Store) StreamAssigned(ctx context.Context, streamID id.Stream, agentID id.Agent) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `
 		SELECT count(*) FROM stream_agents sa JOIN streams st ON st.id = sa.stream_id

@@ -24,7 +24,7 @@ func (s *Server) PurgeSeries(ctx context.Context) {
 	}
 	for _, d := range pending {
 		if err := s.mx.DeleteSeries(ctx, d.Label, d.ID); err != nil {
-			s.log.Warn("cannot delete series yet, will retry", d.Label, d.ID, "error", err)
+			s.log.Warn("cannot delete series yet, will retry", d.Label.String(), d.ID, "error", err)
 			return // the storage is away: the rest would fail as well
 		}
 		if s.mx.Backlog() || s.now().Sub(d.CreatedAt) < seriesSettle {

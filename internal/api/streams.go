@@ -9,34 +9,33 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/store"
-)
-
-// Statuses shown for a stream. The first three come from check results.
-const (
-	statusOK       = "ok"
-	statusWarn     = "warn"
-	statusFail     = "fail"
-	statusNoData   = "nodata"
-	statusDisabled = "disabled"
+	"github.com/hotid/hls-monitor/internal/types/agentkind"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/role"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/streamstatus"
+	"github.com/hotid/hls-monitor/internal/types/summarykey"
 )
 
 // agentStatus is the state of a stream as seen from one agent.
 type agentStatus struct {
-	AgentID   int64              `json:"agent_id"`
-	AgentName string             `json:"agent_name"`
-	Status    string             `json:"status"`
-	CheckedAt *time.Time         `json:"checked_at"`
-	Summary   map[string]float64 `json:"summary"`
+	AgentID   id.Agent                   `json:"agent_id"`
+	AgentName string                     `json:"agent_name"`
+	Status    streamstatus.Status        `json:"status" swaggertype:"string" enums:"ok,warn,fail,nodata,disabled"`
+	CheckedAt *time.Time                 `json:"checked_at"`
+	Summary   map[summarykey.Key]float64 `json:"summary"`
 }
 
 // streamView is a stream with its current state.
 type streamView struct {
 	*store.Stream
-	Status        string         `json:"status"`
-	Agents        []agentStatus  `json:"agents"`
-	OpenIncidents map[string]int `json:"open_incidents"`
+	Status        streamstatus.Status       `json:"status" swaggertype:"string" enums:"ok,warn,fail,nodata,disabled"`
+	Agents        []agentStatus             `json:"agents"`
+	OpenIncidents map[severity.Severity]int `json:"open_incidents"`
 	// Picture says which look at the stream has a picture to show (see
 	// /api/v1/streams/{id}/picture); absent when it was never looked at.
 	Picture *store.PictureRef `json:"picture_ref,omitempty"`
@@ -45,21 +44,21 @@ type streamView struct {
 // statusContext is what is needed to judge the state of streams.
 type statusContext struct {
 	now       time.Time
-	agents    map[int64]*store.Agent
-	states    map[int64]map[int64]*store.StreamState
-	incidents map[int64]map[string]int
-	pictures  map[int64]store.PictureRef
+	agents    map[id.Agent]*store.Agent
+	states    map[id.Stream]map[id.Agent]*store.StreamState
+	incidents map[id.Stream]map[severity.Severity]int
+	pictures  map[id.Stream]store.PictureRef
 }
 
 func (s *Server) agentOnline(a *store.Agent, now time.Time) bool {
-	if a.Kind == store.AgentLocal {
+	if a.Kind == agentkind.Local() {
 		return true
 	}
 	return a.LastSeen != nil && now.Sub(*a.LastSeen) <= s.cfg.AgentOfflineAfter
 }
 
 func (s *Server) loadStatusContext(ctx context.Context) (*statusContext, error) {
-	sc := &statusContext{now: s.now(), agents: map[int64]*store.Agent{}, states: map[int64]map[int64]*store.StreamState{}}
+	sc := &statusContext{now: s.now(), agents: map[id.Agent]*store.Agent{}, states: map[id.Stream]map[id.Agent]*store.StreamState{}}
 	agents, err := s.st.ListAgents(ctx)
 	if err != nil {
 		return nil, err
@@ -67,13 +66,13 @@ func (s *Server) loadStatusContext(ctx context.Context) (*statusContext, error) 
 	for _, a := range agents {
 		sc.agents[a.ID] = a
 	}
-	states, err := s.st.StreamStates(ctx, 0)
+	states, err := s.st.StreamStates(ctx, id.Stream{})
 	if err != nil {
 		return nil, err
 	}
 	for _, st := range states {
 		if sc.states[st.StreamID] == nil {
-			sc.states[st.StreamID] = map[int64]*store.StreamState{}
+			sc.states[st.StreamID] = map[id.Agent]*store.StreamState{}
 		}
 		sc.states[st.StreamID][st.AgentID] = st
 	}
@@ -86,23 +85,11 @@ func (s *Server) loadStatusContext(ctx context.Context) (*statusContext, error) 
 	return sc, nil
 }
 
-func statusRank(st string) int {
-	switch st {
-	case statusFail:
-		return 3
-	case statusWarn:
-		return 2
-	case statusOK:
-		return 1
-	}
-	return 0
-}
-
 // view judges a stream: every assigned agent contributes its latest result
 // if that result is fresh and the agent is reachable; the stream takes the
 // worst of them.
 func (s *Server) view(st *store.Stream, sc *statusContext, admin bool) *streamView {
-	v := &streamView{Stream: st, Status: statusNoData, Agents: []agentStatus{}, OpenIncidents: map[string]int{}}
+	v := &streamView{Stream: st, Status: streamstatus.NoData(), Agents: []agentStatus{}, OpenIncidents: map[severity.Severity]int{}}
 	if n := sc.incidents[st.ID]; n != nil {
 		v.OpenIncidents = n
 	}
@@ -120,41 +107,38 @@ func (s *Server) view(st *store.Stream, sc *statusContext, admin bool) *streamVi
 		v.Stream = &cp
 	}
 	freshFor := max(90*time.Second, time.Duration(3*st.IntervalSec*float64(time.Second)))
-	best := 0
+	best := streamstatus.NoData()
 	for _, id := range st.AgentIDs {
 		a := sc.agents[id]
 		if a == nil {
 			continue
 		}
-		as := agentStatus{AgentID: id, AgentName: a.Name, Status: statusNoData, Summary: map[string]float64{}}
+		as := agentStatus{AgentID: id, AgentName: a.Name, Status: streamstatus.NoData(), Summary: map[summarykey.Key]float64{}}
 		if state := sc.states[st.ID][id]; state != nil {
 			t := state.CheckedAt
 			as.CheckedAt = &t
 			as.Summary = state.Summary
 			if st.Enabled && a.Enabled && s.agentOnline(a, sc.now) && sc.now.Sub(t) <= freshFor {
-				as.Status = state.Status
+				as.Status = streamstatus.Of(state.Status)
 			}
 		}
 		if !st.Enabled || !a.Enabled {
-			as.Status = statusDisabled
+			as.Status = streamstatus.Disabled()
 		}
-		best = max(best, statusRank(as.Status))
+		if as.Status.Worse(best) {
+			best = as.Status
+		}
 		v.Agents = append(v.Agents, as)
 	}
-	switch {
-	case !st.Enabled:
-		v.Status = statusDisabled
-	case best == 3:
-		v.Status = statusFail
-	case best == 2:
-		v.Status = statusWarn
-	case best == 1:
-		v.Status = statusOK
+	v.Status = best
+	if !st.Enabled {
+		v.Status = streamstatus.Disabled()
 	}
 	return v
 }
 
-// streamRequest is the body for creating and editing a stream.
+// streamRequest is the body for creating and editing a stream, as it is
+// written by whoever sends it: input reads it into what the monitor knows.
 type streamRequest struct {
 	Name        string            `json:"name"`
 	URL         string            `json:"url"`
@@ -167,9 +151,9 @@ type streamRequest struct {
 	Insecure    bool              `json:"insecure"`
 	// Picture: "" to check the picture and the sound, "static" when a
 	// still picture is what the stream shows, "off" not to look.
-	Picture  string  `json:"picture"`
-	Notes    string  `json:"notes"`
-	AgentIDs []int64 `json:"agent_ids"`
+	Picture  string     `json:"picture"`
+	Notes    string     `json:"notes"`
+	AgentIDs []id.Agent `json:"agent_ids"`
 }
 
 func (r *streamRequest) input() (store.StreamInput, string) {
@@ -177,28 +161,29 @@ func (r *streamRequest) input() (store.StreamInput, string) {
 		Name:        strings.TrimSpace(r.Name),
 		URL:         strings.TrimSpace(r.URL),
 		Enabled:     r.Enabled == nil || *r.Enabled,
-		Level:       r.Level,
+		Level:       level.Segments(),
 		IntervalSec: r.IntervalSec,
 		TimeoutSec:  r.TimeoutSec,
 		MaxSegments: r.MaxSegments,
 		Headers:     map[string]string{},
 		Insecure:    r.Insecure,
-		Picture:     r.Picture,
 		Notes:       strings.TrimSpace(r.Notes),
 		AgentIDs:    r.AgentIDs,
 	}
-	if in.Level == "" {
-		in.Level = string(probe.LevelSegments)
+	var levelErr, pictureErr error
+	if r.Level != "" {
+		in.Level, levelErr = level.Parse(r.Level)
 	}
+	in.Picture, pictureErr = picturemode.Parse(r.Picture)
 	if in.AgentIDs == nil {
-		in.AgentIDs = []int64{store.LocalAgentID}
+		in.AgentIDs = []id.Agent{store.LocalAgentID()}
 	}
 	switch {
 	case in.Name == "" || len(in.Name) > 100:
 		return in, "name must be 1 to 100 characters long"
-	case !probe.ValidLevel(probe.Level(in.Level)):
+	case levelErr != nil:
 		return in, "level must be one of: playlist, header, segments, container"
-	case !probe.ValidPicture(in.Picture):
+	case pictureErr != nil:
 		return in, "picture must be empty, static or off"
 	case in.IntervalSec != 0 && (in.IntervalSec < 1 || in.IntervalSec > 3600):
 		return in, "interval_sec must be 0 (automatic) or between 1 and 3600"
@@ -225,7 +210,7 @@ func (r *streamRequest) input() (store.StreamInput, string) {
 	return in, ""
 }
 
-func isAdmin(c *gin.Context) bool { return currentUser(c).Role == store.RoleAdmin }
+func isAdmin(c *gin.Context) bool { return currentUser(c).Role == role.Admin() }
 
 // listStreams godoc
 //
@@ -273,12 +258,12 @@ type streamDetail struct {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/streams/{id} [get]
 func (s *Server) getStream(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
-	st, err := s.st.GetStream(ctx, id)
+	st, err := s.st.GetStream(ctx, streamID)
 	if s.storeError(c, err) {
 		return
 	}
@@ -286,15 +271,15 @@ func (s *Server) getStream(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
-	variants, err := s.st.ListVariants(ctx, id)
+	variants, err := s.st.ListVariants(ctx, streamID)
 	if s.storeError(c, err) {
 		return
 	}
-	states, err := s.st.VariantStates(ctx, id)
+	states, err := s.st.VariantStates(ctx, streamID)
 	if s.storeError(c, err) {
 		return
 	}
-	byVariant := map[int64][]*store.VariantState{}
+	byVariant := map[id.Variant][]*store.VariantState{}
 	for _, vs := range states {
 		byVariant[vs.VariantID] = append(byVariant[vs.VariantID], vs)
 	}
@@ -371,7 +356,7 @@ func (s *Server) agentError(c *gin.Context, err error) bool {
 //	@Failure	409		{object}	apiError
 //	@Router		/api/v1/streams/{id} [put]
 func (s *Server) updateStream(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
@@ -386,10 +371,10 @@ func (s *Server) updateStream(c *gin.Context) {
 		return
 	}
 	ctx := c.Request.Context()
-	if _, err := s.st.GetStream(ctx, id); s.storeError(c, err) {
+	if _, err := s.st.GetStream(ctx, streamID); s.storeError(c, err) {
 		return
 	}
-	st, err := s.st.UpdateStream(ctx, id, in, s.now())
+	st, err := s.st.UpdateStream(ctx, streamID, in, s.now())
 	if s.agentError(c, err) {
 		return
 	}
@@ -406,18 +391,18 @@ func (s *Server) updateStream(c *gin.Context) {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/streams/{id} [delete]
 func (s *Server) deleteStream(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
-	if s.storeError(c, s.st.DeleteStream(ctx, id)) {
+	if s.storeError(c, s.st.DeleteStream(ctx, streamID)) {
 		return
 	}
 	// What was captured of it goes with it.
 	if s.captures != nil {
-		if n := s.captures.Forget(id, 0); n > 0 {
-			s.log.Info("the captures of a deleted stream were removed", "stream", id, "captures", n)
+		if n := s.captures.Forget(streamID, id.Agent{}); n > 0 {
+			s.log.Info("the captures of a deleted stream were removed", "stream", streamID, "captures", n)
 		}
 	}
 	s.configChanged(ctx)
@@ -426,16 +411,16 @@ func (s *Server) deleteStream(c *gin.Context) {
 }
 
 func (s *Server) setEnabled(c *gin.Context, enabled bool) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
-	if s.storeError(c, s.st.SetStreamEnabled(ctx, id, enabled, s.now())) {
+	if s.storeError(c, s.st.SetStreamEnabled(ctx, streamID, enabled, s.now())) {
 		return
 	}
 	s.configChanged(ctx)
-	st, err := s.st.GetStream(ctx, id)
+	st, err := s.st.GetStream(ctx, streamID)
 	if s.storeError(c, err) {
 		return
 	}
@@ -476,15 +461,15 @@ func (s *Server) disableStream(c *gin.Context) { s.setEnabled(c, false) }
 //	@Failure	409	{object}	apiError
 //	@Router		/api/v1/streams/{id}/check [post]
 func (s *Server) checkStream(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
-	if _, err := s.st.GetStream(c.Request.Context(), id); s.storeError(c, err) {
+	if _, err := s.st.GetStream(c.Request.Context(), streamID); s.storeError(c, err) {
 		return
 	}
-	if s.local == nil || !s.local.CheckNow(id) {
-		fail(c, http.StatusConflict, "not_local", "the stream is not checked by the server itself")
+	if s.local == nil || !s.local.CheckNow(streamID) {
+		fail(c, http.StatusConflict, errcode.NotLocal(), "the stream is not checked by the server itself")
 		return
 	}
 	c.Status(http.StatusAccepted)

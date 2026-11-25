@@ -10,6 +10,14 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/httpx"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/overload"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/status"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 const snapshotMaxBytes = 64 << 10
@@ -19,20 +27,20 @@ const snapshotMaxBytes = 64 << 10
 type cycle struct {
 	mu      sync.Mutex
 	res     *Result
-	probs   map[string]*Problem
-	snapped map[string]bool
+	probs   map[problemKey]*Problem
+	snapped map[variantkey.Key]bool
 	// before is the previous text of each media playlist.
-	before  map[string]playlistText
-	sources map[string]*Source
+	before  map[variantkey.Key]playlistText
+	sources map[variantkey.Key]*Source
 	// context holds, per variant, the circumstances of the check that
 	// every problem of that variant is reported with.
-	context map[string]map[string]any
+	context map[variantkey.Key]*detail.Set
 	// doubts counts, per problem, the occurrences that rest on timing alone:
 	// a slow download, a request that timed out. See overloaded.
-	doubts map[string]int
+	doubts map[problemKey]int
 	// tcp holds, per variant, what the kernel told of the connections the
 	// cycle used.
-	tcp map[string]*tcpSeen
+	tcp map[variantkey.Key]*tcpSeen
 	// servers holds the same by the server that answered.
 	servers map[serverKey]*serverSeen
 
@@ -43,34 +51,51 @@ type cycle struct {
 	anyLive  bool
 }
 
-func newCycle(targetID int64, now time.Time) *cycle {
+// problemKey is what a problem of a cycle is one of a kind by: what is
+// wrong and with which playlist.
+type problemKey struct {
+	kind    problemkind.Kind
+	variant variantkey.Key
+}
+
+func newCycle(targetID id.Stream, now time.Time) *cycle {
 	return &cycle{
 		res:     &Result{TargetID: targetID, Time: now, Metrics: []Metric{}},
-		probs:   map[string]*Problem{},
-		snapped: map[string]bool{},
-		sources: map[string]*Source{},
-		context: map[string]map[string]any{},
+		probs:   map[problemKey]*Problem{},
+		snapped: map[variantkey.Key]bool{},
+		sources: map[variantkey.Key]*Source{},
+		context: map[variantkey.Key]*detail.Set{},
 	}
 }
 
-func (cy *cycle) metric(name, variant string, v float64) {
+// metric records a figure of a playlist.
+func (cy *cycle) metric(name metricname.Name, variant variantkey.Key, v float64) {
 	cy.mu.Lock()
 	cy.res.Metrics = append(cy.res.Metrics, Metric{Name: name, Variant: variant, Value: v})
 	cy.mu.Unlock()
 }
 
-func (cy *cycle) problem(kind, severity, variant, format string, args ...any) {
+// streamMetric records a figure of the stream as a whole.
+func (cy *cycle) streamMetric(name metricname.Name, v float64) {
+	cy.mu.Lock()
+	cy.res.Metrics = append(cy.res.Metrics, Metric{Name: name, Value: v})
+	cy.mu.Unlock()
+}
+
+// problem raises a problem; the words that follow are its message, put
+// together the way fmt does.
+func (cy *cycle) problem(kind problemkind.Kind, sev severity.Severity, variant variantkey.Key, format string, args ...any) {
 	cy.mu.Lock()
 	defer cy.mu.Unlock()
-	key := kind + "\x00" + variant
+	key := problemKey{kind, variant}
 	if p, ok := cy.probs[key]; ok {
 		p.Count++
-		if severityRank(severity) > severityRank(p.Severity) {
-			p.Severity = severity
+		if sev.Worse(p.Severity) {
+			p.Severity = sev
 		}
 		return
 	}
-	cy.probs[key] = &Problem{Kind: kind, Severity: severity, Variant: variant, Message: fmt.Sprintf(format, args...), Count: 1}
+	cy.probs[key] = &Problem{Kind: kind, Severity: sev, Variant: variant, Message: fmt.Sprintf(format, args...), Count: 1}
 }
 
 // tcpSeen sums up the connections used for one variant in a cycle.
@@ -84,14 +109,14 @@ type tcpSeen struct {
 // out of order or had to be sent again since the connection was last
 // looked at. A receiver cannot count what was lost on the way to it;
 // segments out of order are the sign of it that it has.
-func (cy *cycle) network(variant string, resp *httpx.Response) {
+func (cy *cycle) network(variant variantkey.Key, resp *httpx.Response) {
 	if resp == nil || resp.TCP == nil {
 		return
 	}
 	cy.mu.Lock()
 	defer cy.mu.Unlock()
 	if cy.tcp == nil {
-		cy.tcp = map[string]*tcpSeen{}
+		cy.tcp = map[variantkey.Key]*tcpSeen{}
 	}
 	t := cy.tcp[variant]
 	if t == nil {
@@ -138,18 +163,18 @@ func serverOf(resp *httpx.Response) serverKey {
 
 // doubt marks the latest occurrence of a problem as resting on timing
 // alone: it would look the same if the checking process were the slow one.
-func (cy *cycle) doubt(kind, variant string) {
+func (cy *cycle) doubt(kind problemkind.Kind, variant variantkey.Key) {
 	cy.mu.Lock()
 	if cy.doubts == nil {
-		cy.doubts = map[string]int{}
+		cy.doubts = map[problemKey]int{}
 	}
-	cy.doubts[kind+"\x00"+variant]++
+	cy.doubts[problemKey{kind, variant}]++
 	cy.mu.Unlock()
 }
 
 // overloaded records that the process could not keep up during the cycle
 // and drops the problems that every occurrence of rests on timing.
-func (cy *cycle) overloaded(reason string) {
+func (cy *cycle) overloaded(reason overload.Reason) {
 	cy.mu.Lock()
 	defer cy.mu.Unlock()
 	cy.res.Overloaded = reason
@@ -158,7 +183,7 @@ func (cy *cycle) overloaded(reason string) {
 			delete(cy.probs, key)
 		}
 	}
-	cy.res.Metrics = append(cy.res.Metrics, Metric{Name: "hls_check_overloaded", Value: 1})
+	cy.res.Metrics = append(cy.res.Metrics, Metric{Name: metricname.CheckOverloaded(), Value: 1})
 }
 
 // timedOut reports whether a request failed for taking too long.
@@ -169,82 +194,41 @@ func timedOut(err error) bool {
 
 // lastMessage is what this cycle said about a playlist that could not be
 // read; empty when it said nothing.
-func (cy *cycle) lastMessage(variant string) string {
+func (cy *cycle) lastMessage(variant variantkey.Key) string {
 	cy.mu.Lock()
 	defer cy.mu.Unlock()
-	for _, kind := range []string{ProbPlaylistUnreachable, ProbPlaylistHTTP, ProbPlaylistParse} {
-		if p, ok := cy.probs[kind+"\x00"+variant]; ok {
+	for _, kind := range []problemkind.Kind{problemkind.PlaylistUnreachable(), problemkind.PlaylistHTTP(), problemkind.PlaylistParse()} {
+		if p, ok := cy.probs[problemKey{kind, variant}]; ok {
 			return p.Message
 		}
 	}
 	return ""
 }
 
-// detail adds figures to a problem already raised in this cycle. kv are
-// alternating keys and values; the first value recorded for a key stays.
-func (cy *cycle) detail(kind, variant string, kv ...any) {
+// detail adds figures to a problem already raised in this cycle; the
+// first value recorded for a figure stays.
+func (cy *cycle) detail(kind problemkind.Kind, variant variantkey.Key, fs ...detail.Field) {
 	cy.mu.Lock()
 	defer cy.mu.Unlock()
-	p, ok := cy.probs[kind+"\x00"+variant]
-	if !ok {
-		return
+	if p, ok := cy.probs[problemKey{kind, variant}]; ok {
+		p.Details.Add(fs...)
 	}
-	if p.Details == nil {
-		p.Details = map[string]any{}
-	}
-	putDetails(p.Details, kv, false)
 }
 
 // about records circumstances of a variant's check, reported with every
-// problem of that variant. A later value for a key replaces the earlier.
-func (cy *cycle) about(variant string, kv ...any) {
+// problem of that variant. A later value of a figure replaces the earlier.
+func (cy *cycle) about(variant variantkey.Key, fs ...detail.Field) {
 	cy.mu.Lock()
 	defer cy.mu.Unlock()
 	m := cy.context[variant]
 	if m == nil {
-		m = map[string]any{}
+		m = &detail.Set{}
 		cy.context[variant] = m
 	}
-	putDetails(m, kv, true)
+	m.Replace(fs...)
 }
 
-func putDetails(m map[string]any, kv []any, replace bool) {
-	for i := 0; i+1 < len(kv); i += 2 {
-		k, ok := kv[i].(string)
-		if !ok {
-			continue
-		}
-		if _, have := m[k]; have && !replace {
-			continue
-		}
-		switch v := kv[i+1].(type) {
-		case float64:
-			// Figures are for reading: a millisecond is precise enough.
-			m[k] = float64(int64(v*1000+0.5*sign(v))) / 1000
-		case time.Duration:
-			m[k] = float64(v.Milliseconds()) / 1000
-		case string:
-			if v != "" {
-				m[k] = v
-			}
-		case []string:
-			if len(v) > 0 {
-				m[k] = v
-			}
-		default:
-			m[k] = v
-		}
-	}
-}
-
-func sign(v float64) float64 {
-	if v < 0 {
-		return -1
-	}
-	return 1
-}
-
-func (cy *cycle) snapshot(variant, url string, body []byte) {
+func (cy *cycle) snapshot(variant variantkey.Key, url string, body []byte) {
 	cy.mu.Lock()
 	defer cy.mu.Unlock()
 	if cy.snapped[variant] {
@@ -265,13 +249,13 @@ func (cy *cycle) snapshot(variant, url string, body []byte) {
 // previous tells what the playlist looked like at the check before, so
 // that a snapshot can show both: most playlist problems are a difference
 // between two checks.
-func (cy *cycle) previous(variant string, body []byte, at time.Time) {
+func (cy *cycle) previous(variant variantkey.Key, body []byte, at time.Time) {
 	if len(body) > snapshotMaxBytes {
 		body = body[:snapshotMaxBytes]
 	}
 	cy.mu.Lock()
 	if cy.before == nil {
-		cy.before = map[string]playlistText{}
+		cy.before = map[variantkey.Key]playlistText{}
 	}
 	cy.before[variant] = playlistText{body: body, at: at}
 	cy.mu.Unlock()
@@ -285,7 +269,7 @@ type playlistText struct {
 
 // source records which server answered for a playlist (segment=false) or
 // for a segment of it.
-func (cy *cycle) source(variant string, e *Endpoint, segment bool) {
+func (cy *cycle) source(variant variantkey.Key, e *Endpoint, segment bool) {
 	cy.mu.Lock()
 	defer cy.mu.Unlock()
 	src := cy.sources[variant]
@@ -332,89 +316,69 @@ func (cy *cycle) live(targetDuration float64) {
 	cy.mu.Unlock()
 }
 
-func severityRank(s string) float64 {
-	switch s {
-	case SevCrit:
-		return 2
-	case SevWarn:
-		return 1
-	}
-	return 0
-}
-
 // finish turns accumulated problems into the final result: a stable problem
 // list, per-variant and overall status.
 func (cy *cycle) finish(elapsed time.Duration) *Result {
 	cy.mu.Lock()
 	defer cy.mu.Unlock()
 
-	perVariant := map[string]float64{}
+	perVariant := map[variantkey.Key]status.Status{}
 	for _, v := range cy.res.Variants {
-		perVariant[v.Key] = 0
+		perVariant[v.Key] = status.OK()
 	}
-	overall := 0.0
+	overall := status.OK()
 	for _, p := range cy.probs {
-		if about := cy.context[p.Variant]; len(about) > 0 {
-			if p.Details == nil {
-				p.Details = map[string]any{}
-			}
-			for k, v := range about {
-				if _, have := p.Details[k]; !have {
-					p.Details[k] = v
-				}
-			}
+		if about := cy.context[p.Variant]; about != nil {
+			p.Details.Fill(*about)
 		}
 		cy.res.Problems = append(cy.res.Problems, *p)
-		r := severityRank(p.Severity)
-		perVariant[p.Variant] = max(perVariant[p.Variant], r)
-		overall = max(overall, r)
+		st := status.Of(p.Severity)
+		if now, seen := perVariant[p.Variant]; !seen || st.Worse(now) {
+			perVariant[p.Variant] = st
+		}
+		if st.Worse(overall) {
+			overall = st
+		}
 	}
 	sort.Slice(cy.res.Problems, func(i, j int) bool {
 		a, b := cy.res.Problems[i], cy.res.Problems[j]
 		if a.Variant != b.Variant {
-			return a.Variant < b.Variant
+			return a.Variant.Compare(b.Variant) < 0
 		}
-		return a.Kind < b.Kind
+		return a.Kind.String() < b.Kind.String()
 	})
 	for _, src := range cy.sources {
 		cy.res.Sources = append(cy.res.Sources, *src)
 	}
-	sort.Slice(cy.res.Sources, func(i, j int) bool { return cy.res.Sources[i].Variant < cy.res.Sources[j].Variant })
+	sort.Slice(cy.res.Sources, func(i, j int) bool { return cy.res.Sources[i].Variant.Compare(cy.res.Sources[j].Variant) < 0 })
 	sort.Slice(cy.res.Segments, func(i, j int) bool {
 		a, b := cy.res.Segments[i], cy.res.Segments[j]
 		if a.Variant != b.Variant {
-			return a.Variant < b.Variant
+			return a.Variant.Compare(b.Variant) < 0
 		}
 		return a.Seq < b.Seq
 	})
 
 	for key, r := range perVariant {
-		cy.res.Metrics = append(cy.res.Metrics, Metric{Name: "hls_status", Variant: key, Value: r})
+		cy.res.Metrics = append(cy.res.Metrics, Metric{Name: metricname.Status(), Variant: key, Value: r.Rank()})
 	}
 	for key, t := range cy.tcp {
 		cy.res.Metrics = append(cy.res.Metrics,
-			Metric{Name: "hls_tcp_rtt_seconds", Variant: key, Value: t.rtt},
-			Metric{Name: "hls_tcp_out_of_order", Variant: key, Value: t.outOfOrder},
-			Metric{Name: "hls_tcp_retransmits", Variant: key, Value: t.retransmits})
+			Metric{Name: metricname.TCPRTTSeconds(), Variant: key, Value: t.rtt},
+			Metric{Name: metricname.TCPOutOfOrder(), Variant: key, Value: t.outOfOrder},
+			Metric{Name: metricname.TCPRetransmits(), Variant: key, Value: t.retransmits})
 	}
 	for at, s := range cy.servers {
 		cy.res.Metrics = append(cy.res.Metrics,
-			Metric{Name: "hls_server_requests", Server: at.host, IP: at.ip, Value: s.requests},
-			Metric{Name: "hls_server_rtt_seconds", Server: at.host, IP: at.ip, Value: s.rtt / s.requests},
-			Metric{Name: "hls_server_out_of_order", Server: at.host, IP: at.ip, Value: s.outOfOrder},
-			Metric{Name: "hls_server_retransmits", Server: at.host, IP: at.ip, Value: s.retransmits})
+			Metric{Name: metricname.ServerRequests(), Server: at.host, IP: at.ip, Value: s.requests},
+			Metric{Name: metricname.ServerRTTSeconds(), Server: at.host, IP: at.ip, Value: s.rtt / s.requests},
+			Metric{Name: metricname.ServerOutOfOrder(), Server: at.host, IP: at.ip, Value: s.outOfOrder},
+			Metric{Name: metricname.ServerRetransmits(), Server: at.host, IP: at.ip, Value: s.retransmits})
 	}
 	cy.res.Metrics = append(cy.res.Metrics,
-		Metric{Name: "hls_stream_status", Value: overall},
-		Metric{Name: "hls_check_duration_seconds", Value: elapsed.Seconds()},
+		Metric{Name: metricname.StreamStatus(), Value: overall.Rank()},
+		Metric{Name: metricname.CheckDurationSeconds(), Value: elapsed.Seconds()},
 	)
-	switch overall {
-	case 2:
-		cy.res.Status = StatusFail
-	case 1:
-		cy.res.Status = StatusWarn
-	default:
-		cy.res.Status = StatusOK
-	}
+	cy.res.Status = overall
 	return cy.res
 }

@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"testing"
+
+	"github.com/hotid/hls-monitor/internal/types/importstatus"
 )
 
 const channelList = `#EXTM3U
@@ -55,7 +57,7 @@ func TestImportOfAList(t *testing.T) {
 
 	body["dry_run"] = false
 	admin.want(http.StatusOK, "POST", "/api/v1/streams/import", body, &res)
-	if res.Created != 4 || res.Entries[1].Name != "One HD (2)" || res.Entries[4].Status != "duplicate" || res.Entries[5].Status != "invalid" {
+	if res.Created != 4 || res.Entries[1].Name != "One HD (2)" || res.Entries[4].Status != importstatus.Duplicate() || res.Entries[5].Status != importstatus.Invalid() {
 		t.Fatalf("the import: %+v", res)
 	}
 	admin.want(http.StatusOK, "GET", "/api/v1/streams", nil, &list)

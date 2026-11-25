@@ -6,6 +6,9 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/httpx"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 // What a check finds is told in figures; what it was found in is gone a
@@ -30,11 +33,11 @@ type CaptureSegment struct {
 
 // CaptureRequest is what a checker hands over.
 type CaptureRequest struct {
-	StreamID int64
-	Variant  string
+	StreamID id.Stream
+	Variant  variantkey.Key
 	// Kinds are the problems the segment is suspected of; Manual tells
 	// that somebody asked for the capture instead.
-	Kinds  []string
+	Kinds  []problemkind.Kind
 	Manual bool
 	At     time.Time
 
@@ -70,22 +73,22 @@ type Capturer interface {
 	Capture(CaptureRequest)
 	// Confirm tells that problems of these kinds were reported for a
 	// stream: what was captured on suspicion of them is to be kept.
-	Confirm(streamID int64, kinds []string)
+	Confirm(streamID id.Stream, kinds []problemkind.Kind)
 }
 
 // Capturable reports whether a problem is one whose segments are worth
 // keeping: something in the contents, the container or the timestamps. For
 // a playlist that cannot be reached there is nothing to keep but what the
 // incident already has.
-func Capturable(kind string) bool {
+func Capturable(kind problemkind.Kind) bool {
 	switch kind {
-	case ProbMediaUndecodable, ProbMediaParse, ProbTSSync, ProbTSContinuity, ProbTSTransport, ProbTSNoTables,
-		ProbNoKeyframeStart, ProbDurationMismatch, ProbPTSDiscontinuity, ProbAVDesync, ProbMediaParamsChanged,
-		ProbSegmentTruncated:
+	case problemkind.MediaUndecodable(), problemkind.MediaParse(), problemkind.TSSync(), problemkind.TSContinuity(), problemkind.TSTransport(), problemkind.TSNoTables(),
+		problemkind.NoKeyframeStart(), problemkind.DurationMismatch(), problemkind.PTSDiscontinuity(), problemkind.AVDesync(), problemkind.MediaParamsChanged(),
+		problemkind.SegmentTruncated():
 		return true
 	}
 	// The stream having no sound at all is a matter of record, not of segments.
-	return PictureProblem(kind) && kind != ProbAudioAbsent
+	return PictureProblem(kind) && kind != problemkind.AudioAbsent()
 }
 
 // captureMaxBody bounds one segment fetched for a capture.
@@ -96,17 +99,17 @@ const captureMaxBody = 64 << 20
 func (c *Checker) CaptureNow() { c.captureNow.Store(true) }
 
 // suspicions names what the look or the listen just made began to suspect.
-func (c *Checker) suspicions() []string {
+func (c *Checker) suspicions() []problemkind.Kind {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	l := &c.looks
-	var out []string
+	var out []problemkind.Kind
 	for _, s := range []struct {
 		run  run
-		kind string
+		kind problemkind.Kind
 	}{
-		{l.black, ProbPictureBlack}, {l.same, ProbPictureFrozen}, {l.silent, ProbAudioSilent},
-		{l.oneSided, ProbAudioChannelSilent}, {l.deaf, ProbAudioUndecodable}, {l.nothing, ProbMediaUndecodable},
+		{l.black, problemkind.PictureBlack()}, {l.same, problemkind.PictureFrozen()}, {l.silent, problemkind.AudioSilent()},
+		{l.oneSided, problemkind.AudioChannelSilent()}, {l.deaf, problemkind.AudioUndecodable()}, {l.nothing, problemkind.MediaUndecodable()},
 	} {
 		if s.run.n == 1 {
 			out = append(out, s.kind)
@@ -116,7 +119,7 @@ func (c *Checker) suspicions() []string {
 }
 
 // capture hands a segment and its playlist to the capturer.
-func (c *Checker) capture(v Variant, plURL string, plResp, entry *httpx.Response, st *variantState, s plSegment, segURL string, resp *httpx.Response, kinds []string, manual, whole bool) {
+func (c *Checker) capture(v Variant, plURL string, plResp, entry *httpx.Response, st *variantState, s plSegment, segURL string, resp *httpx.Response, kinds []problemkind.Kind, manual, whole bool) {
 	rq := CaptureRequest{
 		StreamID: c.t.ID, Variant: v.Key, Kinds: kinds, Manual: manual, At: c.now(),
 		PlaylistURL: plURL, Seq: s.seq, TargetDuration: st.windowTD,
@@ -161,7 +164,7 @@ func (c *Checker) confirmCaptures(cy *cycle) {
 		return
 	}
 	cy.mu.Lock()
-	var kinds []string
+	var kinds []problemkind.Kind
 	for _, p := range cy.probs {
 		if Capturable(p.Kind) {
 			kinds = append(kinds, p.Kind)

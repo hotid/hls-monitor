@@ -16,6 +16,15 @@ import (
 	"github.com/hotid/hls-monitor/internal/metrics"
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/sourcekind"
+	"github.com/hotid/hls-monitor/internal/types/status"
+	"github.com/hotid/hls-monitor/internal/types/summarykey"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
 )
 
 // ReopenWithin is how soon after it ended a problem that comes back is the
@@ -46,7 +55,7 @@ type Ingester struct {
 	// stream and vantage point. It is learnt again within a segment after
 	// a restart, and so is not stored.
 	ownMu sync.Mutex
-	own   map[[2]int64]string
+	own   map[vantage]string
 
 	// vantages is where every playlist ended as every place last saw it.
 	vantageMu sync.Mutex
@@ -55,24 +64,30 @@ type Ingester struct {
 
 // OwnClip names the clip of its own a stream plays as an agent sees it;
 // empty when it plays none.
-func (in *Ingester) OwnClip(streamID, agentID int64) string {
+func (in *Ingester) OwnClip(streamID id.Stream, agentID id.Agent) string {
 	in.ownMu.Lock()
 	defer in.ownMu.Unlock()
-	return in.own[[2]int64{streamID, agentID}]
+	return in.own[vantage{streamID, agentID}]
 }
 
-func (in *Ingester) noteOwn(agentID int64, r *probe.Result) {
+func (in *Ingester) noteOwn(agentID id.Agent, r *probe.Result) {
 	in.ownMu.Lock()
 	defer in.ownMu.Unlock()
-	key := [2]int64{r.TargetID, agentID}
+	key := vantage{r.TargetID, agentID}
 	if r.OwnClip == "" {
 		delete(in.own, key)
 		return
 	}
 	if in.own == nil {
-		in.own = map[[2]int64]string{}
+		in.own = map[vantage]string{}
 	}
 	in.own[key] = r.OwnClip
+}
+
+// vantage is a stream as one agent sees it.
+type vantage struct {
+	stream id.Stream
+	agent  id.Agent
 }
 
 // Stats counts what became of the results given to Apply since the start.
@@ -91,7 +106,7 @@ func (in *Ingester) Stats() Stats {
 }
 
 // Apply stores one result; see apply. It counts the outcome.
-func (in *Ingester) Apply(ctx context.Context, agentID int64, r *probe.Result) error {
+func (in *Ingester) Apply(ctx context.Context, agentID id.Agent, r *probe.Result) error {
 	err := in.apply(ctx, agentID, r)
 	switch {
 	case err == nil:
@@ -115,31 +130,42 @@ func New(st *store.Store, mx *metrics.Client, log *slog.Logger) *Ingester {
 
 // summaryAggregates are stream-wide figures kept with the latest state so that
 // lists and dashboards do not need a time series query per stream.
+// aggregate is how the figures of the playlists of a stream become one
+// figure of the stream.
+type aggregate uint8
+
+const (
+	aggMax aggregate = iota + 1
+	aggMin
+	aggSum
+	aggAvg
+)
+
 var summaryAggregates = []struct {
-	name string // key in the summary
-	from string // source metric
-	how  string // max, min, sum, avg
+	name summarykey.Key  // the figure of the summary
+	from metricname.Name // the series it is made of
+	how  aggregate
 }{
-	{"bitrate_bps", "hls_segment_bitrate_bps", "max"},
-	{"declared_bandwidth_bps", "hls_variant_declared_bandwidth_bps", "max"},
-	{"segment_total_seconds", "hls_segment_total_seconds", "avg"},
-	{"segment_download_ratio", "hls_segment_download_ratio", "max"},
-	{"playlist_total_seconds", "hls_playlist_total_seconds", "max"},
-	{"live_latency_seconds", "hls_live_latency_seconds", "max"},
-	{"buffer_seconds", "hls_buffer_seconds", "min"},
-	{"segments_checked", "hls_segments_checked", "sum"},
-	{"segment_errors", "hls_segment_errors", "sum"},
-	{"stalls", "hls_stalls", "sum"},
-	{"height", "hls_media_height", "max"},
-	{"width", "hls_media_width", "max"},
-	{"fps", "hls_media_fps", "max"},
+	{summarykey.BitrateBps(), metricname.SegmentBitrateBps(), aggMax},
+	{summarykey.DeclaredBandwidthBps(), metricname.VariantDeclaredBandwidthBps(), aggMax},
+	{summarykey.SegmentTotalSeconds(), metricname.SegmentTotalSeconds(), aggAvg},
+	{summarykey.SegmentDownloadRatio(), metricname.SegmentDownloadRatio(), aggMax},
+	{summarykey.PlaylistTotalSeconds(), metricname.PlaylistTotalSeconds(), aggMax},
+	{summarykey.LiveLatencySeconds(), metricname.LiveLatencySeconds(), aggMax},
+	{summarykey.BufferSeconds(), metricname.BufferSeconds(), aggMin},
+	{summarykey.SegmentsChecked(), metricname.SegmentsChecked(), aggSum},
+	{summarykey.SegmentErrors(), metricname.SegmentErrors(), aggSum},
+	{summarykey.Stalls(), metricname.Stalls(), aggSum},
+	{summarykey.Height(), metricname.MediaHeight(), aggMax},
+	{summarykey.Width(), metricname.MediaWidth(), aggMax},
+	{summarykey.Fps(), metricname.MediaFps(), aggMax},
 	// 1 for a picture in PQ (HDR10, Dolby Vision), 2 for HLG, 0 for standard.
-	{"hdr", "hls_media_hdr", "max"},
+	{summarykey.Hdr(), metricname.MediaHdr(), aggMax},
 	// Loudness by EBU R 128 of the loudest track, in LUFS: measured now
 	// and then, and kept until measured again.
-	{"loudness_lufs", "hls_audio_loudness_lufs", "max"},
+	{summarykey.LoudnessLufs(), metricname.AudioLoudnessLufs(), aggMax},
 	// Cues in the subtitles in the last hour; 0 for subtitles that are empty.
-	{"subtitle_cues_hour", "hls_subtitle_cues_hour", "max"},
+	{summarykey.SubtitleCuesHour(), metricname.SubtitleCuesHour(), aggMax},
 }
 
 // ErrStale is returned for a result that is not newer than the newest one
@@ -155,7 +181,7 @@ var ErrStale = errors.New("the result is not newer than what is already stored")
 // It is refused with ErrStale and changes nothing; that is what makes
 // delivery safe to repeat, and keeps an old result from replacing the
 // state a newer one has set.
-func (in *Ingester) apply(ctx context.Context, agentID int64, r *probe.Result) error {
+func (in *Ingester) apply(ctx context.Context, agentID id.Agent, r *probe.Result) error {
 	now := in.now()
 	// Agents may deliver results late, but a time from the future is a clock problem.
 	if r.Time.IsZero() || r.Time.After(now.Add(5*time.Minute)) {
@@ -181,7 +207,7 @@ func (in *Ingester) apply(ctx context.Context, agentID int64, r *probe.Result) e
 		if err != nil {
 			return err
 		}
-		a.active = map[string]bool{}
+		a.active = map[variantkey.Key]bool{}
 		for _, v := range r.Variants {
 			a.active[v.Key] = true
 		}
@@ -214,56 +240,56 @@ type applying struct {
 	in      *Ingester
 	ctx     context.Context
 	tx      *store.Tx
-	agentID int64
+	agentID id.Agent
 	r       *probe.Result
 	t       time.Time
 	// ids are the variants of the stream by key, active those the result
 	// lists.
-	ids    map[string]int64
-	active map[string]bool
+	ids    map[variantkey.Key]id.Variant
+	active map[variantkey.Key]bool
 	// The figures of the result: by variant, of the stream as a whole,
 	// and which variants were reached.
-	perVariant  map[string]map[string]float64
-	streamLevel map[string]float64
-	up          map[string]bool
+	perVariant  map[variantkey.Key]map[metricname.Name]float64
+	streamLevel map[metricname.Name]float64
+	up          map[variantkey.Key]bool
 	samples     []metrics.Sample
 	entries     []store.JournalEntry
 	// open are the incidents open before the result, present the problems
 	// it reports, began those of them that begin with it, by variant.
 	open    []*store.Incident
 	present map[incidentKey]bool
-	began   map[string][]string
+	began   map[variantkey.Key][]problemkind.Kind
 }
 
 type incidentKey struct {
-	variant int64
-	kind    string
+	variant id.Variant
+	kind    problemkind.Kind
 }
 
 // variantID is the ID of a variant, made when it is not known yet.
-func (a *applying) variantID(key string) (int64, error) {
-	if id, ok := a.ids[key]; ok {
-		return id, nil
+func (a *applying) variantID(key variantkey.Key) (id.Variant, error) {
+	if known, ok := a.ids[key]; ok {
+		return known, nil
 	}
-	id, err := a.tx.EnsureVariant(a.ctx, a.r.TargetID, key, a.t)
+	made, err := a.tx.EnsureVariant(a.ctx, a.r.TargetID, key, a.t)
 	if err == nil {
-		a.ids[key] = id
+		a.ids[key] = made
 	}
-	return id, err
+	return made, err
 }
 
 // metrics sorts the figures: time series, plus the latest values per variant.
 func (a *applying) metrics() error {
-	a.perVariant, a.streamLevel, a.up = map[string]map[string]float64{}, map[string]float64{}, map[string]bool{}
+	a.perVariant, a.streamLevel, a.up = map[variantkey.Key]map[metricname.Name]float64{}, map[metricname.Name]float64{}, map[variantkey.Key]bool{}
 	for _, m := range a.r.Metrics {
-		if !metrics.ValidName(m.Name) || math.IsNaN(m.Value) || math.IsInf(m.Value, 0) {
+		if math.IsNaN(m.Value) || math.IsInf(m.Value, 0) {
 			continue
 		}
-		var vid int64
+		var vid id.Variant
 		switch {
 		case m.Server != "":
 			// About a server, not a playlist: a series only.
-		case m.Variant == "":
+		case m.Variant.IsZero():
 			a.streamLevel[m.Name] = m.Value
 		default:
 			var err error
@@ -271,10 +297,10 @@ func (a *applying) metrics() error {
 				return err
 			}
 			if a.perVariant[m.Variant] == nil {
-				a.perVariant[m.Variant] = map[string]float64{}
+				a.perVariant[m.Variant] = map[metricname.Name]float64{}
 			}
 			a.perVariant[m.Variant][m.Name] = m.Value
-			if m.Name == "hls_up" {
+			if m.Name == metricname.Up() {
 				a.up[m.Variant] = m.Value == 1
 			}
 		}
@@ -289,7 +315,7 @@ func (a *applying) metrics() error {
 // everything, as long as the variant is still being reached.
 func (a *applying) states() error {
 	ctx, tx, r := a.ctx, a.tx, a.r
-	sources := map[string]probe.Source{}
+	sources := map[variantkey.Key]probe.Source{}
 	for _, src := range r.Sources {
 		sources[src.Variant] = src
 	}
@@ -313,10 +339,10 @@ func (a *applying) states() error {
 		if src, ok := sources[key]; ok {
 			pl, seg = src.Playlist, src.Segment
 		}
-		if err := tx.SaveVariantState(ctx, vid, a.agentID, statusName(vals["hls_status"]), a.t, vals, pl, seg); err != nil {
+		if err := tx.SaveVariantState(ctx, vid, a.agentID, statusOf(vals[metricname.Status()]), a.t, vals, pl, seg); err != nil {
 			return err
 		}
-		for what, e := range map[string]*probe.Endpoint{"playlist": pl, "segment": seg} {
+		for what, e := range map[sourcekind.Kind]*probe.Endpoint{sourcekind.Playlist(): pl, sourcekind.Segment(): seg} {
 			if e == nil || e.Host == "" {
 				continue
 			}
@@ -356,7 +382,7 @@ func (a *applying) incidents() error {
 	a.present = map[incidentKey]bool{}
 	// A playlist is kept only for problems that begin in this cycle: one
 	// that persists would otherwise store the same text again and again.
-	a.began = map[string][]string{}
+	a.began = map[variantkey.Key][]problemkind.Kind{}
 	for _, p := range r.Problems {
 		vid, err := a.variantID(p.Variant)
 		if err != nil {
@@ -388,7 +414,7 @@ func (a *applying) picture() error {
 		HasPicture: p.HasPicture, Luma: p.Luma, Dark: p.Dark, HasAudio: p.HasAudio, AudioDB: p.AudioDB, JPEG: p.JPEG, Cells: p.Cells}); err != nil {
 		return err
 	}
-	var seen []string
+	var seen []problemkind.Kind
 	for _, pr := range a.r.Problems {
 		if probe.PictureProblem(pr.Kind) {
 			seen = append(seen, pr.Kind)
@@ -427,11 +453,11 @@ func (a *applying) quiet() error {
 		case r.Variants != nil && !a.active[inc.VariantKey]:
 			// The variant is gone from the stream, and its problems with it.
 			err = tx.CloseIncident(a.ctx, inc.ID, t)
-		case !a.up[inc.VariantKey] || r.Overloaded != "":
+		case !a.up[inc.VariantKey] || !r.Overloaded.IsZero():
 			// The variant was not reached in this cycle, or the checker
 			// could not keep up and left out what rests on timing: no
 			// evidence either way.
-		case inc.Severity == probe.SevInfo && t.Sub(inc.LastSeen) < a.in.CloseEventAfter:
+		case inc.Severity == severity.Info() && t.Sub(inc.LastSeen) < a.in.CloseEventAfter:
 			// Something a source does over and over is one event that
 			// keeps recurring, not a new one every minute.
 			err = tx.MarkIncidentClean(a.ctx, inc.ID)
@@ -447,20 +473,21 @@ func (a *applying) quiet() error {
 	return nil
 }
 
-func statusName(v float64) string {
+// statusOf reads a status back from the number a series holds it as.
+func statusOf(v float64) status.Status {
 	switch {
 	case v >= 2:
-		return probe.StatusFail
+		return status.Fail()
 	case v >= 1:
-		return probe.StatusWarn
+		return status.Warn()
 	}
-	return probe.StatusOK
+	return status.OK()
 }
 
-func summarize(r *probe.Result, streamLevel map[string]float64, perVariant map[string]map[string]float64) map[string]float64 {
-	out := map[string]float64{}
-	if v, ok := streamLevel["hls_check_duration_seconds"]; ok {
-		out["check_duration_seconds"] = v
+func summarize(r *probe.Result, streamLevel map[metricname.Name]float64, perVariant map[variantkey.Key]map[metricname.Name]float64) map[summarykey.Key]float64 {
+	out := map[summarykey.Key]float64{}
+	if v, ok := streamLevel[metricname.CheckDurationSeconds()]; ok {
+		out[summarykey.CheckDurationSeconds()] = v
 	}
 	for _, a := range summaryAggregates {
 		var acc float64
@@ -473,9 +500,9 @@ func summarize(r *probe.Result, streamLevel map[string]float64, perVariant map[s
 			switch {
 			case n == 0:
 				acc = v
-			case a.how == "max":
+			case a.how == aggMax:
 				acc = max(acc, v)
-			case a.how == "min":
+			case a.how == aggMin:
 				acc = min(acc, v)
 			default:
 				acc += v
@@ -485,7 +512,7 @@ func summarize(r *probe.Result, streamLevel map[string]float64, perVariant map[s
 		if n == 0 {
 			continue
 		}
-		if a.how == "avg" {
+		if a.how == aggAvg {
 			acc /= float64(n)
 		}
 		out[a.name] = acc
@@ -493,25 +520,25 @@ func summarize(r *probe.Result, streamLevel map[string]float64, perVariant map[s
 	video, subtitles := 0, 0
 	for _, v := range r.Variants {
 		switch v.Kind {
-		case probe.KindVideo, probe.KindMedia:
+		case variantkind.Video(), variantkind.Media():
 			video++
-		case probe.KindSubtitles:
+		case variantkind.Subtitles():
 			subtitles++
 		}
 	}
 	if r.Variants != nil {
-		out["variants"] = float64(video)
-		out["subtitles"] = float64(subtitles)
+		out[summarykey.Variants()] = float64(video)
+		out[summarykey.Subtitles()] = float64(subtitles)
 	}
 	problems := 0
 	for _, p := range r.Problems {
-		if p.Severity != probe.SevInfo {
+		if p.Severity != severity.Info() {
 			problems++
 		}
 	}
-	out["problems"] = float64(problems)
-	if r.Overloaded != "" {
-		out["overloaded"] = 1
+	out[summarykey.Problems()] = float64(problems)
+	if !r.Overloaded.IsZero() {
+		out[summarykey.Overloaded()] = 1
 	}
 	return out
 }

@@ -4,6 +4,12 @@ import (
 	"context"
 	"math"
 	"time"
+
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
 )
 
 // Loudness by EBU R 128 is a property of minutes of sound, and a look
@@ -30,7 +36,7 @@ type loudState struct {
 	due time.Time
 	// While measuring: the playlist it is done on, the segments still to
 	// take, when the next may be taken and when it began.
-	key         string
+	key         variantkey.Key
 	left        int
 	next, begun time.Time
 	heard       []float64
@@ -43,7 +49,7 @@ func (c *Checker) wantsLoud(v Variant, encrypted bool, now time.Time) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	l := &c.loud
-	if c.Looker == nil || c.PictureEvery <= 0 || c.t.Picture == PictureOff || c.t.Level == LevelPlaylist || encrypted {
+	if c.Looker == nil || c.PictureEvery <= 0 || c.t.Picture == picturemode.Off() || c.t.Level == level.Playlist() || encrypted {
 		return false
 	}
 	if l.due.IsZero() {
@@ -68,9 +74,9 @@ func (c *Checker) wantsLoud(v Variant, encrypted bool, now time.Time) bool {
 // the segments of v.
 func (c *Checker) carriesSound(v Variant) bool {
 	switch v.Kind {
-	case KindAudio:
+	case variantkind.Audio():
 		return true
-	case KindVideo, KindMedia:
+	case variantkind.Video(), variantkind.Media():
 		return !c.soundApart
 	}
 	return false
@@ -97,10 +103,10 @@ func (c *Checker) measureLoud(ctx context.Context, cy *cycle, v Variant, data, i
 }
 
 // finishLoud tells what the measuring heard and sets the next one.
-func (c *Checker) finishLoud(cy *cycle, key string, now time.Time) {
+func (c *Checker) finishLoud(cy *cycle, key variantkey.Key, now time.Time) {
 	l := &c.loud
 	if lufs, ok := gatedLoudness(l.heard); ok {
-		cy.metric("hls_audio_loudness_lufs", key, math.Round(lufs*10)/10)
+		cy.metric(metricname.AudioLoudnessLufs(), key, math.Round(lufs*10)/10)
 	}
 	l.left, l.heard = 0, nil
 	l.due = now.Add(loudEvery)

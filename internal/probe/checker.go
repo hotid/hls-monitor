@@ -7,7 +7,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/url"
-	"sort"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +16,14 @@ import (
 	"github.com/Eyevinn/hls-m3u8/m3u8"
 
 	"github.com/hotid/hls-monitor/internal/httpx"
+	"github.com/hotid/hls-monitor/internal/types/cachestatus"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/overload"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
 )
 
 const (
@@ -45,7 +53,7 @@ type Checker struct {
 
 	// Overloaded, when set, tells what the process was short of at any time
 	// since the given moment, or "" when it kept up. Set it before Run.
-	Overloaded func(since time.Time) string
+	Overloaded func(since time.Time) overload.Reason
 
 	// Looker, when set, is what looks at the picture and listens to the
 	// sound, every PictureEvery. Set both before Run.
@@ -62,10 +70,10 @@ type Checker struct {
 	Capturer   Capturer
 	captureNow atomic.Bool
 	// loops are the playlists that show the same pictures over and over.
-	loops map[string]standingProblem
+	loops map[standKey]standingProblem
 	// signs is what the sizes of coded frames tell: a picture that does
 	// not seem to change, sound that seems to be silence.
-	signs map[string]standingProblem
+	signs map[standKey]standingProblem
 	// ownAt is when a playlist was last found to play a clip known to be
 	// the channel's own.
 	ownAt   time.Time
@@ -75,23 +83,23 @@ type Checker struct {
 
 	// plSource is the server that last answered for each playlist.
 	mu       sync.Mutex
-	plSource map[string]*Endpoint
+	plSource map[variantkey.Key]*Endpoint
 
-	entryKind string // KindMaster or KindMedia once known
+	entryKind variantkind.Kind // master or media, once known
 	// freshAt is when the stream's address was last asked on a connection
 	// made for it.
 	freshAt time.Time
 	// entryText is the entry playlist as last read, entryAt when.
 	entryText   []byte
 	entryAt     time.Time
-	variantKeys []string
+	variantKeys []variantkey.Key
 	// soundApart tells that the master playlist names playlists of sound.
 	soundApart bool
 	// loud is the measuring of loudness.
 	loud loudState
 	// steps is how every playlist stood against the picture.
-	steps    map[string]*inStep
-	vars     map[string]*variantState
+	steps    map[variantkey.Key]*inStep
+	vars     map[variantkey.Key]*variantState
 	interval time.Duration
 	// received counts the bytes of response bodies downloaded in the
 	// current cycle, by every request it makes.
@@ -110,8 +118,8 @@ func New(t Target, hc *httpx.Client) *Checker {
 	if hc == nil {
 		hc = httpx.New(httpx.Options{InsecureSkipVerify: t.Insecure})
 	}
-	if !ValidLevel(t.Level) {
-		t.Level = LevelSegments
+	if t.Level.IsZero() || t.Picture.IsZero() {
+		panic("probe: a target that does not say how deep it is checked, or what its picture is checked for")
 	}
 	if t.MaxSegments <= 0 {
 		t.MaxSegments = 3
@@ -121,8 +129,8 @@ func New(t Target, hc *httpx.Client) *Checker {
 		hc:       hc,
 		th:       DefaultThresholds(),
 		now:      time.Now,
-		vars:     map[string]*variantState{},
-		plSource: map[string]*Endpoint{},
+		vars:     map[variantkey.Key]*variantState{},
+		plSource: map[variantkey.Key]*Endpoint{},
 		interval: defaultInterval,
 	}
 }
@@ -198,26 +206,26 @@ func (c *Checker) Run(ctx context.Context) *Result {
 
 	// The entry playlist is reported under "master" or "media" depending on
 	// what it is; when it cannot be read, under what it was last time.
-	key := VariantMedia
-	if (fetched && parseErr == nil && typ == m3u8.MASTER) || ((!fetched || parseErr != nil) && c.entryKind == KindMaster) {
-		key = VariantMaster
+	key := variantkey.Media()
+	if (fetched && parseErr == nil && typ == m3u8.MASTER) || ((!fetched || parseErr != nil) && c.entryKind == variantkind.Master()) {
+		key = variantkey.Master()
 	}
 
 	if resp != nil && err == nil && !fresh {
 		// The way in: a balancer often answers the stream's address with
 		// a redirect, and how long that takes is not the stream's doing.
 		// Not when the connections were made for it: that is another figure.
-		cy.metric("hls_entry_seconds", key, resp.Total.Seconds())
-		cy.metric("hls_entry_redirects", key, float64(resp.Redirects))
+		cy.metric(metricname.EntrySeconds(), key, resp.Total.Seconds())
+		cy.metric(metricname.EntryRedirects(), key, float64(resp.Redirects))
 	}
 	if fresh && resp != nil && resp.Connects > 0 {
 		n := float64(resp.Connects)
-		cy.metric("hls_connect_seconds", key, resp.Connect.Seconds()/n)
+		cy.metric(metricname.ConnectSeconds(), key, resp.Connect.Seconds()/n)
 		if resp.Lookups > 0 {
-			cy.metric("hls_dns_seconds", key, resp.DNS.Seconds()/float64(resp.Lookups))
+			cy.metric(metricname.DNSSeconds(), key, resp.DNS.Seconds()/float64(resp.Lookups))
 		}
 		if resp.TLS > 0 {
-			cy.metric("hls_tls_seconds", key, resp.TLS.Seconds()/n)
+			cy.metric(metricname.TLSSeconds(), key, resp.TLS.Seconds()/n)
 		}
 	}
 	if resp != nil && resp.RemoteAddr != "" {
@@ -232,21 +240,21 @@ func (c *Checker) Run(ctx context.Context) *Result {
 	}
 	ok := c.playlistResponse(cy, key, c.t.URL, resp, err, true)
 	if ok && parseErr != nil {
-		cy.problem(ProbPlaylistParse, SevCrit, key, "cannot parse playlist: %v", parseErr)
+		cy.problem(problemkind.PlaylistParse(), severity.Crit(), key, "cannot parse playlist: %v", parseErr)
 		cy.snapshot(key, c.t.URL, resp.Body)
 		ok = false
 	}
 	if !ok {
-		cy.metric("hls_up", key, 0)
+		cy.metric(metricname.Up(), key, 0)
 		// No playlist under the entry one was read in this cycle.
 		for _, st := range c.vars {
 			st.failed(cy.lastMessage(key))
 		}
 		return c.finish(cy, start)
 	}
-	cy.metric("hls_up", key, 1)
+	cy.metric(metricname.Up(), key, 1)
 	if syntaxErr != nil {
-		cy.problem(ProbPlaylistSyntax, SevWarn, key, "playlist syntax: %v", syntaxErr)
+		cy.problem(problemkind.PlaylistSyntax(), severity.Warn(), key, "playlist syntax: %v", syntaxErr)
 		cy.snapshot(key, c.t.URL, resp.Body)
 	}
 
@@ -257,13 +265,13 @@ func (c *Checker) Run(ctx context.Context) *Result {
 
 	switch typ {
 	case m3u8.MASTER:
-		c.entryKind = KindMaster
+		c.entryKind = variantkind.Master()
 		c.checkMaster(ctx, cy, pl.(*m3u8.MasterPlaylist), base, resp)
 	default:
-		c.entryKind = KindMedia
-		v := Variant{Key: VariantMedia, Kind: KindMedia, URI: c.t.URL}
+		c.entryKind = variantkind.Media()
+		v := Variant{Key: variantkey.Media(), Kind: variantkind.Media(), URI: c.t.URL}
 		cy.res.Variants = []Variant{v}
-		c.pruneStates([]string{VariantMedia})
+		c.pruneStates([]variantkey.Key{variantkey.Media()})
 		c.checkMediaPlaylist(ctx, cy, v, base, pl.(*m3u8.MediaPlaylist), resp, nil)
 	}
 	return c.finish(cy, start)
@@ -274,9 +282,9 @@ func (c *Checker) finish(cy *cycle, start time.Time) *Result {
 	// the segments as its level downloads.
 	c.reportLooks(cy)
 	c.confirmCaptures(cy)
-	cy.metric("hls_check_bytes", "", float64(c.received.Swap(0)))
+	cy.streamMetric(metricname.CheckBytes(), float64(c.received.Swap(0)))
 	if c.Overloaded != nil {
-		if reason := c.Overloaded(start); reason != "" {
+		if reason := c.Overloaded(start); !reason.IsZero() {
 			cy.overloaded(reason)
 		}
 	}
@@ -323,61 +331,61 @@ func decodeM3U8(body []byte, strict bool) (pl m3u8.Playlist, typ m3u8.ListType, 
 
 // playlistResponse records the network metrics of a playlist request and
 // raises problems for failures. It reports whether a body is available.
-func (c *Checker) playlistResponse(cy *cycle, variant, reqURL string, resp *httpx.Response, err error, entry bool) bool {
-	cy.about(variant, "playlist_url", reqURL)
+func (c *Checker) playlistResponse(cy *cycle, variant variantkey.Key, reqURL string, resp *httpx.Response, err error, entry bool) bool {
+	cy.about(variant, detail.PlaylistURL(reqURL))
 	if resp != nil {
 		if resp.Status != 0 {
-			cy.metric("hls_playlist_http_status", variant, float64(resp.Status))
-			cy.about(variant, "playlist_http_status", resp.Status)
+			cy.metric(metricname.PlaylistHTTPStatus(), variant, float64(resp.Status))
+			cy.about(variant, detail.PlaylistHTTPStatus(resp.Status))
 		}
-		cy.metric("hls_playlist_total_seconds", variant, resp.Total.Seconds())
+		cy.metric(metricname.PlaylistTotalSeconds(), variant, resp.Total.Seconds())
 		cy.network(variant, resp)
-		cy.about(variant, "playlist_seconds", resp.Total.Seconds())
+		cy.about(variant, detail.PlaylistSeconds(resp.Total.Seconds()))
 	}
 	if err != nil {
-		cy.about(variant, "playlist_error", err.Error())
+		cy.about(variant, detail.PlaylistError(err.Error()))
 		if resp != nil && len(resp.Hops) > 0 {
-			cy.about(variant, "playlist_redirects", hopLines(resp.Hops))
+			cy.about(variant, detail.PlaylistRedirects(hopLines(resp.Hops)))
 		}
-		cy.metric("hls_playlist_up", variant, 0)
-		cy.problem(ProbPlaylistUnreachable, SevCrit, variant, "playlist request failed: %v", err)
+		cy.metric(metricname.PlaylistUp(), variant, 0)
+		cy.problem(problemkind.PlaylistUnreachable(), severity.Crit(), variant, "playlist request failed: %v", err)
 		if timedOut(err) {
-			cy.doubt(ProbPlaylistUnreachable, variant)
+			cy.doubt(problemkind.PlaylistUnreachable(), variant)
 		}
 		return false
 	}
-	cy.metric("hls_playlist_dns_seconds", variant, resp.DNS.Seconds())
-	cy.metric("hls_playlist_connect_seconds", variant, resp.Connect.Seconds())
-	cy.metric("hls_playlist_tls_seconds", variant, resp.TLS.Seconds())
-	cy.metric("hls_playlist_ttfb_seconds", variant, resp.TTFB.Seconds())
-	cy.metric("hls_playlist_size_bytes", variant, float64(resp.Size))
-	cy.metric("hls_playlist_redirects", variant, float64(resp.Redirects))
+	cy.metric(metricname.PlaylistDNSSeconds(), variant, resp.DNS.Seconds())
+	cy.metric(metricname.PlaylistConnectSeconds(), variant, resp.Connect.Seconds())
+	cy.metric(metricname.PlaylistTLSSeconds(), variant, resp.TLS.Seconds())
+	cy.metric(metricname.PlaylistTTFBSeconds(), variant, resp.TTFB.Seconds())
+	cy.metric(metricname.PlaylistSizeBytes(), variant, float64(resp.Size))
+	cy.metric(metricname.PlaylistRedirects(), variant, float64(resp.Redirects))
 	if age, ok := resp.AgeSeconds(); ok {
-		cy.metric("hls_playlist_age_seconds", variant, age)
+		cy.metric(metricname.PlaylistAgeSeconds(), variant, age)
 	}
 	switch resp.CacheStatus() {
-	case "hit":
-		cy.metric("hls_playlist_cache_hit", variant, 1)
-	case "miss":
-		cy.metric("hls_playlist_cache_hit", variant, 0)
+	case cachestatus.Hit():
+		cy.metric(metricname.PlaylistCacheHit(), variant, 1)
+	case cachestatus.Miss():
+		cy.metric(metricname.PlaylistCacheHit(), variant, 0)
 	}
 	if entry && !resp.CertNotAfter.IsZero() {
 		left := resp.CertNotAfter.Sub(c.now())
-		cy.metric("hls_tls_cert_expiry_seconds", variant, left.Seconds())
+		cy.metric(metricname.TLSCertExpirySeconds(), variant, left.Seconds())
 		switch {
 		case left < c.th.CertCrit:
-			cy.problem(ProbCertExpiring, SevCrit, variant, "TLS certificate expires in %s", roundDur(left))
+			cy.problem(problemkind.CertExpiring(), severity.Crit(), variant, "TLS certificate expires in %s", roundDur(left))
 		case left < c.th.CertWarn:
-			cy.problem(ProbCertExpiring, SevWarn, variant, "TLS certificate expires in %s", roundDur(left))
+			cy.problem(problemkind.CertExpiring(), severity.Warn(), variant, "TLS certificate expires in %s", roundDur(left))
 		}
 	}
 	// Which server answered: behind a redirecting balancer or an anycast
 	// address consecutive requests may reach different ones.
 	ep := endpoint(reqURL, resp)
 	cy.source(variant, ep, false)
-	cy.about(variant, "playlist_server", ep.Node(), "playlist_software", ep.Headers["Server"], "playlist_redirects", hopLines(ep.Redirects), "playlist_bytes", resp.Size)
+	cy.about(variant, detail.PlaylistServer(ep.Node()), detail.PlaylistSoftware(ep.Headers["Server"]), detail.PlaylistRedirects(hopLines(ep.Redirects)), detail.PlaylistBytes(resp.Size))
 	if ep.URL != reqURL {
-		cy.about(variant, "playlist_final_url", ep.URL)
+		cy.about(variant, detail.PlaylistFinalURL(ep.URL))
 	}
 	changed := 0.0
 	c.mu.Lock()
@@ -386,16 +394,16 @@ func (c *Checker) playlistResponse(cy *cycle, variant, reqURL string, resp *http
 	c.mu.Unlock()
 	if prev != nil && prev.Node() != ep.Node() {
 		changed = 1
-		cy.problem(ProbPlaylistSource, SevInfo, variant, "%s", describeChange("playlist", prev, ep))
+		cy.problem(problemkind.PlaylistSource(), severity.Info(), variant, "%s", describeChange("playlist", prev, ep))
 	}
-	cy.metric("hls_playlist_source_changed", variant, changed)
+	cy.metric(metricname.PlaylistSourceChanged(), variant, changed)
 
 	if !resp.OK() {
-		cy.metric("hls_playlist_up", variant, 0)
-		cy.problem(ProbPlaylistHTTP, SevCrit, variant, "playlist returned HTTP %d from %s (%s)", resp.Status, ep.Host, ep.IP)
+		cy.metric(metricname.PlaylistUp(), variant, 0)
+		cy.problem(problemkind.PlaylistHTTP(), severity.Crit(), variant, "playlist returned HTTP %d from %s (%s)", resp.Status, ep.Host, ep.IP)
 		return false
 	}
-	cy.metric("hls_playlist_up", variant, 1)
+	cy.metric(metricname.PlaylistUp(), variant, 1)
 	return true
 }
 
@@ -464,12 +472,12 @@ func buildVariants(mp *m3u8.MasterPlaylist) []Variant {
 			continue
 		}
 		seen[v.URI] = true
-		kind := KindVideo
+		kind := variantkind.Video()
 		if v.Resolution == "" && v.Codecs != "" && !hasVideoCodec(v.Codecs) {
-			kind = KindAudio
+			kind = variantkind.Audio()
 		}
 		out = append(out, Variant{
-			Key:          v.URI,
+			Key:          variantkey.OfURI(v.URI),
 			Kind:         kind,
 			URI:          v.URI,
 			Name:         v.Name,
@@ -484,19 +492,19 @@ func buildVariants(mp *m3u8.MasterPlaylist) []Variant {
 		if a == nil || a.URI == "" || seen[a.URI] {
 			continue
 		}
-		var kind string
+		var kind variantkind.Kind
 		switch strings.ToUpper(a.Type) {
 		case "AUDIO":
-			kind = KindAudio
+			kind = variantkind.Audio()
 		case "SUBTITLES":
-			kind = KindSubtitles
+			kind = variantkind.Subtitles()
 		case "VIDEO":
-			kind = KindVideo
+			kind = variantkind.Video()
 		default:
 			continue
 		}
 		seen[a.URI] = true
-		out = append(out, Variant{Key: a.URI, Kind: kind, URI: a.URI, Name: a.Name, Group: a.GroupId, Language: a.Language})
+		out = append(out, Variant{Key: variantkey.OfURI(a.URI), Kind: kind, URI: a.URI, Name: a.Name, Group: a.GroupId, Language: a.Language})
 	}
 	return out
 }
@@ -514,22 +522,22 @@ func hasVideoCodec(codecs string) bool {
 }
 
 // describeSetChange names what left and what joined a set of variant keys.
-func describeSetChange(before, after []string) string {
-	was := map[string]bool{}
+func describeSetChange(before, after []variantkey.Key) string {
+	was := map[variantkey.Key]bool{}
 	for _, k := range before {
 		was[k] = true
 	}
-	is := map[string]bool{}
+	is := map[variantkey.Key]bool{}
 	var added, removed []string
 	for _, k := range after {
 		is[k] = true
 		if !was[k] {
-			added = append(added, k)
+			added = append(added, k.String())
 		}
 	}
 	for _, k := range before {
 		if !is[k] {
-			removed = append(removed, k)
+			removed = append(removed, k.String())
 		}
 	}
 	list := func(keys []string) string {
@@ -551,8 +559,8 @@ func describeSetChange(before, after []string) string {
 
 // pruneStates drops the state of variants that no longer exist and makes
 // sure every current variant has one.
-func (c *Checker) pruneStates(keys []string) {
-	keep := map[string]bool{}
+func (c *Checker) pruneStates(keys []variantkey.Key) {
+	keep := map[variantkey.Key]bool{}
 	for _, k := range keys {
 		keep[k] = true
 		if _, ok := c.vars[k]; !ok {
@@ -566,7 +574,7 @@ func (c *Checker) pruneStates(keys []string) {
 	}
 	c.mu.Lock()
 	for k := range c.plSource {
-		if !keep[k] && k != VariantMaster && k != VariantMedia {
+		if !keep[k] && k != variantkey.Master() && k != variantkey.Media() {
 			delete(c.plSource, k)
 		}
 	}
@@ -577,8 +585,8 @@ func (c *Checker) pruneStates(keys []string) {
 // EXT-X-PROGRAM-DATE-TIME, zero when the playlist has no date-times.
 type edge struct {
 	ok   bool
-	key  string
-	kind string
+	key  variantkey.Key
+	kind variantkind.Kind
 	live bool
 	// Where the playlist has got to: the number of its last segment and
 	// which count that is of, how many discontinuities it has been
@@ -598,33 +606,33 @@ func (c *Checker) checkMaster(ctx context.Context, cy *cycle, mp *m3u8.MasterPla
 	variants := buildVariants(mp)
 	c.soundApart = false
 	for _, v := range variants {
-		c.soundApart = c.soundApart || v.Kind == KindAudio
+		c.soundApart = c.soundApart || v.Kind == variantkind.Audio()
 	}
-	cy.res.Variants = append([]Variant{{Key: VariantMaster, Kind: KindMaster, URI: c.t.URL}}, variants...)
+	cy.res.Variants = append([]Variant{{Key: variantkey.Master(), Kind: variantkind.Master(), URI: c.t.URL}}, variants...)
 
-	keys := make([]string, 0, len(variants))
+	keys := make([]variantkey.Key, 0, len(variants))
 	video := 0
 	for _, v := range variants {
 		keys = append(keys, v.Key)
-		if v.Kind == KindVideo {
+		if v.Kind == variantkind.Video() {
 			video++
 			if v.Bandwidth > 0 {
-				cy.metric("hls_variant_declared_bandwidth_bps", v.Key, float64(v.Bandwidth))
+				cy.metric(metricname.VariantDeclaredBandwidthBps(), v.Key, float64(v.Bandwidth))
 			}
 		}
 	}
-	cy.metric("hls_variants", VariantMaster, float64(video))
-	cy.metric("hls_renditions", VariantMaster, float64(len(variants)-video))
+	cy.metric(metricname.Variants(), variantkey.Master(), float64(video))
+	cy.metric(metricname.Renditions(), variantkey.Master(), float64(len(variants)-video))
 	if len(variants) == 0 {
-		cy.problem(ProbPlaylistEmpty, SevCrit, VariantMaster, "master playlist lists no variants")
-		cy.snapshot(VariantMaster, c.t.URL, entry.Body)
+		cy.problem(problemkind.PlaylistEmpty(), severity.Crit(), variantkey.Master(), "master playlist lists no variants")
+		cy.snapshot(variantkey.Master(), c.t.URL, entry.Body)
 	}
 
-	sorted := append([]string(nil), keys...)
-	sort.Strings(sorted)
-	if c.variantKeys != nil && strings.Join(sorted, "\n") != strings.Join(c.variantKeys, "\n") {
-		cy.problem(ProbVariantsChanged, SevWarn, VariantMaster, "set of variants changed: %s", describeSetChange(c.variantKeys, sorted))
-		cy.snapshot(VariantMaster, c.t.URL, entry.Body)
+	sorted := slices.Clone(keys)
+	slices.SortFunc(sorted, variantkey.Key.Compare)
+	if c.variantKeys != nil && !slices.Equal(sorted, c.variantKeys) {
+		cy.problem(problemkind.VariantsChanged(), severity.Warn(), variantkey.Master(), "set of variants changed: %s", describeSetChange(c.variantKeys, sorted))
+		cy.snapshot(variantkey.Master(), c.t.URL, entry.Body)
 	}
 	c.variantKeys = sorted
 	c.pruneStates(keys)
@@ -644,10 +652,10 @@ func (c *Checker) checkMaster(ctx context.Context, cy *cycle, mp *m3u8.MasterPla
 	wg.Wait()
 
 	if apart, limit, ok := edgesApart(edges, c.th.VariantEdgeSpread); ok {
-		cy.metric("hls_variants_edge_spread_seconds", VariantMaster, apart)
+		cy.metric(metricname.VariantsEdgeSpreadSeconds(), variantkey.Master(), apart)
 		if apart > limit {
-			cy.problem(ProbVariantsOutOfSync, SevWarn, VariantMaster, "live edges of the video variants are %.1fs apart by EXT-X-PROGRAM-DATE-TIME", apart)
-			cy.detail(ProbVariantsOutOfSync, VariantMaster, "variants_edge_spread", apart, "variants_edge_spread_limit", limit)
+			cy.problem(problemkind.VariantsOutOfSync(), severity.Warn(), variantkey.Master(), "live edges of the video variants are %.1fs apart by EXT-X-PROGRAM-DATE-TIME", apart)
+			cy.detail(problemkind.VariantsOutOfSync(), variantkey.Master(), detail.VariantsEdgeSpread(apart), detail.VariantsEdgeSpreadLimit(limit))
 		}
 	}
 	c.renditionsInStep(cy, edges)
@@ -666,7 +674,7 @@ func edgesApart(edges []edge, factor float64) (apart, limit float64, ok bool) {
 	var first, last time.Time
 	n := 0
 	for _, e := range edges {
-		if !e.ok || e.kind != KindVideo {
+		if !e.ok || e.kind != variantkind.Video() {
 			continue
 		}
 		if e.pdt.IsZero() {
@@ -690,13 +698,13 @@ func edgesApart(edges []edge, factor float64) (apart, limit float64, ok bool) {
 func (c *Checker) checkVariant(ctx context.Context, cy *cycle, v Variant, base string, entry *httpx.Response) edge {
 	u, err := resolve(base, v.URI)
 	if err != nil {
-		cy.metric("hls_up", v.Key, 0)
-		cy.problem(ProbPlaylistUnreachable, SevCrit, v.Key, "bad variant URI %q: %v", v.URI, err)
+		cy.metric(metricname.Up(), v.Key, 0)
+		cy.problem(problemkind.PlaylistUnreachable(), severity.Crit(), v.Key, "bad variant URI %q: %v", v.URI, err)
 		return edge{}
 	}
 	resp, err := c.get(ctx, httpx.Request{URL: u, MaxBody: playlistMaxBody}, c.timeout())
 	if !c.playlistResponse(cy, v.Key, u, resp, err, false) {
-		cy.metric("hls_up", v.Key, 0)
+		cy.metric(metricname.Up(), v.Key, 0)
 		if st := c.vars[v.Key]; st != nil {
 			st.failed(cy.lastMessage(v.Key))
 		}
@@ -704,20 +712,20 @@ func (c *Checker) checkVariant(ctx context.Context, cy *cycle, v Variant, base s
 	}
 	pl, typ, syntaxErr, perr := decodePlaylist(resp.Body)
 	if perr != nil || typ != m3u8.MEDIA {
-		cy.metric("hls_up", v.Key, 0)
+		cy.metric(metricname.Up(), v.Key, 0)
 		if perr == nil {
 			perr = fmt.Errorf("expected a media playlist")
 		}
-		cy.problem(ProbPlaylistParse, SevCrit, v.Key, "cannot parse playlist: %v", perr)
+		cy.problem(problemkind.PlaylistParse(), severity.Crit(), v.Key, "cannot parse playlist: %v", perr)
 		cy.snapshot(v.Key, u, resp.Body)
 		if st := c.vars[v.Key]; st != nil {
 			st.failed(cy.lastMessage(v.Key))
 		}
 		return edge{}
 	}
-	cy.metric("hls_up", v.Key, 1)
+	cy.metric(metricname.Up(), v.Key, 1)
 	if syntaxErr != nil {
-		cy.problem(ProbPlaylistSyntax, SevWarn, v.Key, "playlist syntax: %v", syntaxErr)
+		cy.problem(problemkind.PlaylistSyntax(), severity.Warn(), v.Key, "playlist syntax: %v", syntaxErr)
 		cy.snapshot(v.Key, u, resp.Body)
 	}
 	if resp.FinalURL != "" {

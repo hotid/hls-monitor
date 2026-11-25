@@ -5,13 +5,18 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
 )
 
 // stubCapturer remembers what it was asked.
 type stubCapturer struct {
 	mu        sync.Mutex
 	asked     []CaptureRequest
-	confirmed map[string]int
+	confirmed map[problemkind.Kind]int
 }
 
 func (s *stubCapturer) Capture(rq CaptureRequest) {
@@ -20,10 +25,10 @@ func (s *stubCapturer) Capture(rq CaptureRequest) {
 	s.mu.Unlock()
 }
 
-func (s *stubCapturer) Confirm(_ int64, kinds []string) {
+func (s *stubCapturer) Confirm(_ id.Stream, kinds []problemkind.Kind) {
 	s.mu.Lock()
 	if s.confirmed == nil {
-		s.confirmed = map[string]int{}
+		s.confirmed = map[problemkind.Kind]int{}
 	}
 	for _, k := range kinds {
 		s.confirmed[k]++
@@ -32,13 +37,13 @@ func (s *stubCapturer) Confirm(_ int64, kinds []string) {
 }
 
 func TestSuspicionIsCaptured(t *testing.T) {
-	f, s := lookFixture(t, LevelHeader)
+	f, s := lookFixture(t, level.Header())
 	capt := &stubCapturer{}
 	f.c.Capturer = capt
 	// The stub shows one picture all along; that is not what is in question here.
-	f.c.t.Picture = PictureStatic
+	f.c.t.Picture = picturemode.Static()
 	// An ordinary stream is not captured.
-	watch(f, time.Minute, ProbPictureBlack)
+	watch(f, time.Minute, problemkind.PictureBlack())
 	if len(capt.asked) != 0 {
 		t.Fatalf("an ordinary stream was captured: %+v", capt.asked[0].Kinds)
 	}
@@ -48,11 +53,11 @@ func TestSuspicionIsCaptured(t *testing.T) {
 	s.frame = blackFrame
 	f.clock = f.clock.Add(5 * time.Minute)
 	r := f.step(1)
-	if hasProblem(r, ProbPictureBlack) != nil || len(capt.asked) != 1 {
+	if hasProblem(r, problemkind.PictureBlack()) != nil || len(capt.asked) != 1 {
 		t.Fatalf("at the first black picture: %d captures asked for, problems %+v", len(capt.asked), r.Problems)
 	}
 	rq := capt.asked[0]
-	if rq.StreamID != 1 || len(rq.Kinds) != 1 || rq.Kinds[0] != ProbPictureBlack || rq.Manual || len(rq.Evidence) == 0 ||
+	if rq.StreamID != id.StreamOf(1) || len(rq.Kinds) != 1 || rq.Kinds[0] != problemkind.PictureBlack() || rq.Manual || len(rq.Evidence) == 0 ||
 		len(rq.Playlist) == 0 || len(rq.Window) < 2 || rq.Get == nil || rq.Status != 206 || rq.Server == "" {
 		t.Fatalf("the request: kinds %v, %d bytes, %d segments, status %d, server %q", rq.Kinds, len(rq.Evidence), len(rq.Window), rq.Status, rq.Server)
 	}
@@ -67,12 +72,12 @@ func TestSuspicionIsCaptured(t *testing.T) {
 	if resp, err := rq.Get(context.Background(), rq.Window[0].URL, 0, 0); err != nil || !resp.OK() || len(resp.Body) == 0 {
 		t.Errorf("fetching a segment of the playlist: %v", err)
 	}
-	if capt.confirmed[ProbPictureBlack] != 0 {
+	if capt.confirmed[problemkind.PictureBlack()] != 0 {
 		t.Fatal("confirmed before it was reported")
 	}
 	// Reported a minute later: confirmed, from then on.
-	watch(f, 2*time.Minute, ProbPictureBlack)
-	if capt.confirmed[ProbPictureBlack] == 0 {
+	watch(f, 2*time.Minute, problemkind.PictureBlack())
+	if capt.confirmed[problemkind.PictureBlack()] == 0 {
 		t.Error("the problem was reported and the capture not confirmed")
 	}
 

@@ -1,13 +1,17 @@
 package api
 
 import (
-	"encoding/json"
 	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/node"
+	"github.com/hotid/hls-monitor/internal/types/vantagescope"
 )
 
 // One incident says what is wrong with one stream as seen from one place.
@@ -25,8 +29,8 @@ const scopeSlack = time.Minute
 const serverWideFrom = 2
 
 type scopeAgent struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
+	ID   id.Agent `json:"id"`
+	Name string   `json:"name"`
 	// Checked is false when the agent was not reporting on the stream at
 	// the time: it says nothing either way.
 	Checked bool `json:"checked"`
@@ -36,12 +40,11 @@ type scopeAgent struct {
 type incidentScope struct {
 	// Agents are the vantage points the stream is checked from.
 	Agents []scopeAgent `json:"agents"`
-	// Vantage sums them up: "all" saw it, "some", "only_this" one, or
-	// "single" when there is nothing to compare with.
-	Vantage string `json:"vantage"`
+	// Vantage sums them up.
+	Vantage vantagescope.Scope `json:"vantage" swaggertype:"string" enums:"all,some,only_this,single"`
 
 	// Server is the one that answered when the problem was found.
-	Server string `json:"server,omitempty"`
+	Server node.Node `json:"server,omitzero" swaggertype:"string"`
 	// SameServer are other streams that had a problem of the same kind at
 	// the same time and were answered by the same server; Elsewhere counts
 	// those answered by other servers.
@@ -52,16 +55,11 @@ type incidentScope struct {
 }
 
 // incidentServer returns the server an incident's details name.
-func incidentServer(details json.RawMessage) string {
-	var d struct {
-		Segment  string `json:"segment_server"`
-		Playlist string `json:"playlist_server"`
+func incidentServer(details detail.Set) node.Node {
+	if at := details.Server(detail.KeySegmentServer()); !at.IsZero() {
+		return at
 	}
-	_ = json.Unmarshal(details, &d)
-	if d.Segment != "" {
-		return d.Segment
-	}
-	return d.Playlist
+	return details.Server(detail.KeyPlaylistServer())
 }
 
 // incidentScope godoc
@@ -76,17 +74,17 @@ func incidentServer(details json.RawMessage) string {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/incidents/{id}/scope [get]
 func (s *Server) incidentScope(c *gin.Context) {
-	id, ok := pathID(c)
+	incidentID, ok := pathID[id.Incident](c)
 	if !ok {
 		return
 	}
 	ctx := c.Request.Context()
-	found, err := s.st.ListIncidents(ctx, store.IncidentFilter{ID: id, Limit: 1})
+	found, err := s.st.ListIncidents(ctx, store.IncidentFilter{ID: incidentID, Limit: 1})
 	if s.storeError(c, err) {
 		return
 	}
 	if len(found) == 0 {
-		fail(c, 404, "not_found", "not found")
+		fail(c, 404, errcode.NotFound(), "not found")
 		return
 	}
 	inc := found[0]
@@ -107,14 +105,14 @@ func (s *Server) incidentScope(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
-	names := map[int64]string{}
+	names := map[id.Agent]string{}
 	for _, a := range agents {
 		names[a.ID] = a.Name
 	}
 
 	out := incidentScope{Server: incidentServer(inc.Details), SameServer: []streamRef{}}
-	saw := map[int64]bool{inc.AgentID: true}
-	streams := map[int64]bool{}
+	saw := map[id.Agent]bool{inc.AgentID: true}
+	streams := map[id.Stream]bool{}
 	for _, o := range same {
 		switch {
 		case o.StreamID == inc.StreamID:
@@ -122,7 +120,7 @@ func (s *Server) incidentScope(c *gin.Context) {
 				saw[o.AgentID] = true
 			}
 		case streams[o.StreamID]:
-		case out.Server != "" && incidentServer(o.Details) == out.Server:
+		case !out.Server.IsZero() && incidentServer(o.Details) == out.Server:
 			streams[o.StreamID] = true
 			out.SameServer = append(out.SameServer, streamRef{ID: o.StreamID, Name: o.StreamName})
 		default:
@@ -150,13 +148,13 @@ func (s *Server) incidentScope(c *gin.Context) {
 	sort.Slice(out.Agents, func(i, j int) bool { return out.Agents[i].Name < out.Agents[j].Name })
 	switch {
 	case checked < 2:
-		out.Vantage = "single"
+		out.Vantage = vantagescope.Single()
 	case seen == checked:
-		out.Vantage = "all"
+		out.Vantage = vantagescope.All()
 	case seen == 1:
-		out.Vantage = "only_this"
+		out.Vantage = vantagescope.OnlyThis()
 	default:
-		out.Vantage = "some"
+		out.Vantage = vantagescope.Some()
 	}
 	c.JSON(200, out)
 }

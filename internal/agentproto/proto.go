@@ -3,7 +3,13 @@
 // then poll their configuration and post results.
 package agentproto
 
-import "github.com/hotid/hls-monitor/internal/probe"
+import (
+	"encoding/json"
+
+	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/overload"
+)
 
 // Header names an agent sends with authenticated requests.
 const (
@@ -28,7 +34,7 @@ type Status struct {
 	// QueueFailing tells that results cannot be written to the queue.
 	QueueFailing bool `json:"queue_failing,omitempty"`
 	// Overloaded names what the agent's host is short of, if anything.
-	Overloaded string `json:"overloaded,omitempty"`
+	Overloaded overload.Reason `json:"overloaded,omitzero" enums:"processor"`
 	// Streams is how many streams the agent checks, Behind how many of
 	// them it checks later than it should.
 	Streams int `json:"streams"`
@@ -192,16 +198,16 @@ type EnrollRequest struct {
 
 // EnrollResponse carries the key the agent must keep and present from now on.
 type EnrollResponse struct {
-	AgentID int64  `json:"agent_id"`
-	Name    string `json:"name"`
-	Key     string `json:"key"`
+	AgentID id.Agent `json:"agent_id"`
+	Name    string   `json:"name"`
+	Key     string   `json:"key"`
 }
 
 // Config is what an agent has to do.
 type Config struct {
-	AgentID int64  `json:"agent_id"`
-	Name    string `json:"name"`
-	Enabled bool   `json:"enabled"`
+	AgentID id.Agent `json:"agent_id"`
+	Name    string   `json:"name"`
+	Enabled bool     `json:"enabled"`
 	// Revision identifies this exact set of targets.
 	Revision string         `json:"revision"`
 	Targets  []probe.Target `json:"targets"`
@@ -219,12 +225,39 @@ type Config struct {
 
 // CaptureJob asks for a capture of one stream the agent checks.
 type CaptureJob struct {
-	StreamID int64 `json:"stream_id"`
+	StreamID id.Stream `json:"stream_id"`
 }
 
 // ResultsRequest delivers a batch of check results.
 type ResultsRequest struct {
+	// Results has nil in place of a result that could not be read.
 	Results []*probe.Result `json:"results"`
+	// Unreadable are the reasons the results that could not be read were
+	// not, for the log of the one who received them.
+	Unreadable []error `json:"-"`
+}
+
+// UnmarshalJSON reads a batch one result at a time. A result may tell of
+// something its reader has no name for — a kind of problem, a figure — when
+// the agent is of a later version than the server. Such a result cannot
+// be taken; the others of its batch are none the worse for it.
+func (r *ResultsRequest) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Results []json.RawMessage `json:"results"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	r.Results, r.Unreadable = make([]*probe.Result, len(raw.Results)), nil
+	for i, one := range raw.Results {
+		var res *probe.Result
+		if err := json.Unmarshal(one, &res); err != nil {
+			r.Unreadable = append(r.Unreadable, err)
+			continue
+		}
+		r.Results[i] = res
+	}
+	return nil
 }
 
 // ResultsResponse tells how the batch was handled. Results are processed in

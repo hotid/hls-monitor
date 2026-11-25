@@ -7,33 +7,38 @@ import (
 	"github.com/Eyevinn/hls-m3u8/m3u8"
 
 	"github.com/hotid/hls-monitor/internal/hlstest"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 // A playlist of sound that falls behind the picture is told, by the numbers
 // of the segments where the playlists are either side of a discontinuity.
 func TestSoundFallsBehindThePicture(t *testing.T) {
-	for _, level := range []Level{LevelPlaylist, LevelContainer} {
-		f := newFixture(t, hlstest.Options{SoundApart: true, Variants: 1}, "/master.m3u8", level)
-		if n, _ := watch(f, time.Minute, ProbVariantsOutOfSync); n != 0 {
-			t.Fatalf("level %v: a stream in step was told %d times", level, n)
+	for _, lv := range []level.Level{level.Playlist(), level.Container()} {
+		f := newFixture(t, hlstest.Options{SoundApart: true, Variants: 1}, "/master.m3u8", lv)
+		if n, _ := watch(f, time.Minute, problemkind.VariantsOutOfSync()); n != 0 {
+			t.Fatalf("level %v: a stream in step was told %d times", lv, n)
 		}
 		// The sound stands still for four segments of the picture.
 		for behind := uint64(1); behind <= 4; behind++ {
 			f.origin.SoundBehind(behind)
 			f.step(1)
 		}
-		n, cycles := watch(f, time.Minute, ProbVariantsOutOfSync)
+		n, cycles := watch(f, time.Minute, problemkind.VariantsOutOfSync())
 		if n < cycles-stepRuns {
-			t.Fatalf("level %v: sound 4 segments behind was told in %d of %d checks", level, n, cycles)
+			t.Fatalf("level %v: sound 4 segments behind was told in %d of %d checks", lv, n, cycles)
 		}
-		p := hasProblem(f.step(1), ProbVariantsOutOfSync)
-		if p == nil || p.Variant == VariantMaster {
-			t.Fatalf("level %v: the problem must be of the playlist that fell behind: %+v", level, p)
+		p := hasProblem(f.step(1), problemkind.VariantsOutOfSync())
+		if p == nil || p.Variant == variantkey.Master() {
+			t.Fatalf("level %v: the problem must be of the playlist that fell behind: %+v", lv, p)
 		}
 		f.origin.SoundBehind(0)
 		f.step(1)
-		if n, _ := watch(f, time.Minute, ProbVariantsOutOfSync); n != 0 {
-			t.Errorf("level %v: told %d times after the sound caught up", level, n)
+		if n, _ := watch(f, time.Minute, problemkind.VariantsOutOfSync()); n != 0 {
+			t.Errorf("level %v: told %d times after the sound caught up", lv, n)
 		}
 	}
 }
@@ -41,15 +46,15 @@ func TestSoundFallsBehindThePicture(t *testing.T) {
 // With the timestamps of both read on one timeline, they say how far apart
 // the playlists are.
 func TestSoundBehindByTimestamps(t *testing.T) {
-	f := newFixture(t, hlstest.Options{SoundApart: true, Variants: 1, NoDiscontinuity: true}, "/master.m3u8", LevelContainer)
+	f := newFixture(t, hlstest.Options{SoundApart: true, Variants: 1, NoDiscontinuity: true}, "/master.m3u8", level.Container())
 	f.c.th.VariantEdgeSpread = 0.5
-	if n, _ := watch(f, time.Minute, ProbVariantsOutOfSync); n != 0 {
+	if n, _ := watch(f, time.Minute, problemkind.VariantsOutOfSync()); n != 0 {
 		t.Fatalf("a stream in step was told %d times", n)
 	}
 	f.origin.SoundBehind(1)
 	f.step(1)
-	p := hasProblem(f.step(1), ProbVariantsOutOfSync)
-	if p == nil || p.Details["rendition_offset"] == nil {
+	p := hasProblem(f.step(1), problemkind.VariantsOutOfSync())
+	if p == nil || !p.Details.Has(detail.KeyRenditionOffset()) {
 		t.Fatalf("sound a segment behind with half a segment allowed: %+v", p)
 	}
 }
@@ -77,12 +82,12 @@ func TestAnchorPlace(t *testing.T) {
 // A playlist that dates its first segment alone still tells how far behind
 // real time its end is.
 func TestLatencyFromTheFirstDate(t *testing.T) {
-	f := newFixture(t, hlstest.Options{DateFirstOnly: true, NoDiscontinuity: true, Variants: 2}, "/master.m3u8", LevelPlaylist)
+	f := newFixture(t, hlstest.Options{DateFirstOnly: true, NoDiscontinuity: true, Variants: 2}, "/master.m3u8", level.Playlist())
 	f.step(1)
 	r := f.step(1)
 	n := 0
 	for _, m := range r.Metrics {
-		if m.Name == "hls_live_latency_seconds" {
+		if m.Name == metricname.LiveLatencySeconds() {
 			n++
 		}
 	}

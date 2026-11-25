@@ -18,6 +18,8 @@ import (
 	"github.com/hotid/hls-monitor/internal/ingest"
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/id"
 )
 
 const (
@@ -28,13 +30,13 @@ const (
 func (s *Server) requireAgent(c *gin.Context) {
 	key := bearer(c)
 	if key == "" {
-		fail(c, http.StatusUnauthorized, "unauthorized", "agent key required")
+		fail(c, http.StatusUnauthorized, errcode.Unauthorized(), "agent key required")
 		return
 	}
 	a, err := s.st.AgentByKey(c.Request.Context(), auth.HashToken(key))
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			fail(c, http.StatusUnauthorized, "unauthorized", "unknown agent key")
+			fail(c, http.StatusUnauthorized, errcode.Unauthorized(), "unknown agent key")
 			return
 		}
 		s.storeError(c, err)
@@ -71,7 +73,7 @@ func (s *Server) agentEnroll(c *gin.Context) {
 	now := s.now()
 	ipKey := "enroll:" + c.ClientIP()
 	if s.logins.blocked(now, ipKey) {
-		fail(c, http.StatusTooManyRequests, "too_many_attempts", "too many failed attempts, try again in a few minutes")
+		fail(c, http.StatusTooManyRequests, errcode.TooManyAttempts(), "too many failed attempts, try again in a few minutes")
 		return
 	}
 	key, keyHash, err := auth.NewToken()
@@ -81,7 +83,7 @@ func (s *Server) agentEnroll(c *gin.Context) {
 	a, err := s.st.EnrollAgent(c.Request.Context(), auth.HashToken(req.Token), keyHash, now)
 	if errors.Is(err, store.ErrNotFound) {
 		s.logins.fail(now, ipKey)
-		fail(c, http.StatusUnauthorized, "bad_token", "the enrollment token is wrong, already used or expired")
+		fail(c, http.StatusUnauthorized, errcode.BadToken(), "the enrollment token is wrong, already used or expired")
 		return
 	}
 	if s.storeError(c, err) {
@@ -161,7 +163,7 @@ func targetsRevision(targets []probe.Target) string {
 func (s *Server) agentResults(c *gin.Context) {
 	a := currentAgent(c)
 	if !a.Enabled {
-		fail(c, http.StatusForbidden, "agent_disabled", "the agent is disabled")
+		fail(c, http.StatusForbidden, errcode.AgentDisabled(), "the agent is disabled")
 		return
 	}
 	var body io.Reader = http.MaxBytesReader(c.Writer, c.Request.Body, agentResultsMaxLen)
@@ -180,9 +182,13 @@ func (s *Server) agentResults(c *gin.Context) {
 		return
 	}
 
+	for _, err := range req.Unreadable {
+		s.log.Warn("a result from an agent cannot be read and is refused: the agent may be of a later version", "agent", a.Name, "version", c.GetHeader(agentproto.HeaderVersion), "error", err)
+	}
+
 	ctx := c.Request.Context()
 	var resp agentproto.ResultsResponse
-	assigned := map[int64]bool{}
+	assigned := map[id.Stream]bool{}
 	for i, r := range req.Results {
 		if r == nil {
 			resp.Rejected++

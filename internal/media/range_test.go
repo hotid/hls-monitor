@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/hotid/hls-monitor/internal/types/videorange"
 )
 
 // The dynamic range is read from the header of the picture, in MPEG-TS and
@@ -41,15 +43,19 @@ func TestDynamicRange(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var got string
+		var r videorange.Range
 		if filepath.Ext(c.name) == ".mp4" {
 			init, err := ParseInit(data)
 			if err != nil || len(init.order) == 0 {
 				t.Fatalf("%s: %v", c.name, err)
 			}
-			got = init.tracks[init.order[0]].Range
+			r = init.tracks[init.order[0]].Range
 		} else if v := Analyze(data, nil).Video(); v != nil {
-			got = v.Range
+			r = v.Range
+		}
+		got := ""
+		if !r.IsZero() {
+			got = r.String()
 		}
 		if got != c.want {
 			t.Errorf("%s: range %q, want %q", c.name, got, c.want)

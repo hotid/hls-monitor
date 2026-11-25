@@ -14,6 +14,9 @@ import (
 	"github.com/hotid/hls-monitor/internal/agentproto"
 	"github.com/hotid/hls-monitor/internal/capture"
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/capturestate"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
 )
 
 // An agent captures the segments around what it finds the way the server
@@ -33,7 +36,9 @@ func (g *gated) Capture(rq probe.CaptureRequest) {
 	}
 }
 
-func (g *gated) Confirm(streamID int64, kinds []string) { g.store.Confirm(streamID, kinds) }
+func (g *gated) Confirm(streamID id.Stream, kinds []problemkind.Kind) {
+	g.store.Confirm(streamID, kinds)
+}
 
 // openCaptures opens the store of captures, with ffprobe and a decoder
 // to describe the segments where they are.
@@ -74,11 +79,11 @@ func init() { captureSendEvery.Store(int64(15 * time.Second)) }
 // captureLoop sends the captures worth keeping, one at a time.
 func (a *Agent) captureLoop(ctx context.Context) {
 	for sleepCtx(ctx, time.Duration(captureSendEvery.Load())) {
-		for _, c := range a.captures.store.List(0) {
+		for _, c := range a.captures.store.List(id.Stream{}) {
 			if ctx.Err() != nil {
 				return
 			}
-			if !c.Done || (c.State != capture.StateKept && c.State != capture.StateFound) {
+			if !c.Done || (c.State != capturestate.Kept() && c.State != capturestate.Found()) {
 				continue
 			}
 			switch status, err := a.sendCapture(ctx, c.ID); {

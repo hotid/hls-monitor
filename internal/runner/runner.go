@@ -16,6 +16,9 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/overload"
 )
 
 // Sink receives the result of every check cycle. It is called from the
@@ -31,7 +34,7 @@ type Runner struct {
 	insecure *httpx.Client
 
 	// overloaded is given to every checker; see SetOverloaded.
-	overloaded func(since time.Time) string
+	overloaded func(since time.Time) overload.Reason
 	// looker and lookEvery are given to every checker; see SetLooker.
 	looker    probe.Looker
 	lookEvery time.Duration
@@ -40,7 +43,7 @@ type Runner struct {
 	capturer probe.Capturer
 
 	mu   sync.Mutex
-	jobs map[int64]*job
+	jobs map[id.Stream]*job
 	wg   sync.WaitGroup
 
 	cycles, unreliable, short, crashed atomic.Int64
@@ -112,7 +115,7 @@ func (r *Runner) Stats() Stats {
 
 // SetOverloaded gives the runner the means to learn that the process
 // could not keep up (see probe.Checker.Overloaded). Call it before Sync.
-func (r *Runner) SetOverloaded(f func(since time.Time) string) { r.overloaded = f }
+func (r *Runner) SetOverloaded(f func(since time.Time) overload.Reason) { r.overloaded = f }
 
 // SetLooker gives the checkers the means to look at the picture of a
 // stream and listen to its sound, once in every period. Call it before Sync.
@@ -125,7 +128,7 @@ func (r *Runner) SetCapturer(c probe.Capturer) { r.capturer = c }
 // Capture has the segments of a stream captured at its next cycle, which
 // is made now. It tells whether the stream is one the runner checks and
 // captures are made at all.
-func (r *Runner) Capture(streamID int64) bool {
+func (r *Runner) Capture(streamID id.Stream) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	j, ok := r.jobs[streamID]
@@ -171,7 +174,7 @@ func New(sink Sink, userAgent string, log *slog.Logger) *Runner {
 		log:      log,
 		secure:   httpx.New(httpx.Options{UserAgent: userAgent}),
 		insecure: httpx.New(httpx.Options{UserAgent: userAgent, InsecureSkipVerify: true}),
-		jobs:     map[int64]*job{},
+		jobs:     map[id.Stream]*job{},
 	}
 }
 
@@ -180,7 +183,7 @@ func New(sink Sink, userAgent string, log *slog.Logger) *Runner {
 func (r *Runner) Sync(targets []probe.Target) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	want := map[int64]bool{}
+	want := map[id.Stream]bool{}
 	started := 0
 	for _, t := range targets {
 		want[t.ID] = true
@@ -254,14 +257,14 @@ func (r *Runner) loop(ctx context.Context, j *job, c *probe.Checker, startDelay 
 			continue
 		}
 		r.cycles.Add(1)
-		if res.Overloaded != "" {
+		if !res.Overloaded.IsZero() {
 			r.unreliable.Add(1)
 		}
 		// How late the cycle started for reasons of the runner's own: not
 		// counting what the check before it took. A stream that does not
 		// answer takes its whole timeout at every check, and that is told
 		// as its problem, not as a monitor that cannot keep up.
-		res.Metrics = append(res.Metrics, probe.Metric{Name: "hls_check_lag_seconds", Value: max(lag-late, 0).Seconds()})
+		res.Metrics = append(res.Metrics, probe.Metric{Name: metricname.CheckLagSeconds(), Value: max(lag-late, 0).Seconds()})
 		r.sink(ctx, res)
 
 		// The interval counts from the start of a cycle; a cycle that took
@@ -317,10 +320,10 @@ func sleep(ctx context.Context, d time.Duration, trigger <-chan struct{}) bool {
 
 // CheckNow makes the stream's next cycle start immediately. It reports
 // whether the stream is being checked by this runner.
-func (r *Runner) CheckNow(id int64) bool {
+func (r *Runner) CheckNow(streamID id.Stream) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	j, ok := r.jobs[id]
+	j, ok := r.jobs[streamID]
 	if !ok {
 		return false
 	}

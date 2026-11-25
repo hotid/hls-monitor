@@ -14,6 +14,10 @@ import (
 	"github.com/hotid/hls-monitor/internal/agentproto"
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/agentkind"
+	"github.com/hotid/hls-monitor/internal/types/healthstate"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/readiness"
 )
 
 // agentReport is what a remote agent last told about itself.
@@ -24,7 +28,7 @@ type agentReport struct {
 
 // noteAgentStatus keeps the status an agent sent with a request. It is not
 // stored: the agent repeats it every few seconds.
-func (s *Server) noteAgentStatus(id int64, header string) {
+func (s *Server) noteAgentStatus(agentID id.Agent, header string) {
 	if header == "" || len(header) > 4096 {
 		return
 	}
@@ -33,7 +37,7 @@ func (s *Server) noteAgentStatus(id int64, header string) {
 		return
 	}
 	s.reportsMu.Lock()
-	s.reports[id] = agentReport{status: st, at: s.now()}
+	s.reports[agentID] = agentReport{status: st, at: s.now()}
 	s.reportsMu.Unlock()
 }
 
@@ -41,7 +45,7 @@ func (s *Server) noteAgentStatus(id int64, header string) {
 // checks for the local one, what it reported for a remote one, nil when
 // it has reported nothing lately.
 func (s *Server) agentStatus(a *store.Agent) *agentproto.Status {
-	if a.Kind == store.AgentLocal {
+	if a.Kind == agentkind.Local() {
 		load := s.cfg.Load.Status()
 		st := &agentproto.Status{CPUCores: load.CPUCores, CPULimit: load.CPULimit, MemoryBytes: load.MemoryBytes}
 		if load.Overloaded {
@@ -63,14 +67,22 @@ func (s *Server) agentStatus(a *store.Agent) *agentproto.Status {
 	return &st
 }
 
-// readiness is the answer of /readyz.
-type readiness struct {
-	// Status is "ok", "degraded" when the server works but something
-	// needs attention, "unavailable" when it cannot do its job.
-	Status string `json:"status"`
-	// Checks: database, time_series ("ok", "down", "disabled"), load
-	// ("ok" or what the process is short of), checks ("ok", "behind").
-	Checks map[string]string `json:"checks"`
+// readyAnswer is the answer of /readyz.
+type readyAnswer struct {
+	Status readiness.Status `json:"status" swaggertype:"string" enums:"ok,degraded,unavailable"`
+	Checks readinessChecks  `json:"checks"`
+}
+
+// readinessChecks is how each thing the server depends on is doing.
+type readinessChecks struct {
+	// Database is ok or down.
+	Database healthstate.State `json:"database" swaggertype:"string"`
+	// TimeSeries is ok, down, or disabled when none is configured.
+	TimeSeries healthstate.State `json:"time_series" swaggertype:"string"`
+	// Load is ok or what the process is short of.
+	Load healthstate.State `json:"load" swaggertype:"string"`
+	// Checks is ok, or behind when checks start later than they should.
+	Checks healthstate.State `json:"checks" swaggertype:"string"`
 }
 
 // readyz godoc
@@ -79,37 +91,38 @@ type readiness struct {
 //	@Description	Answers 503 when the database does not respond. An overloaded server, checks that fall behind and an unreachable time series storage are reported in the body with status "degraded" and code 200: the server still works.
 //	@Tags			system
 //	@Produce		json
-//	@Success		200	{object}	readiness
-//	@Failure		503	{object}	readiness
+//	@Success		200	{object}	readyAnswer
+//	@Failure		503	{object}	readyAnswer
 //	@Router			/readyz [get]
 func (s *Server) readyz(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
 	defer cancel()
-	out := readiness{Status: "ok", Checks: map[string]string{"database": "ok", "time_series": "ok", "load": "ok", "checks": "ok"}}
+	fine := healthstate.OK()
+	out := readyAnswer{Status: readiness.OK(), Checks: readinessChecks{Database: fine, TimeSeries: fine, Load: fine, Checks: fine}}
 	code := http.StatusOK
 	if err := s.st.Ping(ctx); err != nil {
-		out.Checks["database"] = "down"
-		out.Status, code = "unavailable", http.StatusServiceUnavailable
+		out.Checks.Database = healthstate.Down()
+		out.Status, code = readiness.Unavailable(), http.StatusServiceUnavailable
 	}
 	switch {
 	case !s.mx.Enabled():
-		out.Checks["time_series"] = "disabled"
+		out.Checks.TimeSeries = healthstate.Disabled()
 	case !s.mx.Healthy(ctx):
-		out.Checks["time_series"] = "down"
+		out.Checks.TimeSeries = healthstate.Down()
 	}
 	if load := s.cfg.Load.Status(); load.Overloaded {
-		out.Checks["load"] = load.Reason
+		out.Checks.Load = healthstate.Short(load.Reason)
 	}
 	if s.local != nil {
 		if rs := s.local.Stats(); rs.Behind > 0 {
-			out.Checks["checks"] = "behind"
+			out.Checks.Checks = healthstate.Behind()
 		}
 	}
 	if code == http.StatusOK {
-		for name, v := range out.Checks {
-			if v != "ok" && !(name == "time_series" && v == "disabled") {
-				out.Status = "degraded"
-			}
+		// A time series storage that is not configured is not missed.
+		ch := out.Checks
+		if ch.Database != fine || ch.TimeSeries == healthstate.Down() || ch.Load != fine || ch.Checks != fine {
+			out.Status = readiness.Degraded()
 		}
 	}
 	c.JSON(code, out)
@@ -237,7 +250,7 @@ func (s *Server) storageMetrics(ctx context.Context, w *promText) {
 // agentMetrics tells how every agent that is expected to be in contact fares.
 func (s *Server) agentMetrics(w *promText, agents []*store.Agent) {
 	metric := w.metric
-	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
+	sort.Slice(agents, func(i, j int) bool { return agents[i].ID.Compare(agents[j].ID) < 0 })
 	now := s.now()
 	type row struct {
 		name   string
@@ -248,7 +261,7 @@ func (s *Server) agentMetrics(w *promText, agents []*store.Agent) {
 	for _, a := range agents {
 		// An agent that is switched off, or was never connected, is not
 		// expected to be in contact: nothing to watch yet.
-		if !a.Enabled || (a.Kind != store.AgentLocal && !a.Enrolled) {
+		if !a.Enabled || (a.Kind != agentkind.Local() && !a.Enrolled) {
 			continue
 		}
 		r := row{name: a.Name, online: s.agentOnline(a, now)}
@@ -277,7 +290,7 @@ func (s *Server) agentMetrics(w *promText, agents []*store.Agent) {
 		}
 		metric("hlsmon_agent_online", "gauge", h, flag(r.online), "agent", r.name)
 	}
-	series("hlsmon_agent_overloaded", "gauge", "1 while the agent does not get the processor time it needs.", func(st *agentproto.Status) float64 { return flag(st.Overloaded != "") })
+	series("hlsmon_agent_overloaded", "gauge", "1 while the agent does not get the processor time it needs.", func(st *agentproto.Status) float64 { return flag(!st.Overloaded.IsZero()) })
 	series("hlsmon_agent_streams", "gauge", "Streams the agent checks.", func(st *agentproto.Status) float64 { return float64(st.Streams) })
 	series("hlsmon_agent_streams_behind", "gauge", "Streams the agent checks later than it should.", func(st *agentproto.Status) float64 { return float64(st.Behind) })
 	series("hlsmon_agent_queue_results", "gauge", "Results the agent has not delivered yet.", func(st *agentproto.Status) float64 { return float64(st.QueueResults) })

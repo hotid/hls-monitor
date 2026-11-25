@@ -7,11 +7,16 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/hlstest"
 	"github.com/hotid/hls-monitor/internal/media"
+	"github.com/hotid/hls-monitor/internal/types/codec"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/trackkind"
 )
 
 func TestDeclaredAgainstTheSegments(t *testing.T) {
-	high := &media.Track{Kind: media.KindVideo, Codec: "h264", Profile: "High", Level: "4.0", Width: 720, Height: 576, FPS: 25}
-	aac := &media.Track{Kind: media.KindAudio, Codec: "aac"}
+	high := &media.Track{Kind: trackkind.Video(), Codec: codec.H264(), Profile: "High", Level: "4.0", Width: 720, Height: 576, FPS: 25}
+	aac := &media.Track{Kind: trackkind.Audio(), Codec: codec.AAC()}
 	for name, c := range map[string]struct {
 		v       Variant
 		vt, at  *media.Track
@@ -44,40 +49,40 @@ func TestDeclaredAgainstTheSegments(t *testing.T) {
 
 // Subtitles are read as the WebVTT they are served as.
 func TestSubtitlesAreRead(t *testing.T) {
-	for _, level := range []Level{LevelHeader, LevelContainer} {
-		f := newFixture(t, hlstest.Options{Subtitles: true, Variants: 1}, "/master.m3u8", level)
+	for _, lv := range []level.Level{level.Header(), level.Container()} {
+		f := newFixture(t, hlstest.Options{Subtitles: true, Variants: 1}, "/master.m3u8", lv)
 		r := f.step(1)
 		for range 3 {
 			r = f.step(1)
 		}
-		if p := hasProblem(r, ProbSubtitlesInvalid); p != nil {
-			t.Fatalf("level %v: good subtitles were told: %+v", level, p)
+		if p := hasProblem(r, problemkind.SubtitlesInvalid()); p != nil {
+			t.Fatalf("level %v: good subtitles were told: %+v", lv, p)
 		}
 		cues := -1.0
 		for _, m := range r.Metrics {
-			if m.Name == "hls_subtitle_cues" {
+			if m.Name == metricname.SubtitleCues() {
 				cues = m.Value
 			}
 		}
 		if cues != 1 {
-			t.Errorf("level %v: %v cues counted in the new segment, want 1", level, cues)
+			t.Errorf("level %v: %v cues counted in the new segment, want 1", lv, cues)
 		}
 		// Empty subtitles are told by a count of none over the last hour.
 		f.origin.SubtitlesBody([]byte("WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:0,LOCAL:00:00:00.000\n\n"))
 		hour := -1.0
 		for end := f.clock.Add(70 * time.Minute); f.clock.Before(end); {
 			for _, m := range f.step(1).Metrics {
-				if m.Name == "hls_subtitle_cues_hour" {
+				if m.Name == metricname.SubtitleCuesHour() {
 					hour = m.Value
 				}
 			}
 		}
 		if hour != 0 {
-			t.Errorf("level %v: an hour of empty subtitles counted %v cues", level, hour)
+			t.Errorf("level %v: an hour of empty subtitles counted %v cues", lv, hour)
 		}
 		f.origin.SubtitlesBody([]byte("<html>not found</html>"))
-		if p := hasProblem(f.step(1), ProbSubtitlesInvalid); p == nil {
-			t.Errorf("level %v: a page served for subtitles was not told", level)
+		if p := hasProblem(f.step(1), problemkind.SubtitlesInvalid()); p == nil {
+			t.Errorf("level %v: a page served for subtitles was not told", lv)
 		}
 	}
 }

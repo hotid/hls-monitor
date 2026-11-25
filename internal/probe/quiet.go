@@ -5,6 +5,11 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/media"
+	"github.com/hotid/hls-monitor/internal/types/codecfamily"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
 )
 
 // A picture that does not change costs an encoder next to nothing: the
@@ -33,16 +38,16 @@ const (
 
 // noteSizes looks at how large the coded frames of a segment are.
 func (c *Checker) noteSizes(v Variant, st *variantState, info *media.Info, at time.Time) {
-	if info == nil || c.t.Picture == PictureOff {
+	if info == nil || c.t.Picture == picturemode.Off() {
 		return
 	}
 	var bits, bytes float64
 	still, mute := false, false
-	if video := info.Video(); video != nil && c.t.Picture == PictureCheck && video.PlainFrames >= stillFrames && video.Width > 0 && video.Height > 0 {
+	if video := info.Video(); video != nil && c.t.Picture == picturemode.Check() && video.PlainFrames >= stillFrames && video.Width > 0 && video.Height > 0 {
 		bits = float64(video.PlainBytes) * 8 / float64(video.PlainFrames) / float64(video.Width*video.Height)
 		still = bits < stillBits
 	}
-	if audio := info.Audio(); audio != nil && codecFamily(audio.Codec) == "aac" && audio.Frames >= stillFrames {
+	if audio := info.Audio(); audio != nil && audio.Codec.Family() == codecfamily.AAC() && audio.Frames >= stillFrames {
 		bytes = float64(audio.Bytes) / float64(audio.Frames)
 		mute = bytes < muteBytes
 	}
@@ -52,9 +57,9 @@ func (c *Checker) noteSizes(v Variant, st *variantState, info *media.Info, at ti
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.signs == nil {
-		c.signs = map[string]standingProblem{}
+		c.signs = map[standKey]standingProblem{}
 	}
-	stand := func(key string, r run, kind, message string, details ...any) {
+	stand := func(key standKey, r run, kind problemkind.Kind, message string, details ...detail.Field) {
 		if r.n < loopSegments || at.Sub(r.since) < loopSpan {
 			delete(c.signs, key)
 			return
@@ -64,9 +69,9 @@ func (c *Checker) noteSizes(v Variant, st *variantState, info *media.Info, at ti
 		if r.n == loopSegments && c.PictureEvery > 0 {
 			c.looks.at = at.Add(-c.PictureEvery)
 		}
-		c.signs[key] = standingProblem{at: at, kind: kind, severity: SevWarn, variant: v.Key, message: message,
-			details: append(details, "judged_by", "the size of coded frames", "segments_in_a_row", r.n, "since", r.since.UTC().Format(time.RFC3339))}
+		c.signs[key] = standingProblem{at: at, kind: kind, severity: severity.Warn(), variant: v.Key, message: message,
+			details: append(details, detail.JudgedBy("the size of coded frames"), detail.SegmentsInARow(r.n), detail.Since(r.since))}
 	}
-	stand(v.Key, st.still, ProbPictureFrozen, "the picture does not seem to change", "bits_per_pixel", math.Round(bits*1e5)/1e5)
-	stand(v.Key+soundKey, st.mute, ProbAudioSilent, "the sound seems to be silence", "audio_frame_bytes", math.Round(bytes))
+	stand(standKey{variant: v.Key}, st.still, problemkind.PictureFrozen(), "the picture does not seem to change", detail.BitsPerPixel(math.Round(bits*1e5)/1e5))
+	stand(standKey{variant: v.Key, sound: true}, st.mute, problemkind.AudioSilent(), "the sound seems to be silence", detail.AudioFrameBytes(math.Round(bytes)))
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +11,11 @@ import (
 	"github.com/hotid/hls-monitor/internal/agentproto"
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/diagnosestep"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
 )
 
 const (
@@ -26,14 +30,14 @@ const (
 
 // diagnoseEvent is one line of the diagnosis stream.
 type diagnoseEvent struct {
-	// Type is "start", "cycle" or "end".
-	Type string    `json:"type"`
-	Time time.Time `json:"time"`
+	// Type is what the line tells.
+	Type diagnosestep.Step `json:"type" swaggertype:"string" enums:"start,cycle,end"`
+	Time time.Time         `json:"time"`
 
 	// Start: what is being checked and for how long.
-	URL     string  `json:"url,omitempty"`
-	Level   string  `json:"level,omitempty"`
-	Seconds float64 `json:"seconds,omitempty"`
+	URL     string      `json:"url,omitempty"`
+	Level   level.Level `json:"level,omitzero" swaggertype:"string" enums:"playlist,header,segments,container"`
+	Seconds float64     `json:"seconds,omitempty"`
 
 	// Cycle: its number from one, how long it took and everything it found.
 	N      int           `json:"n,omitempty"`
@@ -62,15 +66,15 @@ type diagnoseEvent struct {
 //	@Failure		429		{object}	apiError
 //	@Router			/api/v1/streams/{id}/diagnose [get]
 func (s *Server) diagnose(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
-	st, err := s.st.GetStream(c.Request.Context(), id)
+	st, err := s.st.GetStream(c.Request.Context(), streamID)
 	if s.storeError(c, err) {
 		return
 	}
-	level, length, agentID, ok := diagnoseAsked(c, st)
+	lv, length, agentID, ok := diagnoseAsked(c, st)
 	if !ok || !s.canDiagnoseFrom(c, agentID) {
 		return
 	}
@@ -78,19 +82,20 @@ func (s *Server) diagnose(c *gin.Context) {
 	case s.diagnoses <- struct{}{}:
 		defer func() { <-s.diagnoses }()
 	default:
-		fail(c, http.StatusTooManyRequests, "diagnose_busy", "too many diagnoses are running, try again later")
+		fail(c, http.StatusTooManyRequests, errcode.DiagnoseBusy(), "too many diagnoses are running, try again later")
 		return
 	}
 
 	target := probe.Target{
 		ID:          st.ID,
 		URL:         st.URL,
-		Level:       level,
+		Level:       lv,
 		IntervalSec: 1,
 		TimeoutSec:  st.TimeoutSec,
 		MaxSegments: max(st.MaxSegments, diagnoseSegments),
 		Headers:     st.Headers,
 		Insecure:    st.Insecure,
+		Picture:     picturemode.Check(),
 	}
 
 	c.Header("Content-Type", "application/x-ndjson")
@@ -105,38 +110,39 @@ func (s *Server) diagnose(c *gin.Context) {
 		c.Writer.Flush()
 		return true
 	}
-	s.log.Info("diagnosis started", "stream", st.ID, "agent", agentID, "level", level, "seconds", length.Seconds(), "ip", c.ClientIP())
-	if !send(diagnoseEvent{Type: "start", Time: s.now(), URL: st.URL, Level: string(level), Seconds: length.Seconds()}) {
+	s.log.Info("diagnosis started", "stream", st.ID, "agent", agentID, "level", lv, "seconds", length.Seconds(), "ip", c.ClientIP())
+	if !send(diagnoseEvent{Type: diagnosestep.Start(), Time: s.now(), URL: st.URL, Level: lv, Seconds: length.Seconds()}) {
 		return
 	}
-	if agentID != store.LocalAgentID {
+	if agentID != store.LocalAgentID() {
 		// The agent checks and tells; a little time over the length is
 		// left for its last word to arrive.
 		actx, stop := context.WithTimeout(c.Request.Context(), length+20*time.Second)
 		defer stop()
 		reason := s.diagnoseThroughAgent(actx, agentID, agentproto.DiagnoseJob{Target: target, Seconds: int(length.Seconds())}, func(cy agentproto.DiagnoseCycle) bool {
-			return send(diagnoseEvent{Type: "cycle", Time: cy.Result.Time, N: cy.N, TookMs: cy.TookMs, Result: cy.Result})
+			return send(diagnoseEvent{Type: diagnosestep.Cycle(), Time: cy.Result.Time, N: cy.N, TookMs: cy.TookMs, Result: cy.Result})
 		})
 		if reason != "" && c.Request.Context().Err() == nil {
-			send(diagnoseEvent{Type: "end", Time: s.now(), Reason: reason})
+			send(diagnoseEvent{Type: diagnosestep.End(), Time: s.now(), Reason: reason})
 		}
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), length)
 	defer cancel()
 	if s.diagnoseHere(ctx, target, send) && c.Request.Context().Err() == nil {
-		send(diagnoseEvent{Type: "end", Time: s.now(), Reason: "time"})
+		send(diagnoseEvent{Type: diagnosestep.End(), Time: s.now(), Reason: "time"})
 	}
 }
 
 // diagnoseAsked reads what a diagnosis is asked for: at what level, for how
 // long and from where. It answers the request itself when that cannot be.
-func diagnoseAsked(c *gin.Context, st *store.Stream) (level probe.Level, length time.Duration, agentID int64, ok bool) {
-	level = probe.Level(st.Level)
+func diagnoseAsked(c *gin.Context, st *store.Stream) (lv level.Level, length time.Duration, agentID id.Agent, ok bool) {
+	lv = st.Level
 	if q := c.Query("level"); q != "" {
-		if level = probe.Level(q); !probe.ValidLevel(level) {
+		var err error
+		if lv, err = level.Parse(q); err != nil {
 			badRequest(c, "level must be playlist, header, segments or container")
-			return level, 0, 0, false
+			return lv, 0, id.Agent{}, false
 		}
 	}
 	length = time.Duration(queryInt(c, "seconds")) * time.Second
@@ -145,24 +151,22 @@ func diagnoseAsked(c *gin.Context, st *store.Stream) (level probe.Level, length 
 	}
 	length = min(length, 10*time.Minute)
 	// Where from: the server itself, or an agent that takes such work.
-	agentID = store.LocalAgentID
+	agentID = store.LocalAgentID()
 	if q := c.Query("agent"); q != "" {
-		n, err := strconv.ParseInt(q, 10, 64)
-		if err != nil || n <= 0 {
+		if agentID.Parse(q) != nil || agentID.Int64() <= 0 {
 			badRequest(c, "agent must be the ID of an agent")
-			return level, 0, 0, false
+			return lv, 0, id.Agent{}, false
 		}
-		agentID = n
 	}
-	return level, length, agentID, true
+	return lv, length, agentID, true
 }
 
 // canDiagnoseFrom tells whether a diagnosis can be run from a vantage
 // point, and answers the request when it cannot.
-func (s *Server) canDiagnoseFrom(c *gin.Context, agentID int64) bool {
-	if agentID == store.LocalAgentID {
+func (s *Server) canDiagnoseFrom(c *gin.Context, agentID id.Agent) bool {
+	if agentID == store.LocalAgentID() {
 		if s.local == nil {
-			fail(c, http.StatusConflict, "not_local", "this server does not run checks itself")
+			fail(c, http.StatusConflict, errcode.NotLocal(), "this server does not run checks itself")
 			return false
 		}
 		return true
@@ -175,7 +179,7 @@ func (s *Server) canDiagnoseFrom(c *gin.Context, agentID int64) bool {
 	rep, ok := s.reports[agentID]
 	s.reportsMu.Unlock()
 	if !a.Enabled || !ok || s.now().Sub(rep.at) > s.cfg.AgentOfflineAfter || !rep.status.Diagnoses {
-		fail(c, http.StatusConflict, "agent_unavailable", "the agent is out of contact, disabled or too old to run a diagnosis")
+		fail(c, http.StatusConflict, errcode.AgentUnavailable(), "the agent is out of contact, disabled or too old to run a diagnosis")
 		return false
 	}
 	return true
@@ -192,7 +196,7 @@ func (s *Server) diagnoseHere(ctx context.Context, target probe.Target, send fun
 		if ctx.Err() != nil {
 			return true // a cancelled cycle reports failures that are not real
 		}
-		if !send(diagnoseEvent{Type: "cycle", Time: res.Time, N: n, TookMs: float64(time.Since(start).Microseconds()) / 1000, Result: res}) {
+		if !send(diagnoseEvent{Type: diagnosestep.Cycle(), Time: res.Time, N: n, TookMs: float64(time.Since(start).Microseconds()) / 1000, Result: res}) {
 			return false
 		}
 		t := time.NewTimer(time.Until(start.Add(checker.Interval())))

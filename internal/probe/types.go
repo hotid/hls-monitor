@@ -4,37 +4,31 @@
 package probe
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/media"
+	"github.com/hotid/hls-monitor/internal/types/cachestatus"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/node"
+	"github.com/hotid/hls-monitor/internal/types/overload"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/status"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
 )
-
-// Level is how deep a stream is checked.
-type Level string
-
-const (
-	LevelPlaylist Level = "playlist" // playlists only
-	// LevelHeader requests only the beginning of every new segment: it
-	// proves the segment exists, learns its size and which server has it,
-	// and reads what the first packets tell (tracks, parameters, the first
-	// timestamp, whether it starts with a keyframe) at a small fraction of
-	// the traffic.
-	LevelHeader    Level = "header"
-	LevelSegments  Level = "segments"  // plus segment downloads
-	LevelContainer Level = "container" // plus container analysis
-)
-
-// ValidLevel reports whether l is a known level.
-func ValidLevel(l Level) bool {
-	return l == LevelPlaylist || l == LevelHeader || l == LevelSegments || l == LevelContainer
-}
 
 // Target is the configuration of one monitored stream.
 type Target struct {
-	ID    int64  `json:"id"`
-	URL   string `json:"url"`
-	Level Level  `json:"level"`
+	ID    id.Stream   `json:"id"`
+	URL   string      `json:"url"`
+	Level level.Level `json:"level" enums:"playlist,header,segments,container"`
 	// IntervalSec is the pause between cycles; zero derives it from the
 	// playlist target duration.
 	IntervalSec float64 `json:"interval_sec"`
@@ -44,154 +38,58 @@ type Target struct {
 	MaxSegments int               `json:"max_segments"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Insecure    bool              `json:"insecure,omitempty"`
-	// Picture says what the picture and the sound are checked for: all of
-	// it by default, PictureStatic when a picture that does not change is
-	// what the stream shows, PictureOff not to look at all.
-	Picture string `json:"picture,omitempty"`
+	// Picture says what the picture and the sound are checked for.
+	Picture picturemode.Mode `json:"picture,omitzero"`
 	// Revision changes whenever the configuration changes.
 	Revision int64 `json:"revision"`
 }
 
-// Pseudo variant keys. Real variants are keyed by their URI in the master playlist.
-const (
-	VariantMaster = "master" // the multivariant playlist itself
-	VariantMedia  = "media"  // a stream whose URL is a media playlist
-)
-
-// Variant kinds.
-const (
-	KindMaster    = "master"
-	KindMedia     = "media"
-	KindVideo     = "video"
-	KindAudio     = "audio"
-	KindSubtitles = "subtitles"
-)
+// UnmarshalJSON reads a target as it travels between the server and an
+// agent. One that does not say what the picture is checked for means
+// everything: that is how it was written before there was a choice.
+func (t *Target) UnmarshalJSON(b []byte) error {
+	type wire Target
+	w := wire{Picture: picturemode.Check()}
+	if err := json.Unmarshal(b, &w); err != nil {
+		return err
+	}
+	*t = Target(w)
+	return nil
+}
 
 // Variant describes one playlist of the stream.
 type Variant struct {
-	Key          string  `json:"key"`
-	Kind         string  `json:"kind"`
-	URI          string  `json:"uri,omitempty"`
-	Name         string  `json:"name,omitempty"`
-	Bandwidth    int64   `json:"bandwidth,omitempty"`
-	AvgBandwidth int64   `json:"avg_bandwidth,omitempty"`
-	Resolution   string  `json:"resolution,omitempty"`
-	Codecs       string  `json:"codecs,omitempty"`
-	FrameRate    float64 `json:"frame_rate,omitempty"`
-	Group        string  `json:"group,omitempty"`
-	Language     string  `json:"language,omitempty"`
+	Key          variantkey.Key   `json:"key"`
+	Kind         variantkind.Kind `json:"kind" enums:"master,media,video,audio,subtitles"`
+	URI          string           `json:"uri,omitempty"`
+	Name         string           `json:"name,omitempty"`
+	Bandwidth    int64            `json:"bandwidth,omitempty"`
+	AvgBandwidth int64            `json:"avg_bandwidth,omitempty"`
+	Resolution   string           `json:"resolution,omitempty"`
+	Codecs       string           `json:"codecs,omitempty"`
+	FrameRate    float64          `json:"frame_rate,omitempty"`
+	Group        string           `json:"group,omitempty"`
+	Language     string           `json:"language,omitempty"`
 }
-
-// Severities of a problem. Info marks something worth recording that is not
-// wrong in itself, such as the stream being served by a different server;
-// it does not affect the status.
-const (
-	SevInfo = "info"
-	SevWarn = "warn"
-	SevCrit = "crit"
-)
-
-// Statuses of a check cycle, ordered by badness.
-const (
-	StatusOK   = "ok"
-	StatusWarn = "warn"
-	StatusFail = "fail"
-)
-
-// Problem kinds.
-const (
-	ProbPlaylistUnreachable = "playlist_unreachable"
-	ProbPlaylistHTTP        = "playlist_http_error"
-	ProbPlaylistParse       = "playlist_parse_error"
-	ProbPlaylistSyntax      = "playlist_syntax"
-	ProbPlaylistStale       = "playlist_stale"
-	ProbPlaylistEmpty       = "playlist_empty"
-	ProbSeqRegression       = "sequence_regression"
-	ProbSeqJump             = "sequence_jump"
-	ProbSeqRenumbered       = "sequence_renumbered"
-	ProbSegmentChanged      = "segment_changed"
-	ProbTargetDuration      = "target_duration_exceeded"
-	ProbTargetDurChanged    = "target_duration_changed"
-	ProbPDTDiscontinuity    = "pdt_discontinuity"
-	ProbStreamEnded         = "stream_ended"
-	ProbVariantsChanged     = "variants_changed"
-	ProbVariantsOutOfSync   = "variants_out_of_sync"
-	ProbKeyUnavailable      = "key_unavailable"
-	ProbInitUnavailable     = "init_unavailable"
-	ProbCertExpiring        = "cert_expiring"
-	ProbSegmentUnreachable  = "segment_unreachable"
-	ProbSegmentHTTP         = "segment_http_error"
-	ProbSegmentTruncated    = "segment_truncated"
-	ProbSegmentSlow         = "segment_slow"
-	ProbPlaybackStall       = "playback_stall"
-	ProbBitrateExceeds      = "bitrate_exceeds_declared"
-	ProbMediaParse          = "media_parse_error"
-	ProbTSSync              = "ts_sync_error"
-	ProbTSContinuity        = "ts_continuity_error"
-	ProbTSTransport         = "ts_transport_error"
-	ProbTSNoTables          = "ts_no_pat_pmt"
-	ProbNoKeyframeStart     = "no_keyframe_start"
-	ProbDurationMismatch    = "duration_mismatch"
-	ProbPTSDiscontinuity    = "pts_discontinuity"
-	ProbAVDesync            = "av_desync"
-	ProbMediaParamsChanged  = "media_params_changed"
-	ProbPlaylistSource      = "playlist_source_changed"
-	ProbSegmentSource       = "segment_source_changed"
-	// Found by looking at the picture and listening to the sound.
-	ProbPictureBlack  = "picture_black"
-	ProbPictureFrozen = "picture_frozen"
-	ProbAudioSilent   = "audio_silent"
-	ProbPictureSlate  = "picture_slate"
-	ProbPictureLoop   = "picture_loop"
-	// ProbAudioLoop: the same sound goes round, the picture does not.
-	ProbAudioLoop = "audio_loop"
-	// ProbAudioChannelSilent: one of the two channels of the sound is
-	// silent and the other is not. ProbAudioQuiet: the sound is there and
-	// far too quiet, for hours. ProbAudioUndecodable: the container has
-	// sound in it and a decoder makes nothing of it.
-	ProbAudioChannelSilent = "audio_channel_silent"
-	ProbAudioQuiet         = "audio_quiet"
-	ProbAudioUndecodable   = "audio_undecodable"
-	// ProbAudioAbsent: the stream has no sound at all, neither with the
-	// picture nor in a playlist of its own. For information.
-	ProbAudioAbsent = "audio_absent"
-	// ProbMediaUndecodable: a decoder makes nothing of the segments.
-	ProbMediaUndecodable = "media_undecodable"
-	// ProbDeclaredMismatch: the segments are not what the master playlist
-	// says of the variant: another coding, profile, level, size or rate.
-	ProbDeclaredMismatch = "declared_mismatch"
-	// ProbTSClock: the program clock of MPEG-TS segments comes too seldom,
-	// jumps unannounced, or frames come after their time by it. A set-top
-	// box plays by this clock.
-	ProbTSClock = "ts_clock_error"
-	// ProbSubtitlesInvalid: a segment of subtitles is not the WebVTT it
-	// is served as.
-	ProbSubtitlesInvalid = "subtitles_invalid"
-	// ProbVantageBehind: one vantage point sees the stream well behind
-	// what another sees at the same time. Told by the server, which is
-	// where the results of all of them meet.
-	ProbVantageBehind = "vantage_behind"
-)
 
 // Problem is one kind of trouble found for one variant in a cycle.
 type Problem struct {
-	Kind     string `json:"kind"`
-	Severity string `json:"severity"`
-	Variant  string `json:"variant"`
-	Message  string `json:"message"`
+	Kind     problemkind.Kind  `json:"kind"`
+	Severity severity.Severity `json:"severity" enums:"info,warn,crit"`
+	Variant  variantkey.Key    `json:"variant"`
+	Message  string            `json:"message"`
 	// Count is how many times it occurred within the cycle.
 	Count int `json:"count"`
 	// Details are the figures the conclusion was drawn from: what was
-	// requested, what came back and what it was compared with. Keys are
-	// stable identifiers; values are numbers, strings or lists of strings.
-	Details map[string]any `json:"details,omitempty"`
+	// requested, what came back and what it was compared with.
+	Details detail.Set `json:"details,omitzero" swaggertype:"object"`
 }
 
 // Metric is one numeric observation of a cycle.
 type Metric struct {
-	Name    string  `json:"n"`
-	Variant string  `json:"v,omitempty"`
-	Value   float64 `json:"x"`
+	Name    metricname.Name `json:"n"`
+	Variant variantkey.Key  `json:"v,omitzero"`
+	Value   float64         `json:"x"`
 	// Server and IP name the server a figure is about, for the few that
 	// describe the way to a server rather than a playlist: the host that
 	// answered and the address the connection went to.
@@ -201,20 +99,20 @@ type Metric struct {
 
 // Segment is the record of one checked media segment.
 type Segment struct {
-	Variant       string     `json:"variant"`
-	Seq           uint64     `json:"seq"`
-	URL           string     `json:"url"`
-	Time          time.Time  `json:"time"`
-	Duration      float64    `json:"duration"`
-	ProgramTime   *time.Time `json:"program_time,omitempty"`
-	Discontinuity bool       `json:"discontinuity,omitempty"`
+	Variant       variantkey.Key `json:"variant"`
+	Seq           uint64         `json:"seq"`
+	URL           string         `json:"url"`
+	Time          time.Time      `json:"time"`
+	Duration      float64        `json:"duration"`
+	ProgramTime   *time.Time     `json:"program_time,omitempty"`
+	Discontinuity bool           `json:"discontinuity,omitempty"`
 
-	Status     int    `json:"status"`
-	Error      string `json:"error,omitempty"`
-	RemoteAddr string `json:"remote_addr,omitempty"`
-	Proto      string `json:"proto,omitempty"`
-	Cache      string `json:"cache,omitempty"`
-	Size       int64  `json:"size"`
+	Status     int                `json:"status"`
+	Error      string             `json:"error,omitempty"`
+	RemoteAddr string             `json:"remote_addr,omitempty"`
+	Proto      string             `json:"proto,omitempty"`
+	Cache      cachestatus.Status `json:"cache,omitzero" enums:"hit,miss"`
+	Size       int64              `json:"size"`
 	// Fetched is how many bytes were actually downloaded; less than Size
 	// when only the beginning of the segment was requested.
 	Fetched   int64   `json:"fetched"`
@@ -229,8 +127,8 @@ type Segment struct {
 	// Source is the server that answered, when a response was received.
 	Source *Endpoint `json:"source,omitempty"`
 
-	Media    *media.Info `json:"media,omitempty"`
-	Problems []string    `json:"problems,omitempty"`
+	Media    *media.Info        `json:"media,omitempty"`
+	Problems []problemkind.Kind `json:"problems,omitempty"`
 }
 
 // Endpoint is the server that actually answered a request: after
@@ -251,21 +149,21 @@ type Endpoint struct {
 }
 
 // Node is what identifies the answering server for change detection.
-func (e *Endpoint) Node() string { return e.Host + " " + e.IP }
+func (e *Endpoint) Node() node.Node { return node.Of(e.Host, e.IP) }
 
 // Source tells where one playlist and its segments were served from in a cycle.
 type Source struct {
-	Variant  string    `json:"variant"`
-	Playlist *Endpoint `json:"playlist,omitempty"`
+	Variant  variantkey.Key `json:"variant"`
+	Playlist *Endpoint      `json:"playlist,omitempty"`
 	// Segment is the endpoint of the last segment downloaded in the cycle.
 	Segment *Endpoint `json:"segment,omitempty"`
 }
 
 // Snapshot is the text of a playlist captured when something was wrong with it.
 type Snapshot struct {
-	Variant string `json:"variant"`
-	URL     string `json:"url"`
-	Body    string `json:"body"`
+	Variant variantkey.Key `json:"variant"`
+	URL     string         `json:"url"`
+	Body    string         `json:"body"`
 	// Previous is the text the same playlist had at the check before, and
 	// PreviousTime when it was received; absent when there was none.
 	Previous     string     `json:"previous,omitempty"`
@@ -274,9 +172,9 @@ type Snapshot struct {
 
 // Result is the outcome of one check cycle of one stream.
 type Result struct {
-	TargetID int64     `json:"target_id"`
-	Time     time.Time `json:"time"`
-	Status   string    `json:"status"`
+	TargetID id.Stream     `json:"target_id"`
+	Time     time.Time     `json:"time"`
+	Status   status.Status `json:"status" enums:"ok,warn,fail"`
 	// Variants is the current set of playlists; nil when it could not be
 	// determined in this cycle (the entry playlist failed).
 	Variants []Variant `json:"variants,omitempty"`
@@ -295,7 +193,7 @@ type Result struct {
 	// the cycle; empty when it kept up. Findings that rest on timing alone
 	// are left out of such a result: a monitor that cannot keep up measures
 	// its own delay, not the stream's.
-	Overloaded string `json:"overloaded,omitempty"`
+	Overloaded overload.Reason `json:"overloaded,omitzero" enums:"processor"`
 }
 
 // Thresholds tune when observations become problems.

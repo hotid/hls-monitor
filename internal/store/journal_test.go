@@ -9,16 +9,21 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 func entries(variant int64, from, n int, problem bool, at time.Time) []JournalEntry {
 	out := make([]JournalEntry, 0, n)
 	for i := range n {
-		seg := &probe.Segment{Seq: uint64(from + i), URL: "http://x/seg.ts", Time: at, Duration: 5, Status: 200, Size: 1000}
+		seg := &probe.Segment{Variant: variantkey.OfURI("v"), Seq: uint64(from + i), URL: "http://x/seg.ts", Time: at, Duration: 5, Status: 200, Size: 1000}
 		if problem {
-			seg.Problems = []string{probe.ProbBitrateExceeds}
+			seg.Problems = []problemkind.Kind{problemkind.BitrateExceeds()}
 		}
-		out = append(out, JournalEntry{VariantID: variant, Segment: seg})
+		out = append(out, JournalEntry{VariantID: id.VariantOf(variant), Segment: seg})
 	}
 	return out
 }
@@ -33,33 +38,33 @@ func TestJournalIsBoundedByCount(t *testing.T) {
 	defer s.Close()
 	now := time.Now()
 	for i := range 50 {
-		if err := s.AppendSegments(ctx, 1, LocalAgentID, entries(7, i*3, 3, false, now)); err != nil {
+		if err := s.AppendSegments(ctx, id.StreamOf(1), LocalAgentID(), entries(7, i*3, 3, false, now)); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.AppendSegments(ctx, 1, LocalAgentID, entries(7, 1000+i, 1, true, now)); err != nil {
+		if err := s.AppendSegments(ctx, id.StreamOf(1), LocalAgentID(), entries(7, 1000+i, 1, true, now)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// Another variant and another agent are counted on their own.
-	if err := s.AppendSegments(ctx, 1, LocalAgentID, entries(8, 0, 5, false, now)); err != nil {
+	if err := s.AppendSegments(ctx, id.StreamOf(1), LocalAgentID(), entries(8, 0, 5, false, now)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.AppendSegments(ctx, 1, 2, entries(7, 0, 5, false, now)); err != nil {
+	if err := s.AppendSegments(ctx, id.StreamOf(1), id.AgentOf(2), entries(7, 0, 5, false, now)); err != nil {
 		t.Fatal(err)
 	}
 
-	all, err := s.ListSegments(ctx, SegmentFilter{StreamID: 1, VariantID: 7, AgentID: LocalAgentID, Limit: 1000})
+	all, err := s.ListSegments(ctx, SegmentFilter{StreamID: id.StreamOf(1), VariantID: id.VariantOf(7), AgentID: LocalAgentID(), Limit: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(all) != 14 {
 		t.Fatalf("rows of the busy variant = %d, want 10 ordinary + 4 with problems", len(all))
 	}
-	flagged, _ := s.ListSegments(ctx, SegmentFilter{StreamID: 1, VariantID: 7, AgentID: LocalAgentID, OnlyProblems: true, Limit: 1000})
+	flagged, _ := s.ListSegments(ctx, SegmentFilter{StreamID: id.StreamOf(1), VariantID: id.VariantOf(7), AgentID: LocalAgentID(), OnlyProblems: true, Limit: 1000})
 	if len(flagged) != 4 || flagged[0].Seq != 1049 || flagged[3].Seq != 1046 {
 		t.Fatalf("segments with problems = %d (newest %d), want the last 4", len(flagged), flagged[0].Seq)
 	}
-	if rest, _ := s.ListSegments(ctx, SegmentFilter{StreamID: 1, Limit: 1000}); len(rest) != 24 {
+	if rest, _ := s.ListSegments(ctx, SegmentFilter{StreamID: id.StreamOf(1), Limit: 1000}); len(rest) != 24 {
 		t.Errorf("rows in all = %d, want 24: other variants and agents keep their own", len(rest))
 	}
 	if u := s.Usage(ctx); u.JournalRows != 24 || u.JournalBytes == 0 || u.DatabaseBytes == 0 {
@@ -67,7 +72,7 @@ func TestJournalIsBoundedByCount(t *testing.T) {
 	}
 
 	// A deleted stream takes its journal along.
-	st, err := s.CreateStream(ctx, StreamInput{Name: "one", URL: "http://x/a.m3u8", Enabled: true, Level: "segments", AgentIDs: []int64{LocalAgentID}}, now)
+	st, err := s.CreateStream(ctx, StreamInput{Name: "one", URL: "http://x/a.m3u8", Enabled: true, Level: level.Segments(), Picture: picturemode.Check(), AgentIDs: []id.Agent{LocalAgentID()}}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +99,7 @@ func TestJournalCannotOutgrowItsLimit(t *testing.T) {
 		for _, e := range batch {
 			e.Segment.Error = strings.Repeat("x", 500)
 		}
-		if err := s.AppendSegments(ctx, 1, LocalAgentID, batch); err != nil {
+		if err := s.AppendSegments(ctx, id.StreamOf(1), LocalAgentID(), batch); err != nil {
 			t.Fatalf("batch %d: %v", i, err)
 		}
 	}
@@ -105,7 +110,7 @@ func TestJournalCannotOutgrowItsLimit(t *testing.T) {
 	if fi.Size() > limit {
 		t.Errorf("journal file is %d bytes, limit is %d", fi.Size(), limit)
 	}
-	newest, _ := s.ListSegments(ctx, SegmentFilter{StreamID: 1, Limit: 1})
+	newest, _ := s.ListSegments(ctx, SegmentFilter{StreamID: id.StreamOf(1), Limit: 1})
 	if len(newest) != 1 || newest[0].Seq != 399*50+49 {
 		t.Errorf("the newest row must survive, got %+v", newest)
 	}
@@ -121,11 +126,11 @@ func TestPurgeDeletesInBatches(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-3 * time.Hour)
 	for i := range 5 {
-		if err := s.AppendSegments(ctx, 1, LocalAgentID, entries(1, i*1000, 1000, false, old)); err != nil {
+		if err := s.AppendSegments(ctx, id.StreamOf(1), LocalAgentID(), entries(1, i*1000, 1000, false, old)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := s.AppendSegments(ctx, 1, LocalAgentID, entries(1, 9000, 10, false, now)); err != nil {
+	if err := s.AppendSegments(ctx, id.StreamOf(1), LocalAgentID(), entries(1, 9000, 10, false, now)); err != nil {
 		t.Fatal(err)
 	}
 	keep := Retention{Segments: time.Hour, Snapshots: time.Hour, Incidents: time.Hour, Events: time.Hour}
@@ -136,7 +141,7 @@ func TestPurgeDeletesInBatches(t *testing.T) {
 	if deleted != 5000 {
 		t.Errorf("purged %d rows, want 5000", deleted)
 	}
-	if left, _ := s.ListSegments(ctx, SegmentFilter{StreamID: 1, Limit: 1000}); len(left) != 10 {
+	if left, _ := s.ListSegments(ctx, SegmentFilter{StreamID: id.StreamOf(1), Limit: 1000}); len(left) != 10 {
 		t.Errorf("rows left = %d, want the 10 fresh ones", len(left))
 	}
 }

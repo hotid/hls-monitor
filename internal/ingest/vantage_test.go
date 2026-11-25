@@ -5,6 +5,11 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 func TestVantagePointBehind(t *testing.T) {
@@ -13,16 +18,16 @@ func TestVantagePointBehind(t *testing.T) {
 	// seen makes the result of a check at now that found the playlist
 	// ending lag seconds ago.
 	seen := func(agent int64, lag float64) *probe.Result {
-		r := &probe.Result{TargetID: 7, Time: now, Metrics: []probe.Metric{
-			{Name: "hls_live_latency_seconds", Variant: "v", Value: lag},
-			{Name: "hls_target_duration_seconds", Variant: "v", Value: 6},
+		r := &probe.Result{TargetID: id.StreamOf(7), Time: now, Metrics: []probe.Metric{
+			{Name: metricname.LiveLatencySeconds(), Variant: variantkey.OfURI("v"), Value: lag},
+			{Name: metricname.TargetDurationSeconds(), Variant: variantkey.OfURI("v"), Value: 6},
 		}}
-		in.compareVantages(agent, r, now)
+		in.compareVantages(id.AgentOf(agent), r, now)
 		return r
 	}
 	told := func(r *probe.Result) bool {
 		for _, p := range r.Problems {
-			if p.Kind == probe.ProbVantageBehind {
+			if p.Kind == problemkind.VantageBehind() {
 				return true
 			}
 		}
@@ -46,7 +51,7 @@ func TestVantagePointBehind(t *testing.T) {
 			t.Fatalf("check %d of the place behind: told %v", i+1, told(last))
 		}
 	}
-	if d := last.Problems[0].Details; d["behind_seconds"] != 30.0 || d["ahead_agent_id"] != int64(1) {
+	if d := last.Problems[0].Details; num(d, detail.KeyBehindSeconds()) != 30.0 || num(d, detail.KeyAheadAgentID()) != 1 {
 		t.Errorf("details %+v", d)
 	}
 	// It catches up, and is not told any more.
@@ -60,19 +65,19 @@ func TestVantagePointBehind(t *testing.T) {
 	for i := 0; i < vantageRuns+1; i++ {
 		now = now.Add(3 * time.Second)
 		seen(1, 4)
-		r := &probe.Result{TargetID: 7, Time: now.Add(-12 * time.Second), Metrics: []probe.Metric{
-			{Name: "hls_live_latency_seconds", Variant: "v", Value: 5},
-			{Name: "hls_target_duration_seconds", Variant: "v", Value: 6},
+		r := &probe.Result{TargetID: id.StreamOf(7), Time: now.Add(-12 * time.Second), Metrics: []probe.Metric{
+			{Name: metricname.LiveLatencySeconds(), Variant: variantkey.OfURI("v"), Value: 5},
+			{Name: metricname.TargetDurationSeconds(), Variant: variantkey.OfURI("v"), Value: 6},
 		}}
-		in.compareVantages(2, r, now)
+		in.compareVantages(id.AgentOf(2), r, now)
 		if told(r) {
 			t.Fatal("a result delivered 12 s after its check was told as 12 s behind")
 		}
 	}
 	// A result delivered late says nothing of now.
-	late := &probe.Result{TargetID: 7, Time: now.Add(-5 * time.Minute), Metrics: []probe.Metric{{Name: "hls_live_latency_seconds", Variant: "v", Value: 300}}}
+	late := &probe.Result{TargetID: id.StreamOf(7), Time: now.Add(-5 * time.Minute), Metrics: []probe.Metric{{Name: metricname.LiveLatencySeconds(), Variant: variantkey.OfURI("v"), Value: 300}}}
 	for i := 0; i < 5; i++ {
-		in.compareVantages(2, late, now)
+		in.compareVantages(id.AgentOf(2), late, now)
 	}
 	if told(late) {
 		t.Error("a late result was compared")
@@ -84,4 +89,10 @@ func TestVantagePointBehind(t *testing.T) {
 			t.Error("compared with what another place saw ten minutes ago")
 		}
 	}
+}
+
+// num is a figure of a problem that is a number; zero when it has none.
+func num(s detail.Set, k detail.Key) float64 {
+	v, _ := s.Number(k)
+	return v
 }

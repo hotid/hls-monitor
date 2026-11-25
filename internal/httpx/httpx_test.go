@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/hotid/hls-monitor/internal/types/cachestatus"
 )
 
 func TestGet(t *testing.T) {
@@ -65,7 +67,7 @@ func TestGet(t *testing.T) {
 		if age, ok := r.AgeSeconds(); !ok || age != 7 {
 			t.Errorf("age = %v/%v, want 7", age, ok)
 		}
-		if r.CacheStatus() != "hit" {
+		if r.CacheStatus() != cachestatus.Hit() {
 			t.Errorf("cache status = %q, want hit", r.CacheStatus())
 		}
 		if r.Bps() <= 0 {

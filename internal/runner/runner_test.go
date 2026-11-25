@@ -11,6 +11,10 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/hlstest"
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/overload"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
 )
 
 type collector struct {
@@ -20,7 +24,7 @@ type collector struct {
 
 func (c *collector) sink(_ context.Context, r *probe.Result) {
 	c.mu.Lock()
-	c.seen[r.TargetID]++
+	c.seen[r.TargetID.Int64()]++
 	c.mu.Unlock()
 }
 
@@ -55,8 +59,8 @@ func TestSyncAndCheckNow(t *testing.T) {
 	defer r.Stop()
 
 	// A long interval: after the first cycle nothing happens unless asked.
-	target := func(id, rev int64) probe.Target {
-		return probe.Target{ID: id, URL: srv.URL + "/v0/index.m3u8", Level: probe.LevelPlaylist, IntervalSec: 3600, Revision: rev}
+	target := func(of, rev int64) probe.Target {
+		return probe.Target{ID: id.StreamOf(of), URL: srv.URL + "/v0/index.m3u8", Level: level.Playlist(), Picture: picturemode.Check(), IntervalSec: 3600, Revision: rev}
 	}
 	r.Sync([]probe.Target{target(1, 1), target(2, 1)})
 	waitFor(t, "first cycles", func() bool { return col.count(1) == 1 && col.count(2) == 1 })
@@ -64,14 +68,14 @@ func TestSyncAndCheckNow(t *testing.T) {
 		t.Fatalf("count = %d, want 2", r.Count())
 	}
 
-	if !r.CheckNow(1) {
+	if !r.CheckNow(id.StreamOf(1)) {
 		t.Fatal("CheckNow must find a running stream")
 	}
 	waitFor(t, "triggered cycle", func() bool { return col.count(1) == 2 })
 	if col.count(2) != 1 {
 		t.Errorf("stream 2 ran %d cycles, want 1: the trigger was for stream 1 only", col.count(2))
 	}
-	if r.CheckNow(99) {
+	if r.CheckNow(id.StreamOf(99)) {
 		t.Error("CheckNow must report an unknown stream")
 	}
 
@@ -85,7 +89,7 @@ func TestSyncAndCheckNow(t *testing.T) {
 
 	// Removed streams stop.
 	r.Sync([]probe.Target{target(2, 2)})
-	if r.Count() != 1 || r.CheckNow(1) {
+	if r.Count() != 1 || r.CheckNow(id.StreamOf(1)) {
 		t.Errorf("stream 1 must be gone, count = %d", r.Count())
 	}
 }
@@ -99,7 +103,7 @@ func TestStopDoesNotReportCancelledCycles(t *testing.T) {
 
 	col := &collector{seen: map[int64]int{}}
 	r := New(col.sink, "test", nil)
-	r.Sync([]probe.Target{{ID: 1, URL: srv.URL + "/v0/index.m3u8", Level: probe.LevelSegments, Revision: 1}})
+	r.Sync([]probe.Target{{ID: id.StreamOf(1), URL: srv.URL + "/v0/index.m3u8", Level: level.Segments(), Picture: picturemode.Check(), Revision: 1}})
 	waitFor(t, "segment download to begin", func() bool { return origin.Requests("/v0/seg-3.ts") == 1 })
 
 	done := make(chan struct{})
@@ -135,7 +139,7 @@ func TestBehindIsTheRunnersOwnDelay(t *testing.T) {
 		cycles.Add(1)
 	}, "test", nil)
 	defer r.Stop()
-	r.Sync([]probe.Target{{ID: 1, URL: srv.URL + "/v0/index.m3u8", Level: probe.LevelPlaylist, IntervalSec: 0.2, Revision: 1}})
+	r.Sync([]probe.Target{{ID: id.StreamOf(1), URL: srv.URL + "/v0/index.m3u8", Level: level.Playlist(), Picture: picturemode.Check(), IntervalSec: 0.2, Revision: 1}})
 
 	waitFor(t, "the first cycle", func() bool { return cycles.Load() >= 1 })
 	delay.Store(int64(1300 * time.Millisecond))
@@ -168,18 +172,18 @@ func TestCrashedCycleDoesNotStopTheRunner(t *testing.T) {
 	defer r.Stop()
 	var crash atomic.Bool
 	crash.Store(true)
-	r.SetOverloaded(func(time.Time) string {
+	r.SetOverloaded(func(time.Time) overload.Reason {
 		if crash.Load() {
 			panic("a fault in the checking code")
 		}
-		return ""
+		return overload.Reason{}
 	})
-	r.Sync([]probe.Target{{ID: 1, URL: srv.URL + "/v0/index.m3u8", Level: probe.LevelPlaylist, IntervalSec: 3600, Revision: 1}})
+	r.Sync([]probe.Target{{ID: id.StreamOf(1), URL: srv.URL + "/v0/index.m3u8", Level: level.Playlist(), Picture: picturemode.Check(), IntervalSec: 3600, Revision: 1}})
 	waitFor(t, "the crash to be counted", func() bool { return r.Stats().Crashed == 1 })
 	if col.count(1) != 0 {
 		t.Error("a crashed cycle must not be reported")
 	}
 	crash.Store(false)
-	r.CheckNow(1)
+	r.CheckNow(id.StreamOf(1))
 	waitFor(t, "a cycle after the crash", func() bool { return col.count(1) == 1 })
 }

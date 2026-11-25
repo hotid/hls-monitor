@@ -7,7 +7,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"golang.org/x/net/publicsuffix"
 	"io"
 	"net"
 	"net/http"
@@ -16,6 +15,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
+
+	"github.com/hotid/hls-monitor/internal/types/cachestatus"
 )
 
 const (
@@ -244,8 +247,8 @@ func (r *Response) AgeSeconds() (float64, bool) {
 }
 
 // CacheStatus interprets common CDN cache headers.
-// It returns "hit", "miss" or "" when nothing conclusive is present.
-func (r *Response) CacheStatus() string {
+// The value is not set when nothing conclusive is present.
+func (r *Response) CacheStatus() cachestatus.Status {
 	for _, h := range []string{"X-Cache", "CF-Cache-Status", "X-Cache-Status", "Cache-Status", "X-Proxy-Cache"} {
 		v := strings.ToLower(r.Header.Get(h))
 		if v == "" {
@@ -253,12 +256,12 @@ func (r *Response) CacheStatus() string {
 		}
 		switch {
 		case strings.Contains(v, "hit"):
-			return "hit"
+			return cachestatus.Hit()
 		case strings.Contains(v, "miss"), strings.Contains(v, "expired"), strings.Contains(v, "bypass"):
-			return "miss"
+			return cachestatus.Miss()
 		}
 	}
-	return ""
+	return cachestatus.Status{}
 }
 
 // Get performs the request. A non-nil error means no HTTP response was

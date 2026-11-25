@@ -9,8 +9,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
+
+	"github.com/hotid/hls-monitor/internal/types/capturestate"
+	"github.com/hotid/hls-monitor/internal/types/id"
 )
 
 // importMaxFiles bounds the files of an archive that is brought in.
@@ -29,7 +31,7 @@ var ErrNotTheirs = errors.New("a capture of a stream the agent does not check")
 // and the ID is returned. A capture already brought in is not brought in
 // twice: its ID is returned again. theirs, when given, tells whether the
 // agent may send a capture of the stream: ErrNotTheirs when not.
-func (s *Store) Import(agentID int64, archive io.ReaderAt, size int64, theirs func(stream int64) bool) (string, error) {
+func (s *Store) Import(agentID id.Agent, archive io.ReaderAt, size int64, theirs func(stream id.Stream) bool) (string, error) {
 	zr, err := zip.NewReader(archive, size)
 	if err != nil {
 		return "", fmt.Errorf("not a zip archive: %w", err)
@@ -72,16 +74,16 @@ func (s *Store) Import(agentID int64, archive io.ReaderAt, size int64, theirs fu
 	if err := readJSON(desc, &c, 4<<20); err != nil {
 		return "", fmt.Errorf("capture.json: %w", err)
 	}
-	if c.ID != root || !c.Done || c.StreamID <= 0 {
+	if c.ID != root || !c.Done || c.StreamID.IsZero() {
 		return "", fmt.Errorf("capture.json does not describe the capture in the archive")
 	}
 	if theirs != nil && !theirs(c.StreamID) {
 		return "", ErrNotTheirs
 	}
-	id := c.ID + "-a" + strconv.FormatInt(agentID, 10)
+	id := c.ID + "-a" + agentID.String()
 	c.ID, c.AgentID = id, agentID
-	if c.State != StateKept && c.State != StateFound {
-		c.State = StateKept
+	if c.State != capturestate.Kept() && c.State != capturestate.Found() {
+		c.State = capturestate.Kept()
 	}
 
 	s.mu.Lock()

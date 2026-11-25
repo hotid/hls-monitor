@@ -7,6 +7,8 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/hlstest"
 	"github.com/hotid/hls-monitor/internal/picture"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
 )
 
 func TestGatedLoudness(t *testing.T) {
@@ -21,7 +23,7 @@ func TestGatedLoudness(t *testing.T) {
 // Every half hour three segments some seconds apart are measured, and the
 // loudness told once, of the three together.
 func TestLoudnessIsMeasuredOnThreeSegments(t *testing.T) {
-	f := newFixture(t, hlstest.Options{Variants: 1}, "/master.m3u8", LevelHeader)
+	f := newFixture(t, hlstest.Options{Variants: 1}, "/master.m3u8", level.Header())
 	s := &stubLooker{frame: liveFrame, heard: &picture.Frame{HasAudio: true, AudioDB: -20, Loudness: -23, HasLoudness: true}}
 	f.c.Looker, f.c.PictureEvery = s, 5*time.Minute
 	f.c.loud.due = time.Time{}
@@ -33,7 +35,7 @@ func TestLoudnessIsMeasuredOnThreeSegments(t *testing.T) {
 			at = append(at, f.clock)
 		}
 		for _, m := range r.Metrics {
-			if m.Name == "hls_audio_loudness_lufs" {
+			if m.Name == metricname.AudioLoudnessLufs() {
 				told++
 				if m.Value != -23 {
 					t.Errorf("told %v", m.Value)

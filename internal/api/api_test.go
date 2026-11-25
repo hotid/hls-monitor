@@ -27,6 +27,26 @@ import (
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/runner"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/diagnosestep"
+	"github.com/hotid/hls-monitor/internal/types/healthstate"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/node"
+	"github.com/hotid/hls-monitor/internal/types/overload"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/readiness"
+	"github.com/hotid/hls-monitor/internal/types/role"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/status"
+	"github.com/hotid/hls-monitor/internal/types/streamstatus"
+	"github.com/hotid/hls-monitor/internal/types/summarykey"
+	"github.com/hotid/hls-monitor/internal/types/vantagescope"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
+	"github.com/hotid/hls-monitor/internal/types/watchsource"
 )
 
 type testEnv struct {
@@ -55,7 +75,10 @@ func newEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	for _, u := range []struct{ name, role string }{{"admin", store.RoleAdmin}, {"viewer", store.RoleViewer}} {
+	for _, u := range []struct {
+		name string
+		role role.Role
+	}{{"admin", role.Admin()}, {"viewer", role.Viewer()}} {
 		hash, _ := auth.HashPassword(u.name + "-password")
 		if _, err := st.CreateUser(ctx, u.name, hash, u.role, time.Now()); err != nil {
 			t.Fatal(err)
@@ -64,7 +87,7 @@ func newEnv(t *testing.T) *testEnv {
 	mx := metrics.New("", nil)
 	ing := ingest.New(st, mx, nil)
 	local := runner.New(func(ctx context.Context, r *probe.Result) {
-		_ = ing.Apply(context.WithoutCancel(ctx), store.LocalAgentID, r)
+		_ = ing.Apply(context.WithoutCancel(ctx), store.LocalAgentID(), r)
 	}, "test", nil)
 	t.Cleanup(local.Stop)
 
@@ -153,7 +176,7 @@ func TestAuthentication(t *testing.T) {
 	admin := e.login("admin")
 	var me store.User
 	admin.want(http.StatusOK, "GET", "/api/v1/auth/me", nil, &me)
-	if me.Username != "admin" || me.Role != store.RoleAdmin {
+	if me.Username != "admin" || me.Role != role.Admin() {
 		t.Fatalf("me = %+v", me)
 	}
 	_, raw := admin.do("GET", "/api/v1/auth/me", nil)
@@ -273,7 +296,7 @@ func TestStreamLifecycle(t *testing.T) {
 	admin.want(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{
 		"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "container", "interval_sec": 3600,
 	}, &st)
-	if st.Status != statusNoData || len(st.AgentIDs) != 1 || st.AgentIDs[0] != store.LocalAgentID {
+	if st.Status != streamstatus.NoData() || len(st.AgentIDs) != 1 || st.AgentIDs[0] != store.LocalAgentID() {
 		t.Fatalf("new stream = %+v", st)
 	}
 
@@ -281,15 +304,15 @@ func TestStreamLifecycle(t *testing.T) {
 	var detail streamDetail
 	waitFor(t, "first local check", func() bool {
 		admin.want(http.StatusOK, "GET", "/api/v1/streams/1", nil, &detail)
-		return detail.Status == statusOK
+		return detail.Status == streamstatus.OK()
 	})
-	if len(detail.Variants) != 3 || detail.Variants[0].Kind != probe.KindMaster || detail.Variants[1].Resolution != "160x90" {
+	if len(detail.Variants) != 3 || detail.Variants[0].Kind != variantkind.Master() || detail.Variants[1].Resolution != "160x90" {
 		t.Fatalf("variants = %+v", detail.Variants)
 	}
-	if len(detail.Variants[1].States) != 1 || detail.Variants[1].States[0].Metrics["hls_media_width"] != 160 {
+	if len(detail.Variants[1].States) != 1 || detail.Variants[1].States[0].Metrics[metricname.MediaWidth()] != 160 {
 		t.Errorf("variant state = %+v", detail.Variants[1].States)
 	}
-	if len(detail.Agents) != 1 || detail.Agents[0].Summary["variants"] != 2 {
+	if len(detail.Agents) != 1 || detail.Agents[0].Summary[summarykey.Variants()] != 2 {
 		t.Errorf("agent summary = %+v", detail.Agents)
 	}
 
@@ -317,16 +340,16 @@ func TestStreamLifecycle(t *testing.T) {
 	var ov overviewResponse
 	waitFor(t, "failure to show up", func() bool {
 		admin.want(http.StatusOK, "GET", "/api/v1/overview", nil, &ov)
-		return ov.Counts[statusFail] == 1
+		return ov.Counts.Fail == 1
 	})
 	admin.want(http.StatusOK, "GET", "/api/v1/servers", nil, &servers)
 	if len(servers) != 1 || servers[0].Fail != 1 || len(servers[0].FailingStreams) != 1 || servers[0].FailingStreams[0].Name != "live" || len(servers[0].StreamIDs) != 1 {
 		t.Fatalf("servers with a failing stream = %+v", servers)
 	}
-	if len(ov.Incidents) != 1 || ov.Incidents[0].Kind != probe.ProbPlaylistHTTP || ov.Incidents[0].StreamName != "live" {
+	if len(ov.Incidents) != 1 || ov.Incidents[0].Kind != problemkind.PlaylistHTTP() || ov.Incidents[0].StreamName != "live" {
 		t.Fatalf("open incidents = %+v", ov.Incidents)
 	}
-	if ov.Streams[0].OpenIncidents["crit"] != 1 || ov.Counts["total"] != 1 {
+	if ov.Streams[0].OpenIncidents[severity.Crit()] != 1 || ov.Counts.Total != 1 {
 		t.Errorf("overview = %+v / %+v", ov.Counts, ov.Streams[0].OpenIncidents)
 	}
 	var incidents []store.Incident
@@ -346,7 +369,7 @@ func TestStreamLifecycle(t *testing.T) {
 
 	// Disabling stops checks and closes incidents.
 	admin.want(http.StatusOK, "POST", "/api/v1/streams/1/disable", nil, &st)
-	if st.Status != statusDisabled {
+	if st.Status != streamstatus.Disabled() {
 		t.Errorf("status after disable = %s", st.Status)
 	}
 	admin.want(http.StatusOK, "GET", "/api/v1/incidents?open=true", nil, &incidents)
@@ -373,9 +396,9 @@ func TestDiagnose(t *testing.T) {
 	viewer := e.login("viewer")
 	viewer.want(http.StatusBadRequest, "GET", path+"?level=everything", nil, nil)
 
-	status, body := viewer.do("GET", path+"?level=header&seconds=2", nil)
-	if status != http.StatusOK {
-		t.Fatalf("diagnose = %d: %s", status, body)
+	code, body := viewer.do("GET", path+"?level=header&seconds=2", nil)
+	if code != http.StatusOK {
+		t.Fatalf("diagnose = %d: %s", code, body)
 	}
 	var events []diagnoseEvent
 	for _, line := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
@@ -385,11 +408,11 @@ func TestDiagnose(t *testing.T) {
 		}
 		events = append(events, ev)
 	}
-	if len(events) < 3 || events[0].Type != "start" || events[0].Level != "header" || events[len(events)-1].Type != "end" {
+	if len(events) < 3 || events[0].Type != diagnosestep.Start() || events[0].Level != level.Header() || events[len(events)-1].Type != diagnosestep.End() {
 		t.Fatalf("events = %+v", events)
 	}
 	first := events[1]
-	if first.Type != "cycle" || first.N != 1 || first.Result == nil || first.Result.Status != probe.StatusOK || len(first.Result.Segments) == 0 {
+	if first.Type != diagnosestep.Cycle() || first.N != 1 || first.Result == nil || first.Result.Status != status.OK() || len(first.Result.Segments) == 0 {
 		t.Fatalf("first cycle = %+v, result %+v", first, first.Result)
 	}
 	// Nothing of it reached the stream's stored state.
@@ -408,7 +431,7 @@ func TestUsersAdministration(t *testing.T) {
 	admin.want(http.StatusBadRequest, "POST", "/api/v1/users", map[string]any{"username": "bob", "password": "short"}, nil)
 	admin.want(http.StatusBadRequest, "POST", "/api/v1/users", map[string]any{"username": "bob", "password": "long-enough", "role": "root"}, nil)
 	admin.want(http.StatusCreated, "POST", "/api/v1/users", map[string]any{"username": "bob", "password": "long-enough"}, &u)
-	if u.Role != store.RoleViewer {
+	if u.Role != role.Viewer() {
 		t.Errorf("default role = %s, want viewer", u.Role)
 	}
 	admin.want(http.StatusConflict, "POST", "/api/v1/users", map[string]any{"username": "BOB", "password": "long-enough"}, nil)
@@ -489,7 +512,7 @@ func TestAgentProtocol(t *testing.T) {
 	if en.Agent.Enrolled || !strings.Contains(en.Command, en.Token) || !strings.Contains(en.Command, e.http.URL) {
 		t.Fatalf("enrollment = %+v", en)
 	}
-	admin.want(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{"name": "mine", "url": "http://x/a.m3u8", "agent_ids": []int64{en.Agent.ID}}, nil)
+	admin.want(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{"name": "mine", "url": "http://x/a.m3u8", "agent_ids": []int64{en.Agent.ID.Int64()}}, nil)
 	admin.want(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{"name": "not-mine", "url": "http://x/b.m3u8", "agent_ids": []int64{}}, nil)
 
 	agent := e.client()
@@ -505,7 +528,7 @@ func TestAgentProtocol(t *testing.T) {
 
 	var cfg agentproto.Config
 	agent.want(http.StatusOK, "GET", "/api/agent/v1/config", nil, &cfg)
-	if len(cfg.Targets) != 1 || cfg.Targets[0].ID != 1 || !cfg.Enabled || cfg.Revision == "" {
+	if len(cfg.Targets) != 1 || cfg.Targets[0].ID != id.StreamOf(1) || !cfg.Enabled || cfg.Revision == "" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	agent.want(http.StatusNotModified, "GET", "/api/agent/v1/config?revision="+cfg.Revision, nil, nil)
@@ -518,9 +541,9 @@ func TestAgentProtocol(t *testing.T) {
 	admin.want(http.StatusOK, "POST", "/api/v1/streams/1/enable", nil, nil)
 
 	result := func(stream int64) *probe.Result {
-		return &probe.Result{TargetID: stream, Time: time.Now(), Status: probe.StatusOK,
-			Variants: []probe.Variant{{Key: probe.VariantMedia, Kind: probe.KindMedia}},
-			Metrics:  []probe.Metric{{Name: "hls_up", Variant: probe.VariantMedia, Value: 1}}}
+		return &probe.Result{TargetID: id.StreamOf(stream), Time: time.Now(), Status: status.OK(),
+			Variants: []probe.Variant{{Key: variantkey.Media(), Kind: variantkind.Media()}},
+			Metrics:  []probe.Metric{{Name: metricname.Up(), Variant: variantkey.Media(), Value: 1}}}
 	}
 	var rr agentproto.ResultsResponse
 	agent.want(http.StatusOK, "POST", "/api/agent/v1/results", agentproto.ResultsRequest{Results: []*probe.Result{result(1), result(2), result(77), nil}}, &rr)
@@ -530,14 +553,14 @@ func TestAgentProtocol(t *testing.T) {
 
 	var list []streamView
 	admin.want(http.StatusOK, "GET", "/api/v1/streams", nil, &list)
-	if list[0].Name != "mine" || list[0].Status != statusOK || list[1].Status != statusNoData {
+	if list[0].Name != "mine" || list[0].Status != streamstatus.OK() || list[1].Status != streamstatus.NoData() {
 		t.Fatalf("statuses = %s / %s", list[0].Status, list[1].Status)
 	}
 
 	// The agent falls silent: its last result no longer counts.
 	e.srv.now = func() time.Time { return time.Now().Add(5 * time.Minute) }
 	admin.want(http.StatusOK, "GET", "/api/v1/streams", nil, &list)
-	if list[0].Status != statusNoData || list[0].Agents[0].Status != statusNoData {
+	if list[0].Status != streamstatus.NoData() || list[0].Agents[0].Status != streamstatus.NoData() {
 		t.Errorf("status with a silent agent = %s, want nodata", list[0].Status)
 	}
 	var agents []agentView
@@ -608,35 +631,35 @@ func TestIncidentScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	ing := ingest.New(e.st, metrics.New("", nil), nil)
-	variants := []probe.Variant{{Key: probe.VariantMedia, Kind: probe.KindVideo}}
+	variants := []probe.Variant{{Key: variantkey.Media(), Kind: variantkind.Video()}}
 	streams := map[string]*store.Stream{}
-	report := func(name string, agentID int64, server string) {
+	report := func(name string, agentID id.Agent, server node.Node) {
 		t.Helper()
 		st := streams[name]
 		if st == nil {
 			var err error
-			st, err = e.st.CreateStream(ctx, store.StreamInput{Name: name, URL: "http://x/" + name + ".m3u8", Enabled: true, Level: "playlist",
-				AgentIDs: []int64{store.LocalAgentID, edge.ID}}, now)
+			st, err = e.st.CreateStream(ctx, store.StreamInput{Name: name, URL: "http://x/" + name + ".m3u8", Enabled: true, Level: level.Playlist(), Picture: picturemode.Check(),
+				AgentIDs: []id.Agent{store.LocalAgentID(), edge.ID}}, now)
 			if err != nil {
 				t.Fatal(err)
 			}
 			streams[name] = st
 		}
-		r := &probe.Result{TargetID: st.ID, Time: now, Status: probe.StatusOK, Variants: variants}
-		if server != "" {
-			r.Status = probe.StatusFail
-			r.Problems = []probe.Problem{{Kind: probe.ProbPlaylistStale, Severity: probe.SevCrit, Variant: probe.VariantMedia, Message: "stale", Count: 1,
-				Details: map[string]any{"playlist_server": server}}}
+		r := &probe.Result{TargetID: st.ID, Time: now, Status: status.OK(), Variants: variants}
+		if !server.IsZero() {
+			r.Status = status.Fail()
+			r.Problems = []probe.Problem{{Kind: problemkind.PlaylistStale(), Severity: severity.Crit(), Variant: variantkey.Media(), Message: "stale", Count: 1,
+				Details: detail.Of(detail.PlaylistServer(server))}}
 		}
 		if err := ing.Apply(ctx, agentID, r); err != nil {
 			t.Fatal(err)
 		}
 	}
-	report("a", store.LocalAgentID, "bad-server 10.0.0.6")
-	report("a", edge.ID, "") // the other vantage point sees nothing wrong
-	report("b", store.LocalAgentID, "bad-server 10.0.0.6")
-	report("c", store.LocalAgentID, "bad-server 10.0.0.6")
-	report("d", store.LocalAgentID, "good-server 10.0.0.1")
+	report("a", store.LocalAgentID(), node.Of("bad-server", "10.0.0.6"))
+	report("a", edge.ID, node.Node{}) // the other vantage point sees nothing wrong
+	report("b", store.LocalAgentID(), node.Of("bad-server", "10.0.0.6"))
+	report("c", store.LocalAgentID(), node.Of("bad-server", "10.0.0.6"))
+	report("d", store.LocalAgentID(), node.Of("good-server", "10.0.0.1"))
 
 	c := e.login("viewer")
 	var list []store.Incident
@@ -644,15 +667,15 @@ func TestIncidentScope(t *testing.T) {
 	var id int64
 	for _, i := range list {
 		if i.StreamName == "a" {
-			id = i.ID
+			id = i.ID.Int64()
 		}
 	}
 	var sc incidentScope
 	c.want(200, "GET", fmt.Sprintf("/api/v1/incidents/%d/scope", id), nil, &sc)
-	if sc.Vantage != "only_this" || len(sc.Agents) != 2 {
+	if sc.Vantage != vantagescope.OnlyThis() || len(sc.Agents) != 2 {
 		t.Errorf("vantage = %q with agents %+v; want only_this of two", sc.Vantage, sc.Agents)
 	}
-	if !sc.ServerWide || len(sc.SameServer) != 2 || sc.SameServer[0].Name != "b" || sc.Elsewhere != 1 || sc.Server != "bad-server 10.0.0.6" {
+	if !sc.ServerWide || len(sc.SameServer) != 2 || sc.SameServer[0].Name != "b" || sc.Elsewhere != 1 || sc.Server != node.Of("bad-server", "10.0.0.6") {
 		t.Errorf("server scope = %+v; want streams b and c on the same server, one elsewhere", sc)
 	}
 	c.want(404, "GET", "/api/v1/incidents/999999/scope", nil, nil)
@@ -663,9 +686,9 @@ func TestSelfDiagnostics(t *testing.T) {
 	admin := e.login("admin")
 	anon := e.client()
 
-	var ready readiness
+	var ready readyAnswer
 	anon.want(http.StatusOK, "GET", "/readyz", nil, &ready)
-	if ready.Status != "ok" || ready.Checks["database"] != "ok" || ready.Checks["time_series"] != "disabled" || ready.Checks["load"] != "ok" {
+	if ready.Status != readiness.OK() || ready.Checks.Database != healthstate.OK() || ready.Checks.TimeSeries != healthstate.Disabled() || ready.Checks.Load != healthstate.OK() {
 		t.Errorf("readiness = %+v", ready)
 	}
 
@@ -691,7 +714,7 @@ func TestSelfDiagnostics(t *testing.T) {
 	if len(agents) != 2 || agents[0].Status == nil || agents[1].Status == nil {
 		t.Fatalf("agents = %+v", agents)
 	}
-	if st := agents[1].Status; st.QueueResults != 7 || st.QueueDropped != 3 || st.Overloaded != "processor" || st.Behind != 1 {
+	if st := agents[1].Status; st.QueueResults != 7 || st.QueueDropped != 3 || st.Overloaded != overload.Processor() || st.Behind != 1 {
 		t.Errorf("status of the remote agent = %+v", st)
 	}
 
@@ -784,7 +807,7 @@ func TestSeriesOfDeletedStreamAreRemoved(t *testing.T) {
 	now := time.Now()
 	srv.now = func() time.Time { return now }
 
-	s, err := st.CreateStream(ctx, store.StreamInput{Name: "gone", URL: "http://x/a.m3u8", Enabled: true, Level: "header"}, now)
+	s, err := st.CreateStream(ctx, store.StreamInput{Name: "gone", URL: "http://x/a.m3u8", Enabled: true, Level: level.Header(), Picture: picturemode.Check()}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -827,10 +850,10 @@ func TestWatchThroughTheServer(t *testing.T) {
 	var watch watchResponse
 	admin.want(http.StatusOK, "GET", "/api/v1/streams/1/watch", nil, &watch)
 	sources := watch.Sources
-	if len(watch.Vantages) != 1 || !watch.Vantages[0].Local || !watch.Vantages[0].Available || watch.Vantage != store.LocalAgentID {
+	if len(watch.Vantages) != 1 || !watch.Vantages[0].Local || !watch.Vantages[0].Available || watch.Vantage != store.LocalAgentID() {
 		t.Fatalf("vantages = %+v", watch)
 	}
-	if len(sources) != 1 || sources[0].Kind != "configured" || !strings.HasPrefix(sources[0].URL, "/api/v1/play/") {
+	if len(sources) != 1 || sources[0].Kind != watchsource.Configured() || !strings.HasPrefix(sources[0].URL, "/api/v1/play/") {
 		t.Fatalf("sources = %+v", sources)
 	}
 	viewer := e.login("viewer")
@@ -926,24 +949,24 @@ func TestWatchThroughTheServer(t *testing.T) {
 	}
 	// What the origin does not have is the origin's answer, not an error of ours.
 	e.srv.now = func() time.Time { return time.Now() }
-	missing := e.srv.signPlay(playToken{URL: e.origin.URL + "/nothing.ts", Stream: 1, Expires: time.Now().Add(time.Minute).Unix(), Inside: true})
+	missing := e.srv.signPlay(playToken{URL: e.origin.URL + "/nothing.ts", Stream: id.StreamOf(1), Expires: time.Now().Add(time.Minute).Unix(), Inside: true})
 	if code, _, _ := get("/api/v1/play/" + missing); code != http.StatusNotFound {
 		t.Errorf("a missing segment: status %d, want 404", code)
 	}
-	expired := e.srv.signPlay(playToken{URL: e.origin.URL + "/master.m3u8", Stream: 1, Expires: time.Now().Add(-time.Minute).Unix(), Entry: true})
+	expired := e.srv.signPlay(playToken{URL: e.origin.URL + "/master.m3u8", Stream: id.StreamOf(1), Expires: time.Now().Add(-time.Minute).Unix(), Entry: true})
 	if code, _, _ := get("/api/v1/play/" + expired); code != http.StatusForbidden {
 		t.Errorf("an expired path: status %d, want 403", code)
 	}
 
 	// Once the stream has been checked, the server it was served from is known.
 	waitFor(t, "the stream to be checked", func() bool {
-		return e.srv.entryFinalURL(context.Background(), 1) != nil
+		return e.srv.entryFinalURL(context.Background(), id.StreamOf(1)) != nil
 	})
 
 	// An agent that is not asking for such work: the viewer is told so,
 	// and soon.
 	e.srv.fetchHandOver = 100 * time.Millisecond
-	idle := e.srv.signPlay(playToken{URL: e.origin.URL + "/master.m3u8", Stream: 1, Agent: 7, Expires: time.Now().Add(time.Minute).Unix(), Entry: true})
+	idle := e.srv.signPlay(playToken{URL: e.origin.URL + "/master.m3u8", Stream: id.StreamOf(1), Agent: id.AgentOf(7), Expires: time.Now().Add(time.Minute).Unix(), Entry: true})
 	if code, body, _ := get("/api/v1/play/" + idle); code != http.StatusBadGateway || !strings.Contains(body, "not taking requests") {
 		t.Errorf("an agent that does not listen: %d %s", code, body)
 	}
@@ -976,7 +999,7 @@ func TestPlayKeySurvivesRestart(t *testing.T) {
 	defer st.Close()
 	mx := metrics.New("", nil)
 	key := []byte("0123456789abcdef0123456789abcdef")
-	tok := playToken{URL: "http://x/a.m3u8", Stream: 1, Expires: time.Now().Add(time.Hour).Unix()}
+	tok := playToken{URL: "http://x/a.m3u8", Stream: id.StreamOf(1), Expires: time.Now().Add(time.Hour).Unix()}
 	before := New(Config{PlayKey: key}, st, mx, ingest.New(st, mx, nil), nil, nil, nil)
 	after := New(Config{PlayKey: key}, st, mx, ingest.New(st, mx, nil), nil, nil, nil)
 	other := New(Config{}, st, mx, ingest.New(st, mx, nil), nil, nil, nil)
@@ -995,27 +1018,27 @@ func TestServerIncidents(t *testing.T) {
 	now := time.Now().Truncate(time.Second)
 	e.srv.now = func() time.Time { return now }
 	ing := ingest.New(e.st, metrics.New("", nil), nil)
-	variants := []probe.Variant{{Key: probe.VariantMedia, Kind: probe.KindVideo}}
+	variants := []probe.Variant{{Key: variantkey.Media(), Kind: variantkind.Video()}}
 	streams := map[string]*store.Stream{}
-	report := func(name, server string) {
+	report := func(name string, server node.Node) {
 		t.Helper()
 		st := streams[name]
 		if st == nil {
 			var err error
-			if st, err = e.st.CreateStream(ctx, store.StreamInput{Name: name, URL: "http://x/" + name + ".m3u8", Enabled: true, Level: "playlist",
-				AgentIDs: []int64{store.LocalAgentID}}, now); err != nil {
+			if st, err = e.st.CreateStream(ctx, store.StreamInput{Name: name, URL: "http://x/" + name + ".m3u8", Enabled: true, Level: level.Playlist(), Picture: picturemode.Check(),
+				AgentIDs: []id.Agent{store.LocalAgentID()}}, now); err != nil {
 				t.Fatal(err)
 			}
 			streams[name] = st
 		}
-		r := &probe.Result{TargetID: st.ID, Time: now, Status: probe.StatusOK, Variants: variants,
-			Metrics: []probe.Metric{{Name: "hls_up", Variant: probe.VariantMedia, Value: 1}}}
-		if server != "" {
-			r.Status = probe.StatusFail
-			r.Problems = []probe.Problem{{Kind: probe.ProbPlaylistHTTP, Severity: probe.SevCrit, Variant: probe.VariantMedia, Message: "playlist returned HTTP 404", Count: 1,
-				Details: map[string]any{"playlist_server": server}}}
+		r := &probe.Result{TargetID: st.ID, Time: now, Status: status.OK(), Variants: variants,
+			Metrics: []probe.Metric{{Name: metricname.Up(), Variant: variantkey.Media(), Value: 1}}}
+		if !server.IsZero() {
+			r.Status = status.Fail()
+			r.Problems = []probe.Problem{{Kind: problemkind.PlaylistHTTP(), Severity: severity.Crit(), Variant: variantkey.Media(), Message: "playlist returned HTTP 404", Count: 1,
+				Details: detail.Of(detail.PlaylistServer(server))}}
 		}
-		if err := ing.Apply(ctx, store.LocalAgentID, r); err != nil {
+		if err := ing.Apply(ctx, store.LocalAgentID(), r); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -1028,23 +1051,22 @@ func TestServerIncidents(t *testing.T) {
 	}
 
 	// Two streams of a server are two streams; a third makes it the server's.
-	report("a", "bad-server 10.0.0.6")
-	report("b", "bad-server 10.0.0.6")
-	report("z", "other-server 10.0.0.9")
+	report("a", node.Of("bad-server", "10.0.0.6"))
+	report("b", node.Of("bad-server", "10.0.0.6"))
+	report("z", node.Of("other-server", "10.0.0.9"))
 	e.srv.WatchServers(ctx)
 	if got := list(""); len(got) != 0 {
 		t.Fatalf("two streams made an incident of the server: %+v", got)
 	}
-	report("c", "bad-server 10.0.0.6")
+	report("c", node.Of("bad-server", "10.0.0.6"))
 	e.srv.WatchServers(ctx)
 	got := list("?open=true")
-	if len(got) != 1 || got[0].Host != "bad-server" || got[0].IP != "10.0.0.6" || got[0].Kind != probe.ProbPlaylistHTTP ||
-		got[0].Severity != probe.SevCrit || got[0].Streams != 3 || got[0].EndedAt != nil {
+	if len(got) != 1 || got[0].Host != "bad-server" || got[0].IP != "10.0.0.6" || got[0].Kind != problemkind.PlaylistHTTP() ||
+		got[0].Severity != severity.Crit() || got[0].Streams != 3 || got[0].EndedAt != nil {
 		t.Fatalf("server incidents = %+v", got)
 	}
-	var d serverIncidentDetails
-	if err := json.Unmarshal(got[0].Details, &d); err != nil || len(d.Streams) != 3 || d.Streams[0].Name != "a" {
-		t.Errorf("details = %s, %v", got[0].Details, err)
+	if d := got[0].Details; len(d.Streams) != 3 || d.Streams[0].Name != "a" {
+		t.Errorf("details = %+v", d)
 	}
 	var ov overviewResponse
 	c.want(200, "GET", "/api/v1/overview", nil, &ov)
@@ -1057,7 +1079,7 @@ func TestServerIncidents(t *testing.T) {
 	for range 3 {
 		step(10 * time.Second)
 		for _, name := range []string{"a", "b", "c"} {
-			report(name, "")
+			report(name, node.Node{})
 		}
 		e.srv.WatchServers(ctx)
 	}
@@ -1074,7 +1096,7 @@ func TestServerIncidents(t *testing.T) {
 	// It comes back a few minutes later: the same incident goes on.
 	step(time.Minute)
 	for _, name := range []string{"a", "b", "c"} {
-		report(name, "bad-server 10.0.0.6")
+		report(name, node.Of("bad-server", "10.0.0.6"))
 	}
 	e.srv.WatchServers(ctx)
 	got = list("")
@@ -1141,16 +1163,16 @@ func TestSlates(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	now := time.Now().Truncate(time.Second)
-	st, err := e.st.CreateStream(ctx, store.StreamInput{Name: "tv", URL: "http://x/tv.m3u8", Enabled: true, Level: "segments",
-		AgentIDs: []int64{store.LocalAgentID}}, now)
+	st, err := e.st.CreateStream(ctx, store.StreamInput{Name: "tv", URL: "http://x/tv.m3u8", Enabled: true, Level: level.Segments(), Picture: picturemode.Check(),
+		AgentIDs: []id.Agent{store.LocalAgentID()}}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	cells := bytes.Repeat([]byte{70}, 32*18)
 	jpg := []byte{0xFF, 0xD8, 0xFF, 0xD9}
 	ing := ingest.New(e.st, metrics.New("", nil), nil)
-	if err := ing.Apply(ctx, store.LocalAgentID, &probe.Result{TargetID: st.ID, Time: now, Status: probe.StatusOK,
-		Picture: &probe.Picture{Variant: probe.VariantMedia, Time: now, HasPicture: true, Luma: 70, JPEG: jpg, Cells: cells}}); err != nil {
+	if err := ing.Apply(ctx, store.LocalAgentID(), &probe.Result{TargetID: st.ID, Time: now, Status: status.OK(),
+		Picture: &probe.Picture{Variant: variantkey.Media(), Time: now, HasPicture: true, Luma: 70, JPEG: jpg, Cells: cells}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1212,8 +1234,8 @@ func TestClipsKnownByTheirFrames(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	now := time.Now().Truncate(time.Second)
-	st, err := e.st.CreateStream(ctx, store.StreamInput{Name: "tv", URL: "http://x/tv.m3u8", Enabled: true, Level: "segments",
-		AgentIDs: []int64{store.LocalAgentID}}, now)
+	st, err := e.st.CreateStream(ctx, store.StreamInput{Name: "tv", URL: "http://x/tv.m3u8", Enabled: true, Level: level.Segments(), Picture: picturemode.Check(),
+		AgentIDs: []id.Agent{store.LocalAgentID()}}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1221,12 +1243,12 @@ func TestClipsKnownByTheirFrames(t *testing.T) {
 	// coded frames it is made of.
 	keys := []uint64{0xfedcba9876543210, 3, 17}
 	ing := ingest.New(e.st, metrics.New("", nil), nil)
-	if err := ing.Apply(ctx, store.LocalAgentID, &probe.Result{TargetID: st.ID, Time: now, Status: probe.StatusFail,
-		Problems: []probe.Problem{{Kind: probe.ProbPictureLoop, Severity: probe.SevCrit, Variant: probe.VariantMedia, Message: "round",
-			Details: map[string]any{"clip_signature": probe.Signature(keys)}}}}); err != nil {
+	if err := ing.Apply(ctx, store.LocalAgentID(), &probe.Result{TargetID: st.ID, Time: now, Status: status.Fail(),
+		Problems: []probe.Problem{{Kind: problemkind.PictureLoop(), Severity: severity.Crit(), Variant: variantkey.Media(), Message: "round",
+			Details: detail.Of(detail.ClipSignature(keys))}}}); err != nil {
 		t.Fatal(err)
 	}
-	incs, err := e.st.ListIncidents(ctx, store.IncidentFilter{Kind: probe.ProbPictureLoop})
+	incs, err := e.st.ListIncidents(ctx, store.IncidentFilter{Kind: problemkind.PictureLoop()})
 	if err != nil || len(incs) != 1 {
 		t.Fatalf("incidents = %v, %v", incs, err)
 	}

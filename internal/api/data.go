@@ -15,6 +15,12 @@ import (
 	"github.com/hotid/hls-monitor/internal/runner"
 	"github.com/hotid/hls-monitor/internal/selfstat"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/aggregation"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/streamstatus"
 )
 
 // agentView is an agent with its reachability.
@@ -30,7 +36,7 @@ type agentView struct {
 // overviewResponse is the data of the dashboard.
 type overviewResponse struct {
 	Time      time.Time         `json:"time"`
-	Counts    map[string]int    `json:"counts"`
+	Counts    streamCounts      `json:"counts"`
 	Streams   []*streamView     `json:"streams"`
 	Agents    []agentView       `json:"agents"`
 	Incidents []*store.Incident `json:"incidents"`
@@ -38,8 +44,8 @@ type overviewResponse struct {
 	ServerIncidents []*store.ServerIncident `json:"server_incidents"`
 }
 
-func (s *Server) agentViews(agents map[int64]*store.Agent, streams []*store.Stream, now time.Time) []agentView {
-	perAgent := map[int64]int{}
+func (s *Server) agentViews(agents map[id.Agent]*store.Agent, streams []*store.Stream, now time.Time) []agentView {
+	perAgent := map[id.Agent]int{}
 	for _, st := range streams {
 		if !st.Enabled {
 			continue
@@ -58,7 +64,7 @@ func (s *Server) agentViews(agents map[int64]*store.Agent, streams []*store.Stre
 	}
 	// Map order is random; the local agent first, then by ID.
 	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].ID < out[j-1].ID; j-- {
+		for j := i; j > 0 && out[j].ID.Compare(out[j-1].ID) < 0; j-- {
 			out[j], out[j-1] = out[j-1], out[j]
 		}
 	}
@@ -94,17 +100,16 @@ func (s *Server) overview(c *gin.Context) {
 	out := overviewResponse{
 		ServerIncidents: serverIncidents,
 		Time:            sc.now.UTC(),
-		Counts:          map[string]int{statusOK: 0, statusWarn: 0, statusFail: 0, statusNoData: 0, statusDisabled: 0},
 		Streams:         make([]*streamView, 0, len(streams)),
 		Agents:          s.agentViews(sc.agents, streams, sc.now),
 		Incidents:       incidents,
 	}
 	for _, st := range streams {
 		v := s.view(st, sc, isAdmin(c))
-		out.Counts[v.Status]++
+		out.Counts.count(v.Status)
 		out.Streams = append(out.Streams, v)
 	}
-	out.Counts["total"] = len(streams)
+	out.Counts.Total = len(streams)
 	c.JSON(http.StatusOK, out)
 }
 
@@ -158,7 +163,7 @@ func (s *Server) publicURL(c *gin.Context) string {
 
 // metricSeries is the result of a chart query for one metric.
 type metricSeries struct {
-	Metric string           `json:"metric"`
+	Metric metricname.Name  `json:"metric"`
 	Series []metrics.Series `json:"series"`
 }
 
@@ -170,12 +175,22 @@ type seriesResponse struct {
 	Metrics []metricSeries `json:"metrics"`
 }
 
-var aggregations = map[string]string{
-	"avg":  "avg_over_time",
-	"max":  "max_over_time",
-	"min":  "min_over_time",
-	"last": "last_over_time",
-	"sum":  "sum_over_time",
+// rollup is the function of the query language that aggregates the way
+// asked.
+func rollup(how aggregation.How) string {
+	switch how {
+	case aggregation.Avg():
+		return "avg_over_time"
+	case aggregation.Max():
+		return "max_over_time"
+	case aggregation.Min():
+		return "min_over_time"
+	case aggregation.Last():
+		return "last_over_time"
+	case aggregation.Sum():
+		return "sum_over_time"
+	}
+	panic("api: an aggregation that was never set")
 }
 
 // series godoc
@@ -197,24 +212,25 @@ var aggregations = map[string]string{
 //	@Failure	502		{object}	apiError
 //	@Router		/api/v1/streams/{id}/series [get]
 func (s *Server) series(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
-	names := strings.Split(c.Query("metric"), ",")
-	if len(names) == 0 || len(names) > 12 {
+	asked := strings.Split(c.Query("metric"), ",")
+	if len(asked) == 0 || len(asked) > 12 {
 		badRequest(c, "metric must list 1 to 12 names")
 		return
 	}
-	for i, n := range names {
-		names[i] = strings.TrimSpace(n)
-		if !metrics.ValidName(names[i]) || !strings.HasPrefix(names[i], "hls_") {
+	names := make([]metricname.Name, len(asked))
+	for i, n := range asked {
+		var err error
+		if names[i], err = metricname.Parse(strings.TrimSpace(n)); err != nil {
 			badRequest(c, "invalid metric name "+n)
 			return
 		}
 	}
-	fn, ok := aggregations[c.DefaultQuery("agg", "avg")]
-	if !ok {
+	how, err := aggregation.Parse(c.DefaultQuery("agg", "avg"))
+	if err != nil {
 		badRequest(c, "agg must be one of: avg, max, min, last, sum")
 		return
 	}
@@ -243,12 +259,12 @@ func (s *Server) series(c *gin.Context) {
 	// Align to the step so that consecutive refreshes return the same buckets.
 	from = from.Truncate(step)
 
-	sel := fmt.Sprintf(`stream="%d"`, id)
-	if a := queryInt(c, "agent"); a > 0 {
-		sel += fmt.Sprintf(`,agent="%d"`, a)
+	sel := fmt.Sprintf(`stream="%s"`, streamID)
+	if a := queryID[id.Agent](c, "agent"); !a.IsZero() {
+		sel += fmt.Sprintf(`,agent="%s"`, a)
 	}
-	if v := queryInt(c, "variant"); v > 0 {
-		sel += fmt.Sprintf(`,variant="%d"`, v)
+	if v := queryID[id.Variant](c, "variant"); !v.IsZero() {
+		sel += fmt.Sprintf(`,variant="%s"`, v)
 	}
 
 	out := seriesResponse{
@@ -262,7 +278,7 @@ func (s *Server) series(c *gin.Context) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			expr := fmt.Sprintf("%s(%s{%s}[%ds])", fn, name, sel, int(step.Seconds()))
+			expr := fmt.Sprintf("%s(%s{%s}[%ds])", rollup(how), name, sel, int(step.Seconds()))
 			res, err := s.mx.QueryRange(c.Request.Context(), expr, from, to, step)
 			if err != nil {
 				mu.Lock()
@@ -282,7 +298,7 @@ func (s *Server) series(c *gin.Context) {
 	wg.Wait()
 	if firstErr != nil {
 		s.log.Warn("series query failed", "error", firstErr)
-		fail(c, http.StatusBadGateway, "metrics_unavailable", "the time series storage is not available")
+		fail(c, http.StatusBadGateway, errcode.MetricsUnavailable(), "the time series storage is not available")
 		return
 	}
 	c.JSON(http.StatusOK, out)
@@ -302,14 +318,14 @@ func (s *Server) series(c *gin.Context) {
 //	@Success	200			{array}	store.SegmentRecord
 //	@Router		/api/v1/streams/{id}/segments [get]
 func (s *Server) listSegments(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
 	rows, err := s.st.ListSegments(c.Request.Context(), store.SegmentFilter{
-		StreamID:     id,
-		AgentID:      queryInt(c, "agent"),
-		VariantID:    queryInt(c, "variant"),
+		StreamID:     streamID,
+		AgentID:      queryID[id.Agent](c, "agent"),
+		VariantID:    queryID[id.Variant](c, "variant"),
 		OnlyProblems: c.Query("problems") == "true" || c.Query("problems") == "1",
 		Before:       queryTime(c, "before"),
 		Limit:        int(queryInt(c, "limit")),
@@ -330,11 +346,11 @@ func (s *Server) listSegments(c *gin.Context) {
 //	@Success	200		{array}	store.Snapshot
 //	@Router		/api/v1/streams/{id}/snapshots [get]
 func (s *Server) listSnapshots(c *gin.Context) {
-	id, ok := pathID(c)
+	streamID, ok := pathID[id.Stream](c)
 	if !ok {
 		return
 	}
-	rows, err := s.st.ListSnapshots(c.Request.Context(), id, int(queryInt(c, "limit")))
+	rows, err := s.st.ListSnapshots(c.Request.Context(), streamID, int(queryInt(c, "limit")))
 	if s.storeError(c, err) {
 		return
 	}
@@ -351,11 +367,11 @@ func (s *Server) listSnapshots(c *gin.Context) {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/snapshots/{id} [get]
 func (s *Server) getSnapshot(c *gin.Context) {
-	id, ok := pathID(c)
+	snapshotID, ok := pathID[id.Snapshot](c)
 	if !ok {
 		return
 	}
-	sn, err := s.st.GetSnapshot(c.Request.Context(), id)
+	sn, err := s.st.GetSnapshot(c.Request.Context(), snapshotID)
 	if s.storeError(c, err) {
 		return
 	}
@@ -379,8 +395,8 @@ func (s *Server) getSnapshot(c *gin.Context) {
 //	@Router		/api/v1/incidents [get]
 func (s *Server) listIncidents(c *gin.Context) {
 	f := store.IncidentFilter{
-		StreamID: queryInt(c, "stream"),
-		AgentID:  queryInt(c, "agent"),
+		StreamID: queryID[id.Stream](c, "stream"),
+		AgentID:  queryID[id.Agent](c, "agent"),
 		From:     queryTime(c, "from"),
 		To:       queryTime(c, "to"),
 		Limit:    int(queryInt(c, "limit")),
@@ -388,8 +404,8 @@ func (s *Server) listIncidents(c *gin.Context) {
 	f.Problems = c.Query("problems") == "true" || c.Query("problems") == "1"
 	if raw := c.Query("severity"); raw != "" {
 		for _, sev := range strings.Split(raw, ",") {
-			switch sev = strings.TrimSpace(sev); sev {
-			case "info", "warn", "crit":
+			switch sev, err := severity.Parse(strings.TrimSpace(sev)); {
+			case err == nil:
 				f.Severities = append(f.Severities, sev)
 			default:
 				badRequest(c, "severity must be a comma-separated list of info, warn, crit")
@@ -453,7 +469,7 @@ func (s *Server) timeline(c *gin.Context) {
 	res, err := s.mx.QueryRange(c.Request.Context(), expr, from, to, step)
 	if err != nil {
 		s.log.Warn("timeline query failed", "error", err)
-		fail(c, http.StatusBadGateway, "metrics_unavailable", "the time series storage is not available")
+		fail(c, http.StatusBadGateway, errcode.MetricsUnavailable(), "the time series storage is not available")
 		return
 	}
 	out := timelineResponse{From: float64(from.Unix()), To: float64(to.Unix()), Step: step.Seconds(), Streams: map[string][][2]float64{}}
@@ -461,4 +477,29 @@ func (s *Server) timeline(c *gin.Context) {
 		out.Streams[sr.Labels["stream"]] = sr.Points
 	}
 	c.JSON(http.StatusOK, out)
+}
+
+// streamCounts is how many streams are in each state.
+type streamCounts struct {
+	OK       int `json:"ok"`
+	Warn     int `json:"warn"`
+	Fail     int `json:"fail"`
+	NoData   int `json:"nodata"`
+	Disabled int `json:"disabled"`
+	Total    int `json:"total"`
+}
+
+func (n *streamCounts) count(st streamstatus.Status) {
+	switch st {
+	case streamstatus.OK():
+		n.OK++
+	case streamstatus.Warn():
+		n.Warn++
+	case streamstatus.Fail():
+		n.Fail++
+	case streamstatus.NoData():
+		n.NoData++
+	case streamstatus.Disabled():
+		n.Disabled++
+	}
 }

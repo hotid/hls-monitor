@@ -11,6 +11,10 @@ import (
 	"github.com/Eyevinn/mp4ff/avc"
 	"github.com/Eyevinn/mp4ff/hevc"
 	"github.com/asticode/go-astits"
+
+	"github.com/hotid/hls-monitor/internal/types/codec"
+	"github.com/hotid/hls-monitor/internal/types/trackkind"
+	"github.com/hotid/hls-monitor/internal/types/videorange"
 )
 
 const (
@@ -190,7 +194,7 @@ func demuxTS(data []byte, info *Info) {
 				t := &tsTrack{streamType: es.StreamType}
 				t.ID = uint32(es.ElementaryPID)
 				t.Kind, t.Codec = tsStreamKind(es.StreamType)
-				if t.Kind == KindOther {
+				if t.Kind == trackkind.Other() {
 					t.Kind, t.Codec = tsPrivateSound(es, t.Codec)
 				}
 				tracks[es.ElementaryPID] = t
@@ -198,7 +202,7 @@ func demuxTS(data []byte, info *Info) {
 			}
 		case d.PES != nil:
 			t, ok := tracks[d.PID]
-			if !ok || t.Kind == KindOther {
+			if !ok || t.Kind == trackkind.Other() {
 				continue
 			}
 			handlePES(t, d)
@@ -207,7 +211,7 @@ func demuxTS(data []byte, info *Info) {
 
 	for _, pid := range order {
 		t := tracks[pid]
-		if t.Kind == KindOther {
+		if t.Kind == trackkind.Other() {
 			continue
 		}
 		finalizeTSTrack(t)
@@ -215,63 +219,63 @@ func demuxTS(data []byte, info *Info) {
 	}
 }
 
-func tsStreamKind(st astits.StreamType) (kind, codec string) {
+func tsStreamKind(st astits.StreamType) (trackkind.Kind, codec.Codec) {
 	switch st {
 	case astits.StreamTypeH264Video:
-		return KindVideo, "h264"
+		return trackkind.Video(), codec.H264()
 	case astits.StreamTypeH265Video:
-		return KindVideo, "hevc"
+		return trackkind.Video(), codec.HEVC()
 	case astits.StreamTypeMPEG2Video:
-		return KindVideo, "mpeg2video"
+		return trackkind.Video(), codec.MPEG2Video()
 	case astits.StreamTypeMPEG1Video:
-		return KindVideo, "mpeg1video"
+		return trackkind.Video(), codec.MPEG1Video()
 	case astits.StreamTypeMPEG4Video:
-		return KindVideo, "mpeg4"
+		return trackkind.Video(), codec.MPEG4()
 	case astits.StreamTypeAACAudio:
-		return KindAudio, "aac"
+		return trackkind.Audio(), codec.AAC()
 	case astits.StreamTypeAACLATMAudio:
-		return KindAudio, "aac-latm"
+		return trackkind.Audio(), codec.AACLATM()
 	case astits.StreamTypeMPEG1Audio, astits.StreamTypeMPEG2Audio:
-		return KindAudio, "mp3"
+		return trackkind.Audio(), codec.MP3()
 	case astits.StreamTypeAC3Audio:
-		return KindAudio, "ac3"
+		return trackkind.Audio(), codec.AC3()
 	case astits.StreamTypeEAC3Audio:
-		return KindAudio, "eac3"
+		return trackkind.Audio(), codec.EAC3()
 	case astits.StreamTypeDTSAudio:
-		return KindAudio, "dts"
+		return trackkind.Audio(), codec.DTS()
 	}
-	return KindOther, fmt.Sprintf("0x%02x", uint8(st))
+	return trackkind.Other(), codec.Named(fmt.Sprintf("0x%02x", uint8(st)))
 }
 
 // tsPrivateSound names the sound carried as private data: what DVB does
 // with AC-3, E-AC-3 and DTS, telling which by a descriptor, the stream
 // type saying nothing. Teletext and subtitles are carried the same way and
 // stay what they were.
-func tsPrivateSound(es *astits.PMTElementaryStream, codec string) (string, string) {
+func tsPrivateSound(es *astits.PMTElementaryStream, was codec.Codec) (trackkind.Kind, codec.Codec) {
 	if es.StreamType != astits.StreamTypePrivateData && uint8(es.StreamType) != 0x83 && uint8(es.StreamType) != 0x84 {
-		return KindOther, codec
+		return trackkind.Other(), was
 	}
 	for _, d := range es.ElementaryStreamDescriptors {
 		switch {
 		case d == nil:
 		case d.Tag == astits.DescriptorTagAC3:
-			return KindAudio, "ac3"
+			return trackkind.Audio(), codec.AC3()
 		case d.Tag == astits.DescriptorTagEnhancedAC3:
-			return KindAudio, "eac3"
+			return trackkind.Audio(), codec.EAC3()
 		case d.Tag == 0x7b:
-			return KindAudio, "dts"
+			return trackkind.Audio(), codec.DTS()
 		case d.Tag == astits.DescriptorTagRegistration && d.Registration != nil:
 			switch d.Registration.FormatIdentifier {
 			case 0x41432d33: // "AC-3"
-				return KindAudio, "ac3"
+				return trackkind.Audio(), codec.AC3()
 			case 0x45414333: // "EAC3"
-				return KindAudio, "eac3"
+				return trackkind.Audio(), codec.EAC3()
 			case 0x44545331, 0x44545332, 0x44545333: // "DTS1".."DTS3"
-				return KindAudio, "dts"
+				return trackkind.Audio(), codec.DTS()
 			}
 		}
 	}
-	return KindOther, codec
+	return trackkind.Other(), was
 }
 
 // maxKeyHashes bounds Track.KeyHashes, maxSoundHashes Track.SoundHashes.
@@ -310,10 +314,10 @@ func handlePES(t *tsTrack, d *astits.DemuxerData) {
 	}
 
 	switch t.Kind {
-	case KindVideo:
+	case trackkind.Video():
 		before := t.video
 		sc := t.video.scan(t.Codec, d.PES.Data, !t.spsDone)
-		if sc.sps != nil && t.Codec == "h264" && !t.spsDone {
+		if sc.sps != nil && t.Codec == codec.H264() && !t.spsDone {
 			// Whether a slice is a field is told by the parameter set that
 			// has just been found: read the packet again knowing it.
 			t.spsDone = true
@@ -333,7 +337,7 @@ func handlePES(t *tsTrack, d *astits.DemuxerData) {
 		}
 		if !t.spsDone {
 			switch {
-			case sc.sps != nil && t.Codec == "hevc":
+			case sc.sps != nil && t.Codec == codec.HEVC():
 				t.spsDone = true
 				applyHEVCSPS(&t.Track, sc.sps)
 			case sc.width > 0:
@@ -364,8 +368,8 @@ func handlePES(t *tsTrack, d *astits.DemuxerData) {
 				t.keyPTS = append(t.keyPTS, pts)
 			}
 		}
-	case KindAudio:
-		if t.Codec == "aac" {
+	case trackkind.Audio():
+		if t.Codec == codec.AAC() {
 			n, sr, ch := countADTS(d.PES.Data)
 			t.SoundHashes = hashADTS(t.SoundHashes, d.PES.Data)
 			if sr > 0 && t.SampleRate == 0 {
@@ -432,11 +436,11 @@ func finalizeTSTrack(t *tsTrack) {
 	end := t.maxPTS
 
 	switch {
-	case t.Kind == KindAudio && t.Codec == "aac" && t.SampleRate > 0 && t.adtsFrames > 0:
+	case t.Kind == trackkind.Audio() && t.Codec == codec.AAC() && t.SampleRate > 0 && t.adtsFrames > 0:
 		t.Frames = t.adtsFrames
 		end = t.lastPESPTS + int64(float64(t.lastPESFrames)*1024*tsClock/float64(t.SampleRate))
 		end = max(end, t.maxPTS)
-	case t.Kind == KindVideo:
+	case t.Kind == trackkind.Video():
 		t.Frames = (t.halves + 1) / 2
 		t.PlainFrames = (t.plainHalves + 1) / 2
 		frameDur, last := videoFrameDuration(t.timed)
@@ -456,7 +460,7 @@ func finalizeTSTrack(t *tsTrack) {
 	t.StartPTS = float64(t.minPTS) / tsClock
 	t.EndPTS = float64(end) / tsClock
 
-	if t.Kind == KindVideo {
+	if t.Kind == trackkind.Video() {
 		if len(t.keyPTS) == 0 {
 			t.MaxGOP = t.Duration()
 		} else {
@@ -486,14 +490,14 @@ func applyH264SPS(t *Track, nalu []byte) *avc.SPS {
 
 // videoRange names the dynamic range a transfer function is of: PQ (HDR10,
 // Dolby Vision) and HLG are high, the rest standard and left unnamed.
-func videoRange(transfer uint) string {
+func videoRange(transfer uint) videorange.Range {
 	switch transfer {
 	case 16:
-		return "PQ"
+		return videorange.PQ()
 	case 18:
-		return "HLG"
+		return videorange.HLG()
 	}
-	return ""
+	return videorange.Range{}
 }
 
 func applyHEVCSPS(t *Track, nalu []byte) {
@@ -586,7 +590,7 @@ func analyzePackedAAC(data []byte, info *Info) {
 		info.Error = "no ADTS frames found"
 		return
 	}
-	t := Track{Kind: KindAudio, Codec: "aac", SampleRate: sr, Channels: ch, Frames: frames, Bytes: int64(len(data)), SoundHashes: hashADTS(nil, data)}
+	t := Track{Kind: trackkind.Audio(), Codec: codec.AAC(), SampleRate: sr, Channels: ch, Frames: frames, Bytes: int64(len(data)), SoundHashes: hashADTS(nil, data)}
 	if sr > 0 {
 		t.HasTiming = hasStart
 		t.StartPTS = start

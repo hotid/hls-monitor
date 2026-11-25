@@ -11,6 +11,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
 )
 
 func TestWriteAndRetry(t *testing.T) {
@@ -37,10 +40,9 @@ func TestWriteAndRetry(t *testing.T) {
 	c := New(srv.URL, nil)
 	ts := time.UnixMilli(1700000000123)
 	c.Write([]Sample{
-		{Name: "hls_up", Stream: 3, Agent: 1, Variant: 7, Value: 1, Time: ts},
-		{Name: "hls_stream_status", Stream: 3, Agent: 1, Value: 2, Time: ts},
-		{Name: "bad name", Stream: 3, Agent: 1, Value: 1, Time: ts},
-		{Name: "hls_nan", Stream: 3, Agent: 1, Value: math.NaN(), Time: ts},
+		{Name: metricname.Up(), Stream: id.StreamOf(3), Agent: id.AgentOf(1), Variant: id.VariantOf(7), Value: 1, Time: ts},
+		{Name: metricname.StreamStatus(), Stream: id.StreamOf(3), Agent: id.AgentOf(1), Value: 2, Time: ts},
+		{Name: metricname.SegmentSizeBytes(), Stream: id.StreamOf(3), Agent: id.AgentOf(1), Value: math.NaN(), Time: ts},
 	})
 
 	if err := c.Flush(context.Background()); err == nil {
@@ -53,7 +55,7 @@ func TestWriteAndRetry(t *testing.T) {
 	mu.Lock()
 	fail = false
 	mu.Unlock()
-	c.Write([]Sample{{Name: "hls_up", Stream: 3, Agent: 1, Variant: 7, Value: 0, Time: ts.Add(time.Second)}})
+	c.Write([]Sample{{Name: metricname.Up(), Stream: id.StreamOf(3), Agent: id.AgentOf(1), Variant: id.VariantOf(7), Value: 0, Time: ts.Add(time.Second)}})
 	if err := c.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +90,7 @@ func TestQueryRange(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, nil)
-	series, err := c.QueryRange(context.Background(), "hls_up", time.Unix(100, 0), time.Unix(200, 0), 15*time.Second)
+	series, err := c.QueryRange(context.Background(), metricname.Up().String(), time.Unix(100, 0), time.Unix(200, 0), 15*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +107,7 @@ func TestQueryRange(t *testing.T) {
 
 func TestDisabledClient(t *testing.T) {
 	c := New("", nil)
-	c.Write([]Sample{{Name: "hls_up", Value: 1, Time: time.Now()}})
+	c.Write([]Sample{{Name: metricname.Up(), Value: 1, Time: time.Now()}})
 	if c.Stats().QueuedBytes != 0 {
 		t.Error("a disabled client must not queue")
 	}
@@ -159,7 +161,7 @@ func (s *importServer) count() int     { s.mu.Lock(); defer s.mu.Unlock(); retur
 func manySamples(n int, from time.Time) []Sample {
 	out := make([]Sample, n)
 	for i := range out {
-		out[i] = Sample{Name: "hls_segment_total_seconds", Stream: int64(i%400 + 1), Agent: 1, Variant: int64(i%900 + 1), Value: float64(i) / 7, Time: from.Add(time.Duration(i) * time.Millisecond)}
+		out[i] = Sample{Name: metricname.SegmentTotalSeconds(), Stream: id.StreamOf(int64(i%400 + 1)), Agent: id.AgentOf(1), Variant: id.VariantOf(int64(i%900 + 1)), Value: float64(i) / 7, Time: from.Add(time.Duration(i) * time.Millisecond)}
 	}
 	return out
 }
@@ -252,10 +254,10 @@ func TestServerLabels(t *testing.T) {
 	c := New(srv.URL, nil)
 	ts := time.UnixMilli(1700000000123)
 	c.Write([]Sample{
-		{Name: "hls_server_requests", Stream: 3, Agent: 1, Server: "edge-1.example.com:8080", IP: "2001:db8::1", Value: 4, Time: ts},
+		{Name: metricname.ServerRequests(), Stream: id.StreamOf(3), Agent: id.AgentOf(1), Server: "edge-1.example.com:8080", IP: "2001:db8::1", Value: 4, Time: ts},
 		// A name from a playlist is text of somebody else's: what cannot
 		// be a host is not written at all.
-		{Name: "hls_server_requests", Stream: 3, Agent: 1, Server: `a"} 1 1` + "\nevil", IP: "10.0.0.1", Value: 5, Time: ts},
+		{Name: metricname.ServerRequests(), Stream: id.StreamOf(3), Agent: id.AgentOf(1), Server: `a"} 1 1` + "\nevil", IP: "10.0.0.1", Value: 5, Time: ts},
 	})
 	if err := c.Flush(context.Background()); err != nil {
 		t.Fatal(err)

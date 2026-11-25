@@ -11,6 +11,9 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/auth"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/cookiesecure"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/role"
 )
 
 const (
@@ -27,7 +30,7 @@ func (s *Server) requireCSRFHeader(c *gin.Context) {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 	default:
 		if c.GetHeader("X-Requested-With") == "" {
-			fail(c, http.StatusForbidden, "csrf", "the X-Requested-With header is required")
+			fail(c, http.StatusForbidden, errcode.CSRF(), "the X-Requested-With header is required")
 			return
 		}
 	}
@@ -37,7 +40,7 @@ func (s *Server) requireCSRFHeader(c *gin.Context) {
 func (s *Server) requireSession(c *gin.Context) {
 	token, err := c.Cookie(sessionCookie)
 	if err != nil || token == "" {
-		fail(c, http.StatusUnauthorized, "unauthorized", "sign in required")
+		fail(c, http.StatusUnauthorized, errcode.Unauthorized(), "sign in required")
 		return
 	}
 	u, err := s.st.SessionUser(c.Request.Context(), auth.HashToken(token), s.now())
@@ -49,7 +52,7 @@ func (s *Server) requireSession(c *gin.Context) {
 	}
 	if err != nil {
 		s.clearCookie(c)
-		fail(c, http.StatusUnauthorized, "unauthorized", "sign in required")
+		fail(c, http.StatusUnauthorized, errcode.Unauthorized(), "sign in required")
 		return
 	}
 	c.Set(ctxUser, u)
@@ -57,8 +60,8 @@ func (s *Server) requireSession(c *gin.Context) {
 }
 
 func (s *Server) requireAdmin(c *gin.Context) {
-	if currentUser(c).Role != store.RoleAdmin {
-		fail(c, http.StatusForbidden, "forbidden", "administrator rights required")
+	if currentUser(c).Role != role.Admin() {
+		fail(c, http.StatusForbidden, errcode.Forbidden(), "administrator rights required")
 		return
 	}
 	c.Next()
@@ -79,9 +82,9 @@ func bearer(c *gin.Context) string {
 
 func (s *Server) cookieSecure(c *gin.Context) bool {
 	switch s.cfg.CookieSecure {
-	case "true":
+	case cookiesecure.Always():
 		return true
-	case "false":
+	case cookiesecure.Never():
 		return false
 	}
 	return c.Request.TLS != nil || strings.EqualFold(c.GetHeader("X-Forwarded-Proto"), "https")
@@ -195,7 +198,7 @@ func (s *Server) login(c *gin.Context) {
 	now := s.now()
 	ipKey, userKey := "ip:"+c.ClientIP(), "user:"+strings.ToLower(req.Username)
 	if s.logins.blocked(now, ipKey, userKey) {
-		fail(c, http.StatusTooManyRequests, "too_many_attempts", "too many failed attempts, try again in a few minutes")
+		fail(c, http.StatusTooManyRequests, errcode.TooManyAttempts(), "too many failed attempts, try again in a few minutes")
 		return
 	}
 
@@ -214,7 +217,7 @@ func (s *Server) login(c *gin.Context) {
 	if !ok {
 		s.logins.fail(now, ipKey, userKey)
 		s.log.Warn("failed sign-in", "username", req.Username, "ip", c.ClientIP())
-		fail(c, http.StatusUnauthorized, "bad_credentials", "wrong username or password")
+		fail(c, http.StatusUnauthorized, errcode.BadCredentials(), "wrong username or password")
 		return
 	}
 	s.logins.reset(userKey)
@@ -284,7 +287,7 @@ func (s *Server) changePassword(c *gin.Context) {
 	}
 	u := currentUser(c)
 	if !auth.VerifyPassword(u.PasswordHash, req.Current) {
-		fail(c, http.StatusBadRequest, "bad_credentials", "the current password is wrong")
+		fail(c, http.StatusBadRequest, errcode.BadCredentials(), "the current password is wrong")
 		return
 	}
 	hash, ok := s.newPasswordHash(c, req.New)

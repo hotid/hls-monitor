@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hotid/hls-monitor/internal/types/codec"
 )
 
 // clockPacket makes one packet of pid; pcr and ts are in 90 kHz ticks, -1 for none.
@@ -80,7 +82,7 @@ func TestSoundCarriedAsPrivateData(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := Analyze(data, nil)
-	if a := info.Audio(); a == nil || a.Codec != "ac3" {
+	if a := info.Audio(); a == nil || a.Codec != codec.AC3() {
 		t.Fatalf("tracks = %+v", info.Tracks)
 	}
 }

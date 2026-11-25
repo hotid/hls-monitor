@@ -3,7 +3,6 @@ package probe
 import (
 	"context"
 	"fmt"
-	"github.com/Eyevinn/hls-m3u8/m3u8"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -14,8 +13,22 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Eyevinn/hls-m3u8/m3u8"
+
 	"github.com/hotid/hls-monitor/internal/hlstest"
 	"github.com/hotid/hls-monitor/internal/httpx"
+	"github.com/hotid/hls-monitor/internal/types/container"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/overload"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/status"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
 )
 
 // fixture is a fake origin plus a checker with a controllable clock.
@@ -27,12 +40,12 @@ type fixture struct {
 	clock  time.Time
 }
 
-func newFixture(t *testing.T, opt hlstest.Options, path string, level Level) *fixture {
+func newFixture(t *testing.T, opt hlstest.Options, path string, lv level.Level) *fixture {
 	t.Helper()
 	f := &fixture{t: t, origin: hlstest.New(opt), clock: time.Now()}
 	f.srv = httptest.NewServer(f.origin.Handler())
 	t.Cleanup(f.srv.Close)
-	f.c = New(Target{ID: 1, URL: f.srv.URL + path, Level: level, TimeoutSec: 5}, nil)
+	f.c = New(Target{ID: id.StreamOf(1), URL: f.srv.URL + path, Level: lv, Picture: picturemode.Check(), TimeoutSec: 5}, nil)
 	f.c.now = func() time.Time { return f.clock }
 	// Loudness is measured by tests of its own: elsewhere it would add
 	// to the sound listened to.
@@ -50,7 +63,7 @@ func (f *fixture) step(n int) *Result {
 
 func (f *fixture) run() *Result { return f.c.Run(context.Background()) }
 
-func hasProblem(r *Result, kind string) *Problem {
+func hasProblem(r *Result, kind problemkind.Kind) *Problem {
 	for i := range r.Problems {
 		if r.Problems[i].Kind == kind {
 			return &r.Problems[i]
@@ -59,7 +72,13 @@ func hasProblem(r *Result, kind string) *Problem {
 	return nil
 }
 
-func metric(r *Result, name, variant string) (float64, bool) {
+// num is a figure of a problem that is a number; zero when it has none.
+func num(s detail.Set, k detail.Key) float64 {
+	v, _ := s.Number(k)
+	return v
+}
+
+func metric(r *Result, name metricname.Name, variant variantkey.Key) (float64, bool) {
 	for _, m := range r.Metrics {
 		if m.Name == name && m.Variant == variant {
 			return m.Value, true
@@ -70,32 +89,32 @@ func metric(r *Result, name, variant string) (float64, bool) {
 
 func wantClean(t *testing.T, r *Result) {
 	t.Helper()
-	if r.Status != StatusOK || len(r.Problems) != 0 {
+	if r.Status != status.OK() || len(r.Problems) != 0 {
 		t.Fatalf("status = %s, problems = %+v; want a clean cycle", r.Status, r.Problems)
 	}
 }
 
-func wantProblem(t *testing.T, r *Result, kind, severity string) *Problem {
+func wantProblem(t *testing.T, r *Result, kind problemkind.Kind, sev severity.Severity) *Problem {
 	t.Helper()
 	p := hasProblem(r, kind)
 	if p == nil {
 		t.Fatalf("problem %q not reported; got %+v", kind, r.Problems)
 	}
-	if p.Severity != severity {
-		t.Fatalf("problem %q severity = %s, want %s", kind, p.Severity, severity)
+	if p.Severity != sev {
+		t.Fatalf("problem %q severity = %s, want %s", kind, p.Severity, sev)
 	}
 	return p
 }
 
 func TestHealthyLiveStream(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelContainer)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Container())
 
 	r := f.step(4)
 	wantClean(t, r)
 	if len(r.Segments) != 1 || r.Segments[0].Seq != 3 {
 		t.Fatalf("first cycle must check only the newest segment, got %+v", r.Segments)
 	}
-	if len(r.Variants) != 1 || r.Variants[0].Key != VariantMedia {
+	if len(r.Variants) != 1 || r.Variants[0].Key != variantkey.Media() {
 		t.Fatalf("variants = %+v", r.Variants)
 	}
 
@@ -116,19 +135,19 @@ func TestHealthyLiveStream(t *testing.T) {
 	if !strings.HasPrefix(seg.URL, f.srv.URL+"/v0/seg-") {
 		t.Errorf("segment URL must be resolved against the media playlist, got %s", seg.URL)
 	}
-	for _, name := range []string{
-		"hls_playlist_up", "hls_playlist_total_seconds", "hls_media_sequence", "hls_live_latency_seconds",
-		"hls_segment_total_seconds", "hls_segment_bitrate_bps", "hls_media_fps", "hls_media_width",
-		"hls_media_pts_gap_seconds", "hls_buffer_seconds", "hls_startup_seconds", "hls_status",
+	for _, name := range []metricname.Name{
+		metricname.PlaylistUp(), metricname.PlaylistTotalSeconds(), metricname.MediaSequence(), metricname.LiveLatencySeconds(),
+		metricname.SegmentTotalSeconds(), metricname.SegmentBitrateBps(), metricname.MediaFps(), metricname.MediaWidth(),
+		metricname.MediaPTSGapSeconds(), metricname.BufferSeconds(), metricname.StartupSeconds(), metricname.Status(),
 	} {
-		if _, ok := metric(r, name, VariantMedia); !ok {
+		if _, ok := metric(r, name, variantkey.Media()); !ok {
 			t.Errorf("metric %s missing", name)
 		}
 	}
-	if v, _ := metric(r, "hls_media_width", VariantMedia); v != 160 {
+	if v, _ := metric(r, metricname.MediaWidth(), variantkey.Media()); v != 160 {
 		t.Errorf("hls_media_width = %v, want 160", v)
 	}
-	if v, _ := metric(r, "hls_playlist_new_segments", VariantMedia); v != 1 {
+	if v, _ := metric(r, metricname.PlaylistNewSegments(), variantkey.Media()); v != 1 {
 		t.Errorf("hls_playlist_new_segments = %v, want 1", v)
 	}
 	if got := f.c.Interval(); got != time.Second {
@@ -137,7 +156,7 @@ func TestHealthyLiveStream(t *testing.T) {
 }
 
 func TestSegmentsAreNotDownloadedTwice(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Segments())
 	f.step(4)
 	f.step(1)
 	// Nothing new: the playlist is re-read but no segment is fetched.
@@ -155,30 +174,30 @@ func TestSegmentsAreNotDownloadedTwice(t *testing.T) {
 }
 
 func TestPlaylistLevelDownloadsNothing(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelPlaylist)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Playlist())
 	wantClean(t, f.step(4))
 	r := f.step(1)
 	wantClean(t, r)
 	if len(r.Segments) != 0 {
 		t.Fatalf("playlist level must not download segments, got %d", len(r.Segments))
 	}
-	if _, ok := metric(r, "hls_buffer_seconds", VariantMedia); ok {
+	if _, ok := metric(r, metricname.BufferSeconds(), variantkey.Media()); ok {
 		t.Error("player model must not run without segment downloads")
 	}
 }
 
 func TestSequenceJump(t *testing.T) {
-	f := newFixture(t, hlstest.Options{Window: 3}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{Window: 3}, "/v0/index.m3u8", level.Segments())
 	f.step(3)
 	// Six segments appear at once in a three-segment window: three were never seen.
 	f.origin.Publish(6)
 	f.clock = f.clock.Add(2 * time.Second)
 	r := f.run()
-	p := wantProblem(t, r, ProbSeqJump, SevWarn)
+	p := wantProblem(t, r, problemkind.SeqJump(), severity.Warn())
 	if !strings.Contains(p.Message, "3 segments") {
 		t.Errorf("message = %q, want it to count 3 lost segments", p.Message)
 	}
-	if v, _ := metric(r, "hls_segments_missed", VariantMedia); v != 3 {
+	if v, _ := metric(r, metricname.SegmentsMissed(), variantkey.Media()); v != 3 {
 		t.Errorf("hls_segments_missed = %v, want 3", v)
 	}
 	if len(r.Snapshots) != 1 || !strings.Contains(r.Snapshots[0].Body, "#EXTM3U") {
@@ -194,140 +213,140 @@ func TestSequenceJump(t *testing.T) {
 // Segments that left the playlist while it could not be read are a
 // consequence of the outage: recorded, with the outage named, not a warning.
 func TestSequenceJumpAfterOutage(t *testing.T) {
-	f := newFixture(t, hlstest.Options{Window: 3}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{Window: 3}, "/v0/index.m3u8", level.Segments())
 	f.step(3)
 	f.origin.SetDown(404)
 	for range 2 {
 		f.clock = f.clock.Add(2 * time.Second)
-		wantProblem(t, f.run(), ProbPlaylistHTTP, SevCrit)
+		wantProblem(t, f.run(), problemkind.PlaylistHTTP(), severity.Crit())
 	}
 	f.origin.SetDown(0)
 	f.origin.Publish(6)
 	f.clock = f.clock.Add(2 * time.Second)
 	r := f.run()
-	p := wantProblem(t, r, ProbSeqJump, SevInfo)
-	if p.Details["failed_checks_between"] != 2 || !strings.Contains(fmt.Sprint(p.Details["last_failure"]), "404") {
+	p := wantProblem(t, r, problemkind.SeqJump(), severity.Info())
+	if num(p.Details, detail.KeyFailedChecksBetween()) != 2 || !strings.Contains(p.Details.Text(detail.KeyLastFailure()), "404") {
 		t.Errorf("details must name the failed checks in between, got %v", p.Details)
 	}
-	if got := p.Details["since_previous_check"]; got != 6.0 {
+	if got := num(p.Details, detail.KeySincePreviousCheck()); got != 6.0 {
 		t.Errorf("since_previous_check = %v, want 6 s since the last check that read the playlist", got)
 	}
 }
 
 func TestSequenceRegression(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Segments())
 	f.step(8)
 	f.origin.Rewind(4)
 	f.clock = f.clock.Add(2 * time.Second)
-	wantProblem(t, f.run(), ProbSeqRegression, SevCrit)
+	wantProblem(t, f.run(), problemkind.SeqRegression(), severity.Crit())
 	// The monitor re-bases on the new numbering and recovers.
 	wantClean(t, f.step(1))
 }
 
 func TestStalePlaylist(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Segments())
 	f.step(4)
 	f.clock = f.clock.Add(5 * time.Second)
-	if p := hasProblem(f.run(), ProbPlaylistStale); p != nil {
+	if p := hasProblem(f.run(), problemkind.PlaylistStale()); p != nil {
 		t.Fatalf("5s without change must be tolerated: %+v", p)
 	}
 	f.clock = f.clock.Add(10 * time.Second)
 	r := f.run()
-	stale := wantProblem(t, r, ProbPlaylistStale, SevCrit)
-	if stale.Details["unchanged_for"] != 15.0 || stale.Details["playlist_url"] == nil || stale.Details["target_duration"] == nil {
+	stale := wantProblem(t, r, problemkind.PlaylistStale(), severity.Crit())
+	if num(stale.Details, detail.KeyUnchangedFor()) != 15.0 || !stale.Details.Has(detail.KeyPlaylistURL()) || !stale.Details.Has(detail.KeyTargetDuration()) {
 		t.Errorf("stale playlist details = %v, want how long it stood still and what was asked", stale.Details)
 	}
-	stall := wantProblem(t, r, ProbPlaybackStall, SevCrit)
+	stall := wantProblem(t, r, problemkind.PlaybackStall(), severity.Crit())
 	// The calculation behind the stall: nothing arrived while 10 s played.
-	if stall.Details["cycle_elapsed"] != 10.0 || stall.Details["cycle_media"] != 0.0 || stall.Details["buffer_shortfall"] == nil || stall.Details["media_rate"] == nil {
+	if num(stall.Details, detail.KeyCycleElapsed()) != 10.0 || num(stall.Details, detail.KeyCycleMedia()) != 0.0 || !stall.Details.Has(detail.KeyBufferShortfall()) || !stall.Details.Has(detail.KeyMediaRate()) {
 		t.Errorf("stall details = %v, want the figures the stall was concluded from", stall.Details)
 	}
-	if r.Status != StatusFail {
+	if r.Status != status.Fail() {
 		t.Errorf("status = %s, want fail", r.Status)
 	}
-	if v, _ := metric(r, "hls_stalls", VariantMedia); v != 1 {
+	if v, _ := metric(r, metricname.Stalls(), variantkey.Media()); v != 1 {
 		t.Errorf("hls_stalls = %v, want 1 when the buffer runs dry", v)
 	}
 
 	// Still frozen: the player stays stalled, but it is the same stall.
 	f.clock = f.clock.Add(2 * time.Second)
 	r = f.run()
-	if again := wantProblem(t, r, ProbPlaybackStall, SevCrit); again.Details["cycle_elapsed"] != 10.0 {
+	if again := wantProblem(t, r, problemkind.PlaybackStall(), severity.Crit()); num(again.Details, detail.KeyCycleElapsed()) != 10.0 {
 		t.Errorf("an ongoing stall must keep the figures it began with, got %v", again.Details)
 	}
-	if v, _ := metric(r, "hls_stalls", VariantMedia); v != 0 {
+	if v, _ := metric(r, metricname.Stalls(), variantkey.Media()); v != 0 {
 		t.Errorf("hls_stalls = %v, want 0: an ongoing stall is not a new one", v)
 	}
 
 	// The stream resumes: the player rejoins behind the live edge and plays on.
 	for i := range 5 {
 		r = f.step(1)
-		if p := hasProblem(r, ProbPlaybackStall); p != nil {
+		if p := hasProblem(r, problemkind.PlaybackStall()); p != nil {
 			t.Fatalf("cycle %d after recovery still reports a stall", i)
 		}
 	}
 	wantClean(t, r)
-	if v, _ := metric(r, "hls_buffer_seconds", VariantMedia); v < 5 {
+	if v, _ := metric(r, metricname.BufferSeconds(), variantkey.Media()); v < 5 {
 		t.Errorf("hls_buffer_seconds = %v after recovery, want about three target durations", v)
 	}
 }
 
 func TestSegmentFailures(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelContainer)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Container())
 	f.step(4)
 
 	f.origin.SetFault(4, hlstest.Fault{Status: http.StatusNotFound})
 	r := f.step(1)
-	wantProblem(t, r, ProbSegmentHTTP, SevCrit)
+	wantProblem(t, r, problemkind.SegmentHTTP(), severity.Crit())
 	if r.Segments[0].Status != 404 || len(r.Segments[0].Problems) == 0 {
 		t.Errorf("segment record must carry the failure: %+v", r.Segments[0])
 	}
-	if v, _ := metric(r, "hls_segment_errors", VariantMedia); v != 1 {
+	if v, _ := metric(r, metricname.SegmentErrors(), variantkey.Media()); v != 1 {
 		t.Errorf("hls_segment_errors = %v, want 1", v)
 	}
 
 	f.origin.SetFault(5, hlstest.Fault{Truncate: 1000})
-	wantProblem(t, f.step(1), ProbSegmentTruncated, SevCrit)
+	wantProblem(t, f.step(1), problemkind.SegmentTruncated(), severity.Crit())
 
 	// Recovery: the segment after a failed one has nothing to be compared with.
 	wantClean(t, f.step(1))
 }
 
 func TestCorruptTransportStream(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelContainer)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Container())
 	f.step(4)
 
 	f.origin.SetFault(4, hlstest.Fault{Corrupt: func(b []byte) []byte {
 		return append(b[:188*40], b[188*43:]...) // lose three packets
 	}})
-	wantProblem(t, f.step(1), ProbTSContinuity, SevWarn)
+	wantProblem(t, f.step(1), problemkind.TSContinuity(), severity.Warn())
 
 	f.origin.SetFault(5, hlstest.Fault{Corrupt: func(b []byte) []byte {
 		return append(b[:188*40+20], b[188*40+30:]...) // lose framing
 	}})
-	wantProblem(t, f.step(1), ProbTSSync, SevCrit)
+	wantProblem(t, f.step(1), problemkind.TSSync(), severity.Crit())
 
 	f.origin.SetFault(6, hlstest.Fault{Corrupt: func([]byte) []byte { return []byte("<html>error</html>") }})
-	wantProblem(t, f.step(1), ProbMediaParse, SevWarn)
+	wantProblem(t, f.step(1), problemkind.MediaParse(), severity.Warn())
 }
 
 func TestUnannouncedTimestampJump(t *testing.T) {
-	f := newFixture(t, hlstest.Options{NoDiscontinuity: true}, "/v0/index.m3u8", LevelContainer)
+	f := newFixture(t, hlstest.Options{NoDiscontinuity: true}, "/v0/index.m3u8", level.Container())
 	f.step(2) // checks segment 1
 	wantClean(t, f.step(1))
 	// Segment 3 restarts the sample loop: timestamps go back 6 seconds.
 	r := f.step(1)
-	p := wantProblem(t, r, ProbPTSDiscontinuity, SevWarn)
+	p := wantProblem(t, r, problemkind.PTSDiscontinuity(), severity.Warn())
 	if !strings.Contains(p.Message, "-6.000s") {
 		t.Errorf("message = %q, want the -6.000s jump", p.Message)
 	}
-	if v, _ := metric(r, "hls_media_pts_gap_seconds", VariantMedia); v > -5.9 || v < -6.1 {
+	if v, _ := metric(r, metricname.MediaPTSGapSeconds(), variantkey.Media()); v > -5.9 || v < -6.1 {
 		t.Errorf("hls_media_pts_gap_seconds = %v, want about -6", v)
 	}
 }
 
 func TestFragmentedMP4(t *testing.T) {
-	f := newFixture(t, hlstest.Options{FMP4: true}, "/v0/index.m3u8", LevelContainer)
+	f := newFixture(t, hlstest.Options{FMP4: true}, "/v0/index.m3u8", level.Container())
 	wantClean(t, f.step(4))
 	var r *Result
 	for range 4 {
@@ -335,7 +354,7 @@ func TestFragmentedMP4(t *testing.T) {
 		wantClean(t, r)
 	}
 	m := r.Segments[0].Media
-	if m == nil || m.Container != "fmp4" || m.Video() == nil || !m.Video().HasTiming {
+	if m == nil || m.Container != container.FMP4() || m.Video() == nil || !m.Video().HasTiming {
 		t.Fatalf("fmp4 segment not analysed with its init section: %+v", m)
 	}
 	if n := f.origin.Requests("/v0/init.mp4"); n != 1 {
@@ -344,29 +363,29 @@ func TestFragmentedMP4(t *testing.T) {
 }
 
 func TestMasterPlaylist(t *testing.T) {
-	f := newFixture(t, hlstest.Options{Variants: 2}, "/master.m3u8", LevelContainer)
+	f := newFixture(t, hlstest.Options{Variants: 2}, "/master.m3u8", level.Container())
 	r := f.step(4)
 	wantClean(t, r)
 	if len(r.Variants) != 3 {
 		t.Fatalf("want master + 2 variants, got %+v", r.Variants)
 	}
-	if r.Variants[0].Kind != KindMaster || r.Variants[1].Bandwidth != 200000 || r.Variants[2].Resolution != "160x90" {
+	if r.Variants[0].Kind != variantkind.Master() || r.Variants[1].Bandwidth != 200000 || r.Variants[2].Resolution != "160x90" {
 		t.Errorf("variant attributes not carried over: %+v", r.Variants)
 	}
 	if len(r.Segments) != 2 {
 		t.Fatalf("each variant must have its newest segment checked, got %d", len(r.Segments))
 	}
-	if v, _ := metric(r, "hls_variants", VariantMaster); v != 2 {
+	if v, _ := metric(r, metricname.Variants(), variantkey.Master()); v != 2 {
 		t.Errorf("hls_variants = %v, want 2", v)
 	}
-	if _, ok := metric(r, "hls_segment_bitrate_ratio", "v1/index.m3u8"); !ok {
+	if _, ok := metric(r, metricname.SegmentBitrateRatio(), variantkey.OfURI("v1/index.m3u8")); !ok {
 		t.Error("declared bandwidth must give a bitrate ratio per variant")
 	}
 	wantClean(t, f.step(1))
 
 	f.origin.SetVariants(1)
 	r = f.step(1)
-	if p := wantProblem(t, r, ProbVariantsChanged, SevWarn); p.Message != "set of variants changed: removed v1/index.m3u8" {
+	if p := wantProblem(t, r, problemkind.VariantsChanged(), severity.Warn()); p.Message != "set of variants changed: removed v1/index.m3u8" {
 		t.Errorf("message = %q, want it to name the removed variant", p.Message)
 	}
 	if len(r.Variants) != 2 {
@@ -376,36 +395,36 @@ func TestMasterPlaylist(t *testing.T) {
 }
 
 func TestEntryPlaylistFailures(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/master.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{}, "/master.m3u8", level.Segments())
 	wantClean(t, f.step(4))
 
 	f.origin.SetDown(http.StatusBadGateway)
 	r := f.step(1)
-	p := wantProblem(t, r, ProbPlaylistHTTP, SevCrit)
-	if p.Variant != VariantMaster {
+	p := wantProblem(t, r, problemkind.PlaylistHTTP(), severity.Crit())
+	if p.Variant != variantkey.Master() {
 		t.Errorf("failure must be attributed to the master playlist, got %q", p.Variant)
 	}
 	if r.Variants != nil {
 		t.Errorf("variants must be unknown when the entry playlist failed: %+v", r.Variants)
 	}
-	if v, _ := metric(r, "hls_up", VariantMaster); v != 0 {
+	if v, _ := metric(r, metricname.Up(), variantkey.Master()); v != 0 {
 		t.Errorf("hls_up = %v, want 0", v)
 	}
 
 	f.origin.SetDown(0)
 	f.origin.SetGarbage(true)
-	wantProblem(t, f.step(1), ProbPlaylistParse, SevCrit)
+	wantProblem(t, f.step(1), problemkind.PlaylistParse(), severity.Crit())
 
 	f.origin.SetGarbage(false)
 	f.srv.Close()
-	wantProblem(t, f.step(1), ProbPlaylistUnreachable, SevCrit)
+	wantProblem(t, f.step(1), problemkind.PlaylistUnreachable(), severity.Crit())
 }
 
 func TestStreamEnd(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Segments())
 	f.step(4)
 	f.origin.End()
-	wantProblem(t, f.step(0), ProbStreamEnded, SevWarn)
+	wantProblem(t, f.step(0), problemkind.StreamEnded(), severity.Warn())
 	// A finished stream is no longer expected to change.
 	f.clock = f.clock.Add(time.Minute)
 	r := f.run()
@@ -416,12 +435,12 @@ func TestStreamEnd(t *testing.T) {
 }
 
 func TestSlowSegment(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Segments())
 	f.step(4)
 	f.origin.SetFault(4, hlstest.Fault{Delay: 2100 * time.Millisecond})
 	r := f.step(1)
-	wantProblem(t, r, ProbSegmentSlow, SevWarn)
-	if v, _ := metric(r, "hls_segment_download_ratio", VariantMedia); v <= 1 {
+	wantProblem(t, r, problemkind.SegmentSlow(), severity.Warn())
+	if v, _ := metric(r, metricname.SegmentDownloadRatio(), variantkey.Media()); v <= 1 {
 		t.Errorf("hls_segment_download_ratio = %v, want > 1", v)
 	}
 }
@@ -442,7 +461,7 @@ func itoa(n uint64) string {
 // URIs must resolve against where the playlist really came from, and it
 // must be visible which server that was and when it changed.
 func TestRedirectingBalancer(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/lb/v0/index.m3u8", LevelContainer)
+	f := newFixture(t, hlstest.Options{}, "/lb/v0/index.m3u8", level.Container())
 	// Two servers with the same content; the fixture's own server is also the balancer.
 	a := httptest.NewServer(f.origin.Handler())
 	defer a.Close()
@@ -453,7 +472,7 @@ func TestRedirectingBalancer(t *testing.T) {
 	f.origin.SetBackend(a.URL)
 	r := f.step(4)
 	wantClean(t, r)
-	if len(r.Sources) != 1 || r.Sources[0].Variant != VariantMedia {
+	if len(r.Sources) != 1 || r.Sources[0].Variant != variantkey.Media() {
 		t.Fatalf("sources = %+v", r.Sources)
 	}
 	pl := r.Sources[0].Playlist
@@ -470,7 +489,7 @@ func TestRedirectingBalancer(t *testing.T) {
 	if seg.Source == nil || seg.Source.Host != hostOf(a) || r.Sources[0].Segment == nil || r.Sources[0].Segment.Host != hostOf(a) {
 		t.Errorf("segment endpoint = %+v", seg.Source)
 	}
-	if v, _ := metric(r, "hls_playlist_redirects", VariantMedia); v != 1 {
+	if v, _ := metric(r, metricname.PlaylistRedirects(), variantkey.Media()); v != 1 {
 		t.Errorf("hls_playlist_redirects = %v, want 1", v)
 	}
 
@@ -480,18 +499,18 @@ func TestRedirectingBalancer(t *testing.T) {
 	// The balancer starts sending to server B.
 	f.origin.SetBackend(b.URL)
 	r = f.step(1)
-	if r.Status != StatusOK {
+	if r.Status != status.OK() {
 		t.Errorf("a change of server alone must not degrade the status, got %s: %+v", r.Status, r.Problems)
 	}
-	p := wantProblem(t, r, ProbPlaylistSource, SevInfo)
+	p := wantProblem(t, r, problemkind.PlaylistSource(), severity.Info())
 	if !strings.Contains(p.Message, hostOf(b)) || !strings.Contains(p.Message, hostOf(a)) {
 		t.Errorf("message %q must name both servers", p.Message)
 	}
-	wantProblem(t, r, ProbSegmentSource, SevInfo)
-	if v, _ := metric(r, "hls_playlist_source_changed", VariantMedia); v != 1 {
+	wantProblem(t, r, problemkind.SegmentSource(), severity.Info())
+	if v, _ := metric(r, metricname.PlaylistSourceChanged(), variantkey.Media()); v != 1 {
 		t.Errorf("hls_playlist_source_changed = %v, want 1", v)
 	}
-	if v, _ := metric(r, "hls_status", VariantMedia); v != 0 {
+	if v, _ := metric(r, metricname.Status(), variantkey.Media()); v != 0 {
 		t.Errorf("hls_status = %v, want 0", v)
 	}
 	if got := r.Sources[0].Playlist.Host; got != hostOf(b) {
@@ -501,7 +520,7 @@ func TestRedirectingBalancer(t *testing.T) {
 
 	// A failure names the server that produced it.
 	f.origin.SetDown(http.StatusBadGateway)
-	p = wantProblem(t, f.step(1), ProbPlaylistHTTP, SevCrit)
+	p = wantProblem(t, f.step(1), problemkind.PlaylistHTTP(), severity.Crit())
 	if !strings.Contains(p.Message, hostOf(b)) {
 		t.Errorf("message %q must name the failing server", p.Message)
 	}
@@ -525,7 +544,7 @@ func TestEndpointHostDropsDefaultPort(t *testing.T) {
 // A configured interval longer than the playlist window would lose
 // segments between checks; the checker shortens it as far as needed.
 func TestConfiguredIntervalIsCappedByWindow(t *testing.T) {
-	f := newFixture(t, hlstest.Options{Window: 4}, "/v0/index.m3u8", LevelPlaylist)
+	f := newFixture(t, hlstest.Options{Window: 4}, "/v0/index.m3u8", level.Playlist())
 	f.c.t.IntervalSec = 60
 	if got := f.c.Interval(); got != time.Minute {
 		t.Fatalf("interval before the first cycle = %s, want the configured one", got)
@@ -538,7 +557,7 @@ func TestConfiguredIntervalIsCappedByWindow(t *testing.T) {
 	}
 
 	// A window long enough for the configured interval leaves it alone.
-	g := newFixture(t, hlstest.Options{Window: 5}, "/v0/index.m3u8", LevelPlaylist)
+	g := newFixture(t, hlstest.Options{Window: 5}, "/v0/index.m3u8", level.Playlist())
 	g.c.t.IntervalSec = 2
 	wantClean(t, g.step(5))
 	if got := g.c.Interval(); got != 2*time.Second {
@@ -549,7 +568,7 @@ func TestConfiguredIntervalIsCappedByWindow(t *testing.T) {
 // At header level only the beginning of each segment is fetched, yet the
 // segment's existence, size, server and first timestamps are checked.
 func TestHeaderLevel(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelHeader)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Header())
 	r := f.step(4)
 	wantClean(t, r)
 	seg := r.Segments[0]
@@ -571,30 +590,30 @@ func TestHeaderLevel(t *testing.T) {
 			t.Fatalf("cycle %d: %d segments", i, len(r.Segments))
 		}
 	}
-	for _, name := range []string{"hls_segment_bitrate_bps", "hls_segment_ttfb_seconds", "hls_media_width", "hls_media_pts_gap_seconds", "hls_buffer_seconds"} {
-		if _, ok := metric(r, name, VariantMedia); !ok {
+	for _, name := range []metricname.Name{metricname.SegmentBitrateBps(), metricname.SegmentTTFBSeconds(), metricname.MediaWidth(), metricname.MediaPTSGapSeconds(), metricname.BufferSeconds()} {
+		if _, ok := metric(r, name, variantkey.Media()); !ok {
 			t.Errorf("metric %s missing at header level", name)
 		}
 	}
-	for _, name := range []string{"hls_segment_total_seconds", "hls_segment_download_ratio", "hls_media_fps", "hls_media_gop_seconds", "hls_media_duration_diff_seconds", "hls_startup_seconds"} {
-		if _, ok := metric(r, name, VariantMedia); ok {
+	for _, name := range []metricname.Name{metricname.SegmentTotalSeconds(), metricname.SegmentDownloadRatio(), metricname.MediaFps(), metricname.MediaGopSeconds(), metricname.MediaDurationDiffSeconds(), metricname.StartupSeconds()} {
+		if _, ok := metric(r, name, variantkey.Media()); ok {
 			t.Errorf("metric %s needs the whole segment and must not be reported at header level", name)
 		}
 	}
 
 	// A missing segment is noticed without downloading anything.
 	f.origin.SetFault(f.origin.Last()+1, hlstest.Fault{Status: http.StatusNotFound})
-	wantProblem(t, f.step(1), ProbSegmentHTTP, SevCrit)
+	wantProblem(t, f.step(1), problemkind.SegmentHTTP(), severity.Crit())
 	wantClean(t, f.step(1))
 }
 
 func TestHeaderLevelDetectsTimestampJump(t *testing.T) {
-	f := newFixture(t, hlstest.Options{NoDiscontinuity: true}, "/v0/index.m3u8", LevelHeader)
+	f := newFixture(t, hlstest.Options{NoDiscontinuity: true}, "/v0/index.m3u8", level.Header())
 	f.step(2)
 	wantClean(t, f.step(1))
 	// Segment 3 restarts the sample loop: the first timestamp is 6 s earlier
 	// than the previous start plus its duration.
-	p := wantProblem(t, f.step(1), ProbPTSDiscontinuity, SevWarn)
+	p := wantProblem(t, f.step(1), problemkind.PTSDiscontinuity(), severity.Warn())
 	if !strings.Contains(p.Message, "-6.000s") {
 		t.Errorf("message = %q, want the -6.000s jump", p.Message)
 	}
@@ -603,7 +622,7 @@ func TestHeaderLevelDetectsTimestampJump(t *testing.T) {
 // A server that ignores Range sends the whole segment; the download is cut
 // at the header window and the size comes from Content-Length.
 func TestHeaderLevelWithoutRangeSupport(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelHeader)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Header())
 	f.origin.SetNoRange(true)
 	r := f.step(4)
 	wantClean(t, r)
@@ -615,12 +634,12 @@ func TestHeaderLevelWithoutRangeSupport(t *testing.T) {
 }
 
 func TestTargetDurationChangeIsInformational(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelPlaylist)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Playlist())
 	wantClean(t, f.step(4))
-	f.c.vars[VariantMedia].targetDuration = 5 // as if the previous playlist had said 5
+	f.c.vars[variantkey.Media()].targetDuration = 5 // as if the previous playlist had said 5
 	r := f.step(1)
-	wantProblem(t, r, ProbTargetDurChanged, SevInfo)
-	if r.Status != StatusOK {
+	wantProblem(t, r, problemkind.TargetDurChanged(), severity.Info())
+	if r.Status != status.OK() {
 		t.Errorf("status = %s, want ok", r.Status)
 	}
 }
@@ -629,9 +648,11 @@ func TestTargetDurationChangeIsInformational(t *testing.T) {
 // media sequence numbers, which they may count independently.
 func TestVariantEdgesApart(t *testing.T) {
 	at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	video := func(pdt time.Time) edge { return edge{ok: true, kind: KindVideo, pdt: pdt, targetDuration: 6} }
+	video := func(pdt time.Time) edge {
+		return edge{ok: true, kind: variantkind.Video(), pdt: pdt, targetDuration: 6}
+	}
 
-	apart, limit, ok := edgesApart([]edge{video(at), video(at.Add(4 * time.Second)), {ok: true, kind: KindAudio, pdt: at.Add(time.Hour), targetDuration: 6}}, 2)
+	apart, limit, ok := edgesApart([]edge{video(at), video(at.Add(4 * time.Second)), {ok: true, kind: variantkind.Audio(), pdt: at.Add(time.Hour), targetDuration: 6}}, 2)
 	if !ok || apart != 4 || limit != 12 {
 		t.Errorf("two video variants 4 s apart: got %v s, limit %v, ok %v; want 4, 12, true (audio is not compared)", apart, limit, ok)
 	}
@@ -641,7 +662,7 @@ func TestVariantEdgesApart(t *testing.T) {
 	// Nothing to judge by: a variant without date-times, a failed one, a single one.
 	for name, edges := range map[string][]edge{
 		"no date-time": {video(at), video(time.Time{})},
-		"one failed":   {video(at), {kind: KindVideo}},
+		"one failed":   {video(at), {kind: variantkind.Video()}},
 		"single":       {video(at)},
 	} {
 		if _, _, ok := edgesApart(edges, 2); ok {
@@ -719,20 +740,20 @@ func TestSequenceRenumbered(t *testing.T) {
 		}
 	}
 
-	f := newFixture(t, hlstest.Options{Window: 3}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{Window: 3}, "/v0/index.m3u8", level.Segments())
 	f.step(3)
 	f.origin.Publish(100000)
 	f.clock = f.clock.Add(2 * time.Second)
 	r := f.run()
-	p := wantProblem(t, r, ProbSeqRenumbered, SevWarn)
+	p := wantProblem(t, r, problemkind.SeqRenumbered(), severity.Warn())
 	if !strings.Contains(p.Message, "numbering changed") {
 		t.Errorf("message = %q", p.Message)
 	}
-	if _, ok := metric(r, "hls_segments_missed", VariantMedia); ok {
+	if _, ok := metric(r, metricname.SegmentsMissed(), variantkey.Media()); ok {
 		t.Error("a change of numbering must not count lost segments")
 	}
 	for _, q := range r.Problems {
-		if q.Kind == ProbSeqJump {
+		if q.Kind == problemkind.SeqJump() {
 			t.Errorf("a change of numbering reported as a loss too: %s", q.Message)
 		}
 	}
@@ -741,33 +762,33 @@ func TestSequenceRenumbered(t *testing.T) {
 // A monitor that cannot keep up measures its own delay. What it concludes
 // from timing alone is left out; what it saw with its own eyes stays.
 func TestOverloadedCheckerDoesNotBlameTheStream(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
-	overloaded := ""
-	f.c.Overloaded = func(time.Time) string { return overloaded }
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Segments())
+	var overloaded overload.Reason
+	f.c.Overloaded = func(time.Time) overload.Reason { return overloaded }
 	f.step(4)
 
-	overloaded = "processor"
+	overloaded = overload.Processor()
 	f.origin.SetFault(4, hlstest.Fault{Delay: 2100 * time.Millisecond})
 	f.origin.SetFault(5, hlstest.Fault{Status: 404})
 	r := f.step(2)
-	if r.Overloaded != "processor" {
+	if r.Overloaded != overload.Processor() {
 		t.Errorf("Overloaded = %q", r.Overloaded)
 	}
-	if p := hasProblem(r, ProbSegmentSlow); p != nil {
+	if p := hasProblem(r, problemkind.SegmentSlow()); p != nil {
 		t.Errorf("a slow download measured by an overloaded checker was reported: %+v", p)
 	}
-	wantProblem(t, r, ProbSegmentHTTP, SevCrit)
-	if v, ok := metric(r, "hls_check_overloaded", ""); !ok || v != 1 {
+	wantProblem(t, r, problemkind.SegmentHTTP(), severity.Crit())
+	if v, ok := metric(r, metricname.CheckOverloaded(), variantkey.Key{}); !ok || v != 1 {
 		t.Errorf("hls_check_overloaded = %v, %v", v, ok)
 	}
 
 	// The same without overload is reported as before.
-	overloaded = ""
+	overloaded = overload.Reason{}
 	f.origin.SetFault(6, hlstest.Fault{Delay: 2100 * time.Millisecond})
 	r = f.step(1)
-	wantProblem(t, r, ProbSegmentSlow, SevWarn)
-	if r.Overloaded != "" {
-		t.Errorf("Overloaded = %q", r.Overloaded)
+	wantProblem(t, r, problemkind.SegmentSlow(), severity.Warn())
+	if !r.Overloaded.IsZero() {
+		t.Errorf("Overloaded = %s", r.Overloaded)
 	}
 }
 
@@ -780,14 +801,14 @@ func TestPrivateNetworksPolicy(t *testing.T) {
 	}
 
 	// By default a stream that was pointed inside is followed inside.
-	f := newFixture(t, hlstest.Options{}, "/master.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{}, "/master.m3u8", level.Segments())
 	wantClean(t, f.step(4))
 
 	// Under "deny" nothing inside is requested at all.
 	_ = SetPrivateNetworks("deny")
-	f = newFixture(t, hlstest.Options{}, "/master.m3u8", LevelSegments)
+	f = newFixture(t, hlstest.Options{}, "/master.m3u8", level.Segments())
 	r := f.step(4)
-	p := wantProblem(t, r, ProbPlaylistUnreachable, SevCrit)
+	p := wantProblem(t, r, problemkind.PlaylistUnreachable(), severity.Crit())
 	if !strings.Contains(p.Message, "not a public one") {
 		t.Errorf("the finding must say why: %q", p.Message)
 	}
@@ -796,14 +817,14 @@ func TestPrivateNetworksPolicy(t *testing.T) {
 	}
 
 	_ = SetPrivateNetworks("allow")
-	f = newFixture(t, hlstest.Options{}, "/master.m3u8", LevelSegments)
+	f = newFixture(t, hlstest.Options{}, "/master.m3u8", level.Segments())
 	wantClean(t, f.step(4))
 }
 
 // A cycle that starts late looks only at the latest segment of each
 // playlist: that is how a checker that fell behind catches up.
 func TestCatchUpCycleIsShort(t *testing.T) {
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Segments())
 	f.step(4)
 	f.c.CatchUp = true
 	r := f.step(3)
@@ -811,7 +832,7 @@ func TestCatchUpCycleIsShort(t *testing.T) {
 	if len(r.Segments) != 1 || r.Segments[0].Seq != 6 {
 		t.Fatalf("segments checked = %+v, want the latest one only", r.Segments)
 	}
-	if v, _ := metric(r, "hls_segments_skipped", VariantMedia); v != 2 {
+	if v, _ := metric(r, metricname.SegmentsSkipped(), variantkey.Media()); v != 2 {
 		t.Errorf("hls_segments_skipped = %v, want 2", v)
 	}
 	// Back on time, the next cycle is a full one and finds nothing wrong
@@ -831,8 +852,8 @@ func TestPlaylistThatCrashesTheParser(t *testing.T) {
 		_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-MEDIA:0\n"))
 	}))
 	defer srv.Close()
-	r := New(Target{ID: 1, URL: srv.URL + "/p.m3u8", Level: LevelSegments}, nil).Run(context.Background())
-	p := wantProblem(t, r, ProbPlaylistParse, SevCrit)
+	r := New(Target{ID: id.StreamOf(1), URL: srv.URL + "/p.m3u8", Level: level.Segments(), Picture: picturemode.Check()}, nil).Run(context.Background())
+	p := wantProblem(t, r, problemkind.PlaylistParse(), severity.Crit())
 	if !strings.Contains(p.Message, "parser failed") {
 		t.Errorf("message = %q", p.Message)
 	}
@@ -877,14 +898,14 @@ func TestServersThatNumberSegmentsDifferently(t *testing.T) {
 	defer srv.Close()
 	_, port, _ = net.SplitHostPort(srv.Listener.Addr().String())
 
-	c := New(Target{ID: 1, URL: srv.URL + "/live.m3u8", Level: LevelPlaylist}, nil)
+	c := New(Target{ID: id.StreamOf(1), URL: srv.URL + "/live.m3u8", Level: level.Playlist(), Picture: picturemode.Check()}, nil)
 	clock := time.Now()
 	c.now = func() time.Time { return clock }
 	var last *Result
 	for range 4 {
 		clock = clock.Add(6 * time.Second)
 		last = c.Run(context.Background())
-		if p := hasProblem(last, ProbSegmentChanged); p != nil {
+		if p := hasProblem(last, problemkind.SegmentChanged()); p != nil {
 			t.Fatalf("segments of another server were compared with the previous one's: %s", p.Message)
 		}
 	}
@@ -892,7 +913,7 @@ func TestServersThatNumberSegmentsDifferently(t *testing.T) {
 		t.Fatalf("balancer was asked %d times", calls.Load())
 	}
 	// The same server keeps being compared with itself.
-	if hasProblem(last, ProbPlaylistSource) != nil {
+	if hasProblem(last, problemkind.PlaylistSource()) != nil {
 		t.Error("the fourth check came from the same server as the third")
 	}
 }
@@ -923,17 +944,17 @@ func TestRedirectLinesAreReadable(t *testing.T) {
 // on the network can be seen: little at the playlist level, the whole
 // segments at the segment level.
 func TestCheckTrafficIsReported(t *testing.T) {
-	bytesOf := func(level Level) float64 {
-		f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level)
+	bytesOf := func(lv level.Level) float64 {
+		f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", lv)
 		f.step(4)
 		r := f.step(1)
-		v, ok := metric(r, "hls_check_bytes", "")
+		v, ok := metric(r, metricname.CheckBytes(), variantkey.Key{})
 		if !ok {
-			t.Fatalf("%s: no hls_check_bytes", level)
+			t.Fatalf("%s: no hls_check_bytes", lv)
 		}
 		return v
 	}
-	playlist, header, whole := bytesOf(LevelPlaylist), bytesOf(LevelHeader), bytesOf(LevelSegments)
+	playlist, header, whole := bytesOf(level.Playlist()), bytesOf(level.Header()), bytesOf(level.Segments())
 	if playlist <= 0 || playlist > 2000 {
 		t.Errorf("playlist level downloaded %v bytes: a playlist is a few hundred", playlist)
 	}
@@ -950,15 +971,15 @@ func TestConnectionFiguresAreRecorded(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("read on Linux only")
 	}
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Segments())
 	f.step(4)
 	r := f.step(1)
-	rtt, ok := metric(r, "hls_tcp_rtt_seconds", VariantMedia)
+	rtt, ok := metric(r, metricname.TCPRTTSeconds(), variantkey.Media())
 	if !ok || rtt <= 0 || rtt > 1 {
 		t.Errorf("hls_tcp_rtt_seconds = %v, %v", rtt, ok)
 	}
-	for _, name := range []string{"hls_tcp_out_of_order", "hls_tcp_retransmits"} {
-		if v, ok := metric(r, name, VariantMedia); !ok || v < 0 {
+	for _, name := range []metricname.Name{metricname.TCPOutOfOrder(), metricname.TCPRetransmits()} {
+		if v, ok := metric(r, name, variantkey.Media()); !ok || v < 0 {
 			t.Errorf("%s = %v, %v", name, v, ok)
 		}
 	}
@@ -968,37 +989,37 @@ func TestWayToTheServerIsRecorded(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("read on Linux only")
 	}
-	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{}, "/v0/index.m3u8", level.Segments())
 	first := f.step(1)
 	// The first check makes its own connection and tells how long it took.
-	if v, ok := metric(first, "hls_connect_seconds", VariantMedia); !ok || v <= 0 || v > 1 {
+	if v, ok := metric(first, metricname.ConnectSeconds(), variantkey.Media()); !ok || v <= 0 || v > 1 {
 		t.Errorf("hls_connect_seconds = %v, %v", v, ok)
 	}
-	if _, ok := metric(first, "hls_entry_seconds", VariantMedia); ok {
+	if _, ok := metric(first, metricname.EntrySeconds(), variantkey.Media()); ok {
 		t.Error("the time of the way in was recorded on a connection made for the check")
 	}
 	// The next ones do not, and tell how long the way in takes instead.
 	r := f.step(1)
-	if _, ok := metric(r, "hls_connect_seconds", VariantMedia); ok {
+	if _, ok := metric(r, metricname.ConnectSeconds(), variantkey.Media()); ok {
 		t.Error("a connection was made for a check that came too soon for it")
 	}
-	if v, ok := metric(r, "hls_entry_seconds", VariantMedia); !ok || v <= 0 {
+	if v, ok := metric(r, metricname.EntrySeconds(), variantkey.Media()); !ok || v <= 0 {
 		t.Errorf("hls_entry_seconds = %v, %v", v, ok)
 	}
-	byName := map[string]Metric{}
+	byName := map[metricname.Name]Metric{}
 	for _, m := range r.Metrics {
 		if m.Server != "" {
 			byName[m.Name] = m
 		}
 	}
-	rq := byName["hls_server_requests"]
+	rq := byName[metricname.ServerRequests()]
 	if rq.Value < 2 || rq.IP != "127.0.0.1" || !strings.HasPrefix(rq.Server, "127.0.0.1:") {
 		t.Errorf("hls_server_requests = %+v; want the playlist and its segments from the test server", rq)
 	}
-	if rtt := byName["hls_server_rtt_seconds"]; rtt.Value <= 0 || rtt.Value > 1 {
+	if rtt := byName[metricname.ServerRTTSeconds()]; rtt.Value <= 0 || rtt.Value > 1 {
 		t.Errorf("hls_server_rtt_seconds = %+v", rtt)
 	}
-	for _, name := range []string{"hls_server_retransmits", "hls_server_out_of_order"} {
+	for _, name := range []metricname.Name{metricname.ServerRetransmits(), metricname.ServerOutOfOrder()} {
 		if m, ok := byName[name]; !ok || m.Value < 0 {
 			t.Errorf("%s = %+v, %v", name, m, ok)
 		}

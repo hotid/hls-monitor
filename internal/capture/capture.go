@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,6 +36,11 @@ import (
 	"github.com/Eyevinn/hls-m3u8/m3u8"
 
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/capturestate"
+	"github.com/hotid/hls-monitor/internal/types/filerole"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 const (
@@ -65,22 +71,10 @@ const (
 	decodeTimeout = 30 * time.Second
 )
 
-// States of a capture.
-const (
-	// StatePending: made on suspicion, not confirmed yet.
-	StatePending = "pending"
-	// StateKept: an incident came of it, or somebody asked for it.
-	StateKept = "kept"
-	// StateFound: no incident came of it, and a decoder found fault with
-	// its segment: kept for a while, within a small limit.
-	StateFound = "found"
-)
-
 // File is one file of a capture.
 type File struct {
-	// Role is what it is: "evidence" (the bytes the check read),
-	// "segment", "init", "playlist" or "master".
-	Role string `json:"role"`
+	// Role is what it is.
+	Role filerole.Role `json:"role" enums:"evidence,segment,init,playlist,master"`
 	// Name is where it is in the capture.
 	Name string `json:"name"`
 	URL  string `json:"url,omitempty"`
@@ -111,20 +105,20 @@ type File struct {
 
 // Capture describes one capture: it is its capture.json.
 type Capture struct {
-	ID       string `json:"id"`
-	StreamID int64  `json:"stream_id"`
+	ID       string    `json:"id"`
+	StreamID id.Stream `json:"stream_id"`
 	// AgentID is the agent that made it, for a capture an agent sent; 0
 	// for one the server made itself.
-	AgentID int64  `json:"agent_id,omitempty"`
-	Variant string `json:"variant"`
+	AgentID id.Agent       `json:"agent_id,omitempty"`
+	Variant variantkey.Key `json:"variant"`
 	// Kinds are the problems it was made on suspicion of; Confirmed
 	// those of them that were then reported. Manual tells that somebody
 	// asked for it.
-	Kinds     []string  `json:"kinds"`
-	Confirmed []string  `json:"confirmed,omitempty"`
-	Manual    bool      `json:"manual,omitempty"`
-	State     string    `json:"state"`
-	At        time.Time `json:"at"`
+	Kinds     []problemkind.Kind `json:"kinds"`
+	Confirmed []problemkind.Kind `json:"confirmed,omitempty"`
+	Manual    bool               `json:"manual,omitempty"`
+	State     capturestate.State `json:"state" enums:"pending,kept,found"`
+	At        time.Time          `json:"at"`
 	// Done tells that nothing more is being added to it.
 	Done  bool   `json:"done"`
 	Seq   uint64 `json:"seq"`
@@ -157,7 +151,7 @@ type Store struct {
 	captures map[string]*Capture
 	// last is when a stream was last captured; busy the servers a
 	// capture is being made from, and running how many are being made.
-	last    map[int64]time.Time
+	last    map[id.Stream]time.Time
 	busy    map[string]bool
 	running int
 	wg      sync.WaitGroup
@@ -180,7 +174,7 @@ func Open(o Options) (*Store, error) {
 	if err := os.MkdirAll(o.Dir, 0o750); err != nil {
 		return nil, err
 	}
-	s := &Store{o: o, now: time.Now, captures: map[string]*Capture{}, last: map[int64]time.Time{}, busy: map[string]bool{}}
+	s := &Store{o: o, now: time.Now, captures: map[string]*Capture{}, last: map[id.Stream]time.Time{}, busy: map[string]bool{}}
 	entries, err := os.ReadDir(o.Dir)
 	if err != nil {
 		return nil, err
@@ -242,12 +236,12 @@ func (s *Store) Usage() Usage {
 
 // List returns the captures of a stream, or all of them for 0, the
 // latest first.
-func (s *Store) List(streamID int64) []Capture {
+func (s *Store) List(streamID id.Stream) []Capture {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := []Capture{}
 	for _, c := range s.captures {
-		if streamID == 0 || c.StreamID == streamID {
+		if streamID.IsZero() || c.StreamID == streamID {
 			out = append(out, clone(c))
 		}
 	}
@@ -257,7 +251,7 @@ func (s *Store) List(streamID int64) []Capture {
 
 func clone(c *Capture) Capture {
 	d := *c
-	d.Kinds, d.Confirmed = append([]string(nil), c.Kinds...), append([]string(nil), c.Confirmed...)
+	d.Kinds, d.Confirmed = slices.Clone(c.Kinds), slices.Clone(c.Confirmed)
 	d.Files, d.Notes = append([]File(nil), c.Files...), append([]string(nil), c.Notes...)
 	return d
 }
@@ -277,12 +271,12 @@ func (s *Store) Delete(id string) bool {
 // Forget removes the captures of a stream that is no more, or those an
 // agent that is no more made: zero for the one not meant. One that is
 // still being made is left to its time.
-func (s *Store) Forget(streamID, agentID int64) int {
+func (s *Store) Forget(streamID id.Stream, agentID id.Agent) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := 0
 	for _, c := range s.captures {
-		if c.Done && ((streamID != 0 && c.StreamID == streamID) || (agentID != 0 && c.AgentID == agentID)) {
+		if c.Done && ((!streamID.IsZero() && c.StreamID == streamID) || (!agentID.IsZero() && c.AgentID == agentID)) {
 			s.drop(c)
 			n++
 		}
@@ -298,36 +292,27 @@ func (s *Store) drop(c *Capture) {
 
 // Confirm keeps what was captured of a stream on suspicion of problems
 // that were then reported.
-func (s *Store) Confirm(streamID int64, kinds []string) {
+func (s *Store) Confirm(streamID id.Stream, kinds []problemkind.Kind) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, c := range s.captures {
-		if c.StreamID != streamID || c.State != StatePending {
+		if c.StreamID != streamID || c.State != capturestate.Pending() {
 			continue
 		}
 		changed := false
 		for _, k := range kinds {
-			if contains(c.Kinds, k) && !contains(c.Confirmed, k) {
+			if slices.Contains(c.Kinds, k) && !slices.Contains(c.Confirmed, k) {
 				c.Confirmed = append(c.Confirmed, k)
 				changed = true
 			}
 		}
 		if changed {
-			c.State = StateKept
+			c.State = capturestate.Kept()
 			if c.Done {
 				s.write(c)
 			}
 		}
 	}
-}
-
-func contains(list []string, v string) bool {
-	for _, x := range list {
-		if x == v {
-			return true
-		}
-	}
-	return false
 }
 
 // Sweep drops what is not to be kept: captures nobody confirmed, old
@@ -341,14 +326,14 @@ func (s *Store) Sweep() {
 			continue
 		}
 		switch {
-		case c.State == StatePending && now.Sub(c.At) >= pendingFor:
+		case c.State == capturestate.Pending() && now.Sub(c.At) >= pendingFor:
 			// No incident came of it. A segment a decoder found fault
 			// with is worth a look all the same.
 			if !faulty(c) {
 				s.drop(c)
 				continue
 			}
-			c.State = StateFound
+			c.State = capturestate.Found()
 			s.write(c)
 		case now.Sub(c.At) >= s.o.Keep:
 			s.drop(c)
@@ -372,9 +357,9 @@ func (s *Store) have(rq probe.CaptureRequest) bool {
 	if len(rq.Kinds) == 0 {
 		return false
 	}
-	covered := map[string]bool{}
+	covered := map[problemkind.Kind]bool{}
 	for _, c := range s.captures {
-		if c.StreamID == rq.StreamID && c.State == StateKept && !c.Manual && s.now().Sub(c.At) < onceIn {
+		if c.StreamID == rq.StreamID && c.State == capturestate.Kept() && !c.Manual && s.now().Sub(c.At) < onceIn {
 			for _, k := range c.Kinds {
 				covered[k] = true
 			}
@@ -388,14 +373,21 @@ func (s *Store) have(rq probe.CaptureRequest) bool {
 	return true
 }
 
-// what names what a capture was made of, for telling the common from the rare.
-func what(c *Capture) string {
+// cause is what a capture was made of, for telling the common from the
+// rare: the kinds of problems it was made on suspicion of, in order, or
+// nothing at all for one somebody asked for.
+type cause string
+
+func what(c *Capture) cause {
 	if c.Manual || len(c.Kinds) == 0 {
-		return "asked for"
+		return ""
 	}
-	kinds := append([]string(nil), c.Kinds...)
-	sort.Strings(kinds)
-	return strings.Join(kinds, ",")
+	names := make([]string, len(c.Kinds))
+	for i, k := range c.Kinds {
+		names[i] = k.String()
+	}
+	sort.Strings(names)
+	return cause(strings.Join(names, ","))
 }
 
 // fit makes room for more bytes within the limits by dropping finished
@@ -407,30 +399,29 @@ func (s *Store) fit(more int64) bool {
 	var total, found int64
 	for _, c := range s.captures {
 		total += c.Bytes
-		if c.State == StateFound {
+		if c.State == capturestate.Found() {
 			found += c.Bytes
 		}
 	}
 	for total+more > s.o.MaxBytes || found > foundMax {
-		rank := map[string]int{StatePending: 0, StateFound: 1, StateKept: 2}
-		many := map[string]int{}
+		many := map[cause]int{}
 		for _, c := range s.captures {
-			if c.Done && c.State == StateKept {
+			if c.Done && c.State == capturestate.Kept() {
 				many[what(c)]++
 			}
 		}
 		var victim *Capture
 		worse := func(a, b *Capture) bool { // a goes before b
-			if rank[a.State] != rank[b.State] {
-				return rank[a.State] < rank[b.State]
+			if a.State != b.State {
+				return a.State.Ord() < b.State.Ord()
 			}
-			if a.State == StateKept && many[what(a)] != many[what(b)] {
+			if a.State == capturestate.Kept() && many[what(a)] != many[what(b)] {
 				return many[what(a)] > many[what(b)]
 			}
 			return a.At.Before(b.At)
 		}
 		for _, c := range s.captures {
-			if !c.Done || (total+more <= s.o.MaxBytes && c.State != StateFound) {
+			if !c.Done || (total+more <= s.o.MaxBytes && c.State != capturestate.Found()) {
 				continue
 			}
 			if victim == nil || worse(c, victim) {
@@ -441,7 +432,7 @@ func (s *Store) fit(more int64) bool {
 			break
 		}
 		total -= victim.Bytes
-		if victim.State == StateFound {
+		if victim.State == capturestate.Found() {
 			found -= victim.Bytes
 		}
 		s.drop(victim)
@@ -488,11 +479,11 @@ func (s *Store) Capture(rq probe.CaptureRequest) {
 	}
 	c := &Capture{
 		ID:       fmt.Sprintf("%s-s%d-%d", rq.At.UTC().Format("20060102T150405"), rq.StreamID, rq.Seq),
-		StreamID: rq.StreamID, Variant: rq.Variant, Kinds: append([]string(nil), rq.Kinds...), Manual: rq.Manual,
-		State: StatePending, At: rq.At, Seq: rq.Seq,
+		StreamID: rq.StreamID, Variant: rq.Variant, Kinds: slices.Clone(rq.Kinds), Manual: rq.Manual,
+		State: capturestate.Pending(), At: rq.At, Seq: rq.Seq,
 	}
 	if rq.Manual {
-		c.State = StateKept
+		c.State = capturestate.Kept()
 	}
 	if _, taken := s.captures[c.ID]; taken {
 		s.mu.Unlock()
@@ -563,9 +554,9 @@ func (s *Store) make(c *Capture, rq probe.CaptureRequest) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	j.put(File{Role: "playlist", Name: "source/playlist.m3u8", URL: rq.PlaylistURL, Whole: true, FetchedAt: rq.At}, rq.Playlist)
+	j.put(File{Role: filerole.Playlist(), Name: "source/playlist.m3u8", URL: rq.PlaylistURL, Whole: true, FetchedAt: rq.At}, rq.Playlist)
 	if len(rq.Master) > 0 {
-		j.put(File{Role: "master", Name: "source/master.m3u8", URL: rq.MasterURL, Whole: true, FetchedAt: rq.At}, rq.Master)
+		j.put(File{Role: filerole.Master(), Name: "source/master.m3u8", URL: rq.MasterURL, Whole: true, FetchedAt: rq.At}, rq.Master)
 	}
 	at := -1
 	for i, w := range rq.Window {
@@ -580,7 +571,7 @@ func (s *Store) make(c *Capture, rq probe.CaptureRequest) {
 	trigger := rq.Window[at]
 	// The bytes the check read, as they were: nothing fetched afterwards
 	// stands in for them.
-	j.put(File{Role: "evidence", Name: "evidence/" + fileName(trigger), URL: trigger.URL, Seq: trigger.Seq, Duration: trigger.Duration,
+	j.put(File{Role: filerole.Evidence(), Name: "evidence/" + fileName(trigger), URL: trigger.URL, Seq: trigger.Seq, Duration: trigger.Duration,
 		Status: rq.Status, Server: rq.Server, Software: rq.Software, Whole: rq.EvidenceWhole, FetchedAt: rq.At}, rq.Evidence)
 
 	// The segment itself first, while it is there; then those before it,
@@ -624,7 +615,7 @@ func (j *job) put(f File, data []byte) {
 	// The limit is of the capture, not of where the next file may begin:
 	// a segment that would take it over is not kept. What the check read
 	// is kept always, being what the capture is of.
-	if len(data) > 0 && f.Role != "evidence" {
+	if len(data) > 0 && f.Role != filerole.Evidence() {
 		j.s.mu.Lock()
 		over := j.c.Bytes+int64(len(data)) > captureMax
 		j.s.mu.Unlock()
@@ -679,7 +670,7 @@ func extension(address, fallback string) string {
 
 // segment saves one segment: the body it is given, or the one it fetches.
 func (j *job) segment(ctx context.Context, seg probe.CaptureSegment, position int, body []byte) {
-	f := File{Role: "segment", Name: "segments/" + fileName(seg), URL: seg.URL, Seq: seg.Seq, Duration: seg.Duration, Position: position}
+	f := File{Role: filerole.Segment(), Name: "segments/" + fileName(seg), URL: seg.URL, Seq: seg.Seq, Duration: seg.Duration, Position: position}
 	switch {
 	case seg.Encrypted:
 		f.Error = "encrypted: not captured"
@@ -738,14 +729,14 @@ func splitHost(addr string) (string, string, error) {
 func (j *job) init(ctx context.Context, address string) string {
 	name := "segments/init-" + strconv.Itoa(len(j.inits)) + extension(address, ".mp4")
 	for _, f := range j.c.Files {
-		if f.Role == "init" && f.URL == address {
+		if f.Role == filerole.Init() && f.URL == address {
 			return f.Name
 		}
 	}
 	fctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	resp, err := j.rq.Get(fctx, address, 0, 0)
 	cancel()
-	f := File{Role: "init", Name: name, URL: address, AfterDetection: true, FetchedAt: j.s.now()}
+	f := File{Role: filerole.Init(), Name: name, URL: address, AfterDetection: true, FetchedAt: j.s.now()}
 	if err != nil || resp == nil || !resp.OK() {
 		f.Error = "could not be fetched"
 		if err != nil {
@@ -842,7 +833,7 @@ func (j *job) describe(ctx context.Context) {
 		f := j.c.Files[i]
 		j.s.mu.Unlock()
 		sv, ok := j.order[f.Seq]
-		if f.Role != "segment" || !ok || sv.name != f.Name {
+		if f.Role != filerole.Segment() || !ok || sv.name != f.Name {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(j.dir, filepath.FromSlash(f.Name)))

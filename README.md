@@ -377,6 +377,7 @@ Interface texts live in `web/src/locales/<language>/`; a new language is a new f
 | `internal/metrics` | VictoriaMetrics client |
 | `internal/api` | HTTP API |
 | `internal/agent`, `internal/agentproto` | The agent and its protocol |
+| `internal/types` | What the monitor tells apart, each as a type of its own: kinds of problems, severities, statuses, levels, identifiers, the names of metrics and of the figures of a problem. Their names are text only where they leave the program: in JSON, in the database, on a page |
 | `internal/hlstest` | Stream simulator for tests |
 | `web/` | Interface: Vue 3, TypeScript |
 | `deploy/` | Dockerfile and compose files |

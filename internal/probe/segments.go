@@ -10,13 +10,22 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/media"
+	"github.com/hotid/hls-monitor/internal/types/container"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
+	"github.com/hotid/hls-monitor/internal/types/variantkind"
+	"github.com/hotid/hls-monitor/internal/types/videorange"
 )
 
 // minBitrateSpan is the shortest segment, in seconds, whose bitrate is
 // compared with the declared one.
 const minBitrateSpan = 1.0
 
-// headerBytes is how much of a segment is requested at LevelHeader: a whole
+// headerBytes is how much of a segment is requested at the header level: a whole
 // number of MPEG-TS packets, enough for the tables and the first frames.
 const headerBytes = 188 * 700
 
@@ -81,7 +90,7 @@ type segCheck struct {
 	rec Segment
 	// suspected is what makes the segment worth capturing, got the answer
 	// it came in, once there is one, and url its address.
-	suspected []string
+	suspected []problemkind.Kind
 	got       *httpx.Response
 	// asked is how many bytes of the segment were asked for, when not all.
 	asked int64
@@ -101,7 +110,7 @@ func (c *Checker) checkSegments(ctx context.Context, cy *cycle, v Variant, plURL
 	if len(selected) == 0 {
 		return
 	}
-	header := c.t.Level == LevelHeader
+	header := c.t.Level == level.Header()
 	r := &segRun{c: c, cy: cy, v: v, plURL: plURL, st: st, plResp: plResp, entry: entry, failed: failed,
 		header: header, agg: &segAgg{minBps: math.MaxFloat64, partial: header}}
 	defer func() { bodies.release(r.held) }()
@@ -129,7 +138,7 @@ func (r *segRun) checkOne(ctx context.Context, s plSegment) bool {
 	if err != nil {
 		k.rec.URL = s.seg.URI
 		k.rec.Error = err.Error()
-		k.flag(ProbSegmentUnreachable, SevCrit, "segment %d has a bad URI: %v", s.seq, err)
+		k.flag(problemkind.SegmentUnreachable(), severity.Crit(), "segment %d has a bad URI: %v", s.seq, err)
 		r.failed[s.seq] = true
 		r.agg.checked++
 		k.emit()
@@ -196,7 +205,7 @@ func (r *segRun) begin(s plSegment) *segCheck {
 }
 
 // flag tells a problem of the segment.
-func (k *segCheck) flag(kind, sev, format string, args ...any) {
+func (k *segCheck) flag(kind problemkind.Kind, sev severity.Severity, format string, args ...any) {
 	k.cy.problem(kind, sev, k.v.Key, format, args...)
 	k.rec.Problems = append(k.rec.Problems, kind)
 	if Capturable(kind) {
@@ -204,7 +213,7 @@ func (k *segCheck) flag(kind, sev, format string, args ...any) {
 	}
 	// Whether the playlist announced a break is the question here, so its
 	// text, now and before, belongs to the finding.
-	if (kind == ProbPTSDiscontinuity || kind == ProbMediaParamsChanged) && k.plResp != nil {
+	if (kind == problemkind.PTSDiscontinuity() || kind == problemkind.MediaParamsChanged()) && k.plResp != nil {
 		k.cy.snapshot(k.v.Key, k.plURL, k.plResp.Body)
 	}
 }
@@ -215,11 +224,11 @@ func (k *segCheck) emit() {
 	rec := k.rec
 	for _, kind := range rec.Problems {
 		k.cy.detail(kind, k.v.Key,
-			"segment_sequence", rec.Seq, "segment_url", rec.URL, "segment_duration", rec.Duration,
-			"segment_http_status", rec.Status, "segment_error", rec.Error,
-			"segment_bytes", rec.Size, "segment_fetched_bytes", rec.Fetched)
+			detail.SegmentSequence(rec.Seq), detail.SegmentURL(rec.URL), detail.SegmentDuration(rec.Duration),
+			detail.SegmentHTTPStatus(rec.Status), detail.SegmentError(rec.Error),
+			detail.SegmentBytes(rec.Size), detail.SegmentFetchedBytes(rec.Fetched))
 		if rec.Source != nil {
-			k.cy.detail(kind, k.v.Key, "segment_server", rec.Source.Node(), "segment_software", rec.Source.Headers["Server"])
+			k.cy.detail(kind, k.v.Key, detail.SegmentServer(rec.Source.Node()), detail.SegmentSoftware(rec.Source.Headers["Server"]))
 		}
 	}
 	k.cy.segment(rec)
@@ -228,7 +237,7 @@ func (k *segCheck) emit() {
 	}
 	// Somebody asked for a capture: the first segment of the picture, or
 	// of the stream itself, will do.
-	manual := (k.v.Kind == KindVideo || k.v.Kind == KindMedia) && k.c.captureNow.CompareAndSwap(true, false)
+	manual := (k.v.Kind == variantkind.Video() || k.v.Kind == variantkind.Media()) && k.c.captureNow.CompareAndSwap(true, false)
 	if len(k.suspected) > 0 || manual {
 		got := k.got
 		whole := !k.header || (got.TotalSize > 0 && int64(len(got.Body)) >= got.TotalSize)
@@ -318,7 +327,7 @@ func (k *segCheck) record(resp *httpx.Response) int64 {
 		k.cy.source(k.v.Key, ep, true)
 		if prev := k.st.segSource; prev != nil && prev.Node() != ep.Node() {
 			k.agg.sourceChanges++
-			k.flag(ProbSegmentSource, SevInfo, "%s", describeChange("segments", prev, ep))
+			k.flag(problemkind.SegmentSource(), severity.Info(), "%s", describeChange("segments", prev, ep))
 		}
 		k.st.segSource = ep
 	}
@@ -332,20 +341,20 @@ func (k *segCheck) broken(resp *httpx.Response, err error) bool {
 	switch {
 	case err != nil && (resp == nil || resp.Status == 0):
 		k.rec.Error = err.Error()
-		k.flag(ProbSegmentUnreachable, SevCrit, "segment %d request failed: %v", seq, err)
+		k.flag(problemkind.SegmentUnreachable(), severity.Crit(), "segment %d request failed: %v", seq, err)
 		if timedOut(err) {
-			k.cy.doubt(ProbSegmentUnreachable, k.v.Key)
+			k.cy.doubt(problemkind.SegmentUnreachable(), k.v.Key)
 		}
 	case err != nil:
 		k.rec.Error = err.Error()
-		k.flag(ProbSegmentTruncated, SevCrit, "segment %d download broke off after %d bytes: %v", seq, resp.Size, err)
+		k.flag(problemkind.SegmentTruncated(), severity.Crit(), "segment %d download broke off after %d bytes: %v", seq, resp.Size, err)
 		if timedOut(err) {
-			k.cy.doubt(ProbSegmentTruncated, k.v.Key)
+			k.cy.doubt(problemkind.SegmentTruncated(), k.v.Key)
 		}
 	case !resp.OK():
-		k.flag(ProbSegmentHTTP, SevCrit, "segment %d returned HTTP %d", seq, resp.Status)
+		k.flag(problemkind.SegmentHTTP(), severity.Crit(), "segment %d returned HTTP %d", seq, resp.Status)
 	case resp.LengthMismatch && !k.header:
-		k.flag(ProbSegmentTruncated, SevCrit, "segment %d is %d bytes, Content-Length declared %d", seq, resp.Size, resp.ContentLength)
+		k.flag(problemkind.SegmentTruncated(), severity.Crit(), "segment %d is %d bytes, Content-Length declared %d", seq, resp.Size, resp.ContentLength)
 	default:
 		return false
 	}
@@ -379,8 +388,8 @@ func (k *segCheck) transfer(resp *httpx.Response, size int64) {
 			ratio := resp.Total.Seconds() / s.seg.Duration
 			agg.maxRatio = max(agg.maxRatio, ratio)
 			if ratio > 1 {
-				k.flag(ProbSegmentSlow, SevWarn, "segment %d (%.1fs of media) took %.1fs to download", s.seq, s.seg.Duration, resp.Total.Seconds())
-				k.cy.doubt(ProbSegmentSlow, k.v.Key)
+				k.flag(problemkind.SegmentSlow(), severity.Warn(), "segment %d (%.1fs of media) took %.1fs to download", s.seq, s.seg.Duration, resp.Total.Seconds())
+				k.cy.doubt(problemkind.SegmentSlow(), k.v.Key)
 			}
 		}
 		bitrate := float64(size*8) / s.seg.Duration
@@ -389,8 +398,8 @@ func (k *segCheck) transfer(resp *httpx.Response, size int64) {
 			agg.span += s.seg.Duration
 		}
 		if bw := k.v.Bandwidth; bw > 0 && k.sized && s.seg.Duration >= minBitrateSpan && bitrate > float64(bw)*k.c.th.BitrateFactor {
-			k.flag(ProbBitrateExceeds, SevWarn, "segment %d is %.0f kbit/s, playlist declares %.0f kbit/s", s.seq, bitrate/1000, float64(bw)/1000)
-			k.cy.detail(ProbBitrateExceeds, k.v.Key, "segment_bitrate", bitrate, "declared_bandwidth", bw, "bitrate_ratio", bitrate/float64(bw), "bitrate_ratio_limit", k.c.th.BitrateFactor)
+			k.flag(problemkind.BitrateExceeds(), severity.Warn(), "segment %d is %.0f kbit/s, playlist declares %.0f kbit/s", s.seq, bitrate/1000, float64(bw)/1000)
+			k.cy.detail(problemkind.BitrateExceeds(), k.v.Key, detail.SegmentBitrate(bitrate), detail.DeclaredBandwidth(bw), detail.BitrateRatio(bitrate/float64(bw)), detail.BitrateRatioLimit(k.c.th.BitrateFactor))
 		}
 	}
 
@@ -400,7 +409,7 @@ func (k *segCheck) transfer(resp *httpx.Response, size int64) {
 		if k.entry != nil {
 			startup += k.entry.Total.Seconds()
 		}
-		k.cy.metric("hls_startup_seconds", k.v.Key, startup)
+		k.cy.metric(metricname.StartupSeconds(), k.v.Key, startup)
 	}
 }
 
@@ -409,12 +418,12 @@ func (k *segCheck) transfer(resp *httpx.Response, size int64) {
 func (k *segCheck) contents(resp *httpx.Response, init *media.Init) *media.Info {
 	s, v := k.s, k.v
 	whole := k.sized && (!k.header || (k.rec.Size > 0 && k.rec.Fetched >= k.rec.Size))
-	if !k.c.blind && !s.encrypted && v.Kind != KindSubtitles {
+	if !k.c.blind && !s.encrypted && v.Kind != variantkind.Subtitles() {
 		body := resp.Body
 		// The level of whole segments reads of their contents what the
 		// level below it does: the beginning. The whole of one is parsed
 		// at the level that is for it.
-		if k.c.t.Level == LevelSegments && len(body) > headerBytes {
+		if k.c.t.Level == level.Segments() && len(body) > headerBytes {
 			body, whole = body[:headerBytes], false
 		}
 		info := media.Analyze(body, init)
@@ -425,7 +434,7 @@ func (k *segCheck) contents(resp *httpx.Response, init *media.Init) *media.Info 
 		return info
 	}
 	k.st.prev = prevSegment{}
-	if v.Kind == KindSubtitles && !s.encrypted && whole {
+	if v.Kind == variantkind.Subtitles() && !s.encrypted && whole {
 		k.subtitles(resp.Body)
 	}
 	return nil
@@ -466,7 +475,7 @@ func (k *segCheck) subtitles(body []byte) {
 	}
 	sub, err := media.ParseWebVTT(body)
 	if err != nil {
-		k.flag(ProbSubtitlesInvalid, SevWarn, "segment %d is not valid WebVTT: %v", k.s.seq, err)
+		k.flag(problemkind.SubtitlesInvalid(), severity.Warn(), "segment %d is not valid WebVTT: %v", k.s.seq, err)
 		return
 	}
 	k.agg.subtitles = true
@@ -497,7 +506,7 @@ func (r *segRun) finish() {
 	switch {
 	case r.agg.clockFault != "":
 		if r.st.clockRuns++; r.st.clockRuns >= clockRuns {
-			r.cy.problem(ProbTSClock, SevWarn, r.v.Key, "%s; wrong for %d checks in a row", r.agg.clockFault, r.st.clockRuns)
+			r.cy.problem(problemkind.TSClock(), severity.Warn(), r.v.Key, "%s; wrong for %d checks in a row", r.agg.clockFault, r.st.clockRuns)
 		}
 	case r.agg.clocked:
 		r.st.clockRuns = 0
@@ -523,7 +532,7 @@ type cueCount struct {
 
 // noteCues counts the cues of subtitles of the last hour: none in all of
 // it are subtitles that are there and empty.
-func (st *variantState) noteCues(cy *cycle, key string, n int, now time.Time) {
+func (st *variantState) noteCues(cy *cycle, key variantkey.Key, n int, now time.Time) {
 	if st.cuesSince.IsZero() {
 		st.cuesSince = now
 	}
@@ -537,7 +546,7 @@ func (st *variantState) noteCues(cy *cycle, key string, n int, now time.Time) {
 	}
 	st.cues = append(keep, cueCount{now, n})
 	if now.Sub(st.cuesSince) >= cuesFrom {
-		cy.metric("hls_subtitle_cues_hour", key, float64(total))
+		cy.metric(metricname.SubtitleCuesHour(), key, float64(total))
 	}
 }
 
@@ -546,7 +555,7 @@ func (st *variantState) noteCues(cy *cycle, key string, n int, now time.Time) {
 func (c *Checker) initSection(ctx context.Context, cy *cycle, v Variant, plURL string, s plSegment, st *variantState) *media.Init {
 	u, err := resolve(plURL, s.initMap.URI)
 	if err != nil {
-		cy.problem(ProbInitUnavailable, SevCrit, v.Key, "bad EXT-X-MAP URI %q: %v", s.initMap.URI, err)
+		cy.problem(problemkind.InitUnavailable(), severity.Crit(), v.Key, "bad EXT-X-MAP URI %q: %v", s.initMap.URI, err)
 		return nil
 	}
 	cacheKey := u
@@ -559,22 +568,22 @@ func (c *Checker) initSection(ctx context.Context, cy *cycle, v Variant, plURL s
 	resp, err := c.get(ctx, httpx.Request{URL: u, MaxBody: 16 << 20, RangeOffset: s.initMap.Offset, RangeLength: s.initMap.Limit}, c.timeout())
 	switch {
 	case err != nil:
-		cy.problem(ProbInitUnavailable, SevCrit, v.Key, "initialization section request failed: %v", err)
+		cy.problem(problemkind.InitUnavailable(), severity.Crit(), v.Key, "initialization section request failed: %v", err)
 		if timedOut(err) {
-			cy.doubt(ProbInitUnavailable, v.Key)
+			cy.doubt(problemkind.InitUnavailable(), v.Key)
 		}
 		return nil
 	case !resp.OK():
-		cy.problem(ProbInitUnavailable, SevCrit, v.Key, "initialization section returned HTTP %d", resp.Status)
+		cy.problem(problemkind.InitUnavailable(), severity.Crit(), v.Key, "initialization section returned HTTP %d", resp.Status)
 		return nil
 	}
 	st.initURL = cacheKey
 	st.init = nil
 	st.initRaw = resp.Body
-	if c.t.Level == LevelContainer || c.t.Level == LevelHeader {
+	if c.t.Level == level.Container() || c.t.Level == level.Header() {
 		in, err := media.ParseInit(resp.Body)
 		if err != nil {
-			cy.problem(ProbMediaParse, SevWarn, v.Key, "cannot parse initialization section: %v", err)
+			cy.problem(problemkind.MediaParse(), severity.Warn(), v.Key, "cannot parse initialization section: %v", err)
 		}
 		st.init = in
 	}
@@ -583,19 +592,19 @@ func (c *Checker) initSection(ctx context.Context, cy *cycle, v Variant, plURL s
 
 // judgeMedia turns container analysis of one segment into problems and
 // updates the continuity state.
-func (c *Checker) judgeMedia(v Variant, s plSegment, info *media.Info, st *variantState, agg *segAgg, flag func(kind, sev, format string, args ...any), whole bool) {
+func (c *Checker) judgeMedia(v Variant, s plSegment, info *media.Info, st *variantState, agg *segAgg, flag func(kind problemkind.Kind, sev severity.Severity, format string, args ...any), whole bool) {
 	agg.analysed++
 	// With only the beginning of a segment, a parser running off its end is expected.
 	m := &mediaCheck{c: c, v: v, s: s, info: info, st: st, agg: agg, flag: flag, whole: whole, partial: agg.partial}
 	if info.Error != "" && !m.partial {
-		flag(ProbMediaParse, SevWarn, "segment %d: %s", s.seq, info.Error)
+		flag(problemkind.MediaParse(), severity.Warn(), "segment %d: %s", s.seq, info.Error)
 	}
-	if info.Container == media.ContainerUnknown {
-		flag(ProbMediaParse, SevWarn, "segment %d is not a recognised media container", s.seq)
+	if info.Container == container.Unknown() {
+		flag(problemkind.MediaParse(), severity.Warn(), "segment %d is not a recognised media container", s.seq)
 		st.prev = prevSegment{}
 		return
 	}
-	if info.Container == media.ContainerTS {
+	if info.Container == container.TS() {
 		m.transport()
 	}
 	m.vt, m.at = info.Video(), info.Audio()
@@ -614,7 +623,7 @@ type mediaCheck struct {
 	info    *media.Info
 	st      *variantState
 	agg     *segAgg
-	flag    func(kind, sev, format string, args ...any)
+	flag    func(kind problemkind.Kind, sev severity.Severity, format string, args ...any)
 	whole   bool
 	partial bool
 	vt, at  *media.Track
@@ -627,19 +636,19 @@ func (m *mediaCheck) transport() {
 	agg.syncErrors += info.SyncErrors
 	agg.ccErrors += info.CCErrors
 	if info.SyncErrors > 0 {
-		m.flag(ProbTSSync, SevCrit, "segment %d: %d MPEG-TS sync errors", seq, info.SyncErrors)
+		m.flag(problemkind.TSSync(), severity.Crit(), "segment %d: %d MPEG-TS sync errors", seq, info.SyncErrors)
 	}
 	if info.CCErrors > 0 {
-		m.flag(ProbTSContinuity, SevWarn, "segment %d: %d continuity counter errors", seq, info.CCErrors)
+		m.flag(problemkind.TSContinuity(), severity.Warn(), "segment %d: %d continuity counter errors", seq, info.CCErrors)
 	}
 	if info.TransportErrors > 0 {
-		m.flag(ProbTSTransport, SevWarn, "segment %d: %d packets flagged with transport errors", seq, info.TransportErrors)
+		m.flag(problemkind.TSTransport(), severity.Warn(), "segment %d: %d packets flagged with transport errors", seq, info.TransportErrors)
 	}
 	if k := info.Clock; k != nil && k.PCRs >= 2 {
 		m.clock(k)
 	}
 	if !info.HasPAT || !info.HasPMT {
-		m.flag(ProbTSNoTables, SevWarn, "segment %d has no PAT/PMT, it cannot be decoded on its own", seq)
+		m.flag(problemkind.TSNoTables(), severity.Warn(), "segment %d has no PAT/PMT, it cannot be decoded on its own", seq)
 	}
 }
 
@@ -689,13 +698,13 @@ func (m *mediaCheck) tracks() prevSegment {
 		if vt.FirstKeyframe {
 			agg.keyframeStarts++
 		} else {
-			m.flag(ProbNoKeyframeStart, SevWarn, "segment %d does not start with a keyframe", s.seq)
+			m.flag(problemkind.NoKeyframeStart(), severity.Warn(), "segment %d does not start with a keyframe", s.seq)
 		}
 		cur.width, cur.height = vt.Width, vt.Height
 		switch vt.Range {
-		case "PQ":
+		case videorange.PQ():
 			agg.hdr = 1
-		case "HLG":
+		case videorange.HLG():
 			agg.hdr = 2
 		}
 		if vt.HasTiming {
@@ -723,11 +732,11 @@ func (m *mediaCheck) tracks() prevSegment {
 // declared judges the segment against what the master playlist says of
 // the variant.
 func (m *mediaCheck) declared() {
-	if m.v.Kind != KindVideo {
+	if m.v.Kind != variantkind.Video() {
 		return
 	}
 	if diff := declaredDiffers(m.v, m.vt, m.at, m.partial); len(diff) > 0 {
-		m.flag(ProbDeclaredMismatch, SevWarn, "segment %d: %s", m.s.seq, strings.Join(diff, "; "))
+		m.flag(problemkind.DeclaredMismatch(), severity.Warn(), "segment %d: %s", m.s.seq, strings.Join(diff, "; "))
 	}
 }
 
@@ -744,7 +753,7 @@ func (m *mediaCheck) duration() {
 		m.agg.durDiff = diff
 	}
 	if math.Abs(diff) > m.c.th.DurationMismatch {
-		m.flag(ProbDurationMismatch, SevWarn, "segment %d: playlist says %.3fs, media lasts %.3fs", s.seq, s.seg.Duration, ref.Duration())
+		m.flag(problemkind.DurationMismatch(), severity.Warn(), "segment %d: playlist says %.3fs, media lasts %.3fs", s.seq, s.seg.Duration, ref.Duration())
 	}
 }
 
@@ -760,7 +769,7 @@ func (m *mediaCheck) avSync() {
 		m.agg.avOffset = off
 	}
 	if math.Abs(off) > m.c.th.AVOffset {
-		m.flag(ProbAVDesync, SevWarn, "segment %d: video starts %+.3fs relative to audio", m.s.seq, off)
+		m.flag(problemkind.AVDesync(), severity.Warn(), "segment %d: video starts %+.3fs relative to audio", m.s.seq, off)
 	}
 }
 
@@ -769,7 +778,7 @@ func (m *mediaCheck) avSync() {
 // the next.
 func (m *mediaCheck) joint(cur prevSegment) {
 	info, st, s, vt, at := m.info, m.st, m.s, m.vt, m.at
-	if m.whole && info.Container == media.ContainerTS {
+	if m.whole && info.Container == container.TS() {
 		cur.lastCC = info.LastCC
 	}
 	if p := st.prev; p.ok && p.seq+1 == s.seq && !s.seg.Discontinuity {
@@ -778,7 +787,7 @@ func (m *mediaCheck) joint(cur prevSegment) {
 		// counters must run on (RFC 8216, section 3).
 		if n, pid, was, now := ccBreaks(p.lastCC, info.FirstCC); n > 0 {
 			m.agg.ccErrors += n
-			m.flag(ProbTSContinuity, SevWarn, "segment %d: continuity counters break at the joint with the previous segment on %d PIDs (PID %d: %d after %d)", s.seq, n, pid, now, was)
+			m.flag(problemkind.TSContinuity(), severity.Warn(), "segment %d: continuity counters break at the joint with the previous segment on %d PIDs (PID %d: %d after %d)", s.seq, n, pid, now, was)
 		}
 		if vt != nil && vt.HasTiming {
 			m.timestampsGo(p, p.hasV, vt.StartPTS, p.vEnd, "video")
@@ -786,7 +795,7 @@ func (m *mediaCheck) joint(cur prevSegment) {
 			m.timestampsGo(p, p.hasA, at.StartPTS, p.aEnd, "audio")
 		}
 		if vt != nil && p.width > 0 && (p.width != vt.Width || p.height != vt.Height) {
-			m.flag(ProbMediaParamsChanged, SevWarn, "segment %d: resolution changed from %dx%d to %dx%d without a discontinuity tag", s.seq, p.width, p.height, vt.Width, vt.Height)
+			m.flag(problemkind.MediaParamsChanged(), severity.Warn(), "segment %d: resolution changed from %dx%d to %dx%d without a discontinuity tag", s.seq, p.width, p.height, vt.Width, vt.Height)
 		}
 	}
 	st.prev = cur
@@ -810,7 +819,7 @@ func (m *mediaCheck) timestampsGo(p prevSegment, has bool, start, prevEnd float6
 		limit = m.c.th.PTSGapEstimated
 	}
 	if math.Abs(gap) > limit {
-		m.flag(ProbPTSDiscontinuity, SevWarn, "segment %d: %s timestamps jump by %+.3fs without a discontinuity tag", m.s.seq, what, gap)
+		m.flag(problemkind.PTSDiscontinuity(), severity.Warn(), "segment %d: %s timestamps jump by %+.3fs without a discontinuity tag", m.s.seq, what, gap)
 	}
 }
 
@@ -840,67 +849,67 @@ func wrapDiff(d, wrap float64) float64 {
 
 func (c *Checker) emitSegmentMetrics(cy *cycle, v Variant, a *segAgg) {
 	k := v.Key
-	cy.metric("hls_segments_checked", k, float64(a.checked))
-	cy.metric("hls_segment_errors", k, float64(a.checked-a.ok))
-	cy.metric("hls_segment_source_changed", k, float64(a.sourceChanges))
+	cy.metric(metricname.SegmentsChecked(), k, float64(a.checked))
+	cy.metric(metricname.SegmentErrors(), k, float64(a.checked-a.ok))
+	cy.metric(metricname.SegmentSourceChanged(), k, float64(a.sourceChanges))
 	if a.ok > 0 {
 		n := float64(a.ok)
-		cy.metric("hls_segment_dns_seconds", k, a.dns/n)
-		cy.metric("hls_segment_connect_seconds", k, a.connect/n)
-		cy.metric("hls_segment_tls_seconds", k, a.tls/n)
-		cy.metric("hls_segment_ttfb_seconds", k, a.ttfb/n)
-		cy.metric("hls_segment_size_bytes", k, a.size/n)
+		cy.metric(metricname.SegmentDNSSeconds(), k, a.dns/n)
+		cy.metric(metricname.SegmentConnectSeconds(), k, a.connect/n)
+		cy.metric(metricname.SegmentTLSSeconds(), k, a.tls/n)
+		cy.metric(metricname.SegmentTTFBSeconds(), k, a.ttfb/n)
+		cy.metric(metricname.SegmentSizeBytes(), k, a.size/n)
 		bitrate := 0.0
 		if a.span > 0 {
 			bitrate = a.bits / a.span
 		}
-		cy.metric("hls_segment_bitrate_bps", k, bitrate)
+		cy.metric(metricname.SegmentBitrateBps(), k, bitrate)
 		if v.Bandwidth > 0 {
-			cy.metric("hls_segment_bitrate_ratio", k, bitrate/float64(v.Bandwidth))
+			cy.metric(metricname.SegmentBitrateRatio(), k, bitrate/float64(v.Bandwidth))
 		}
 		if !a.partial {
-			cy.metric("hls_segment_total_seconds", k, a.total/n)
-			cy.metric("hls_segment_total_seconds_max", k, a.maxTotal)
-			cy.metric("hls_segment_download_bps", k, a.bps/n)
-			cy.metric("hls_segment_download_bps_min", k, a.minBps)
-			cy.metric("hls_segment_download_ratio", k, a.maxRatio)
+			cy.metric(metricname.SegmentTotalSeconds(), k, a.total/n)
+			cy.metric(metricname.SegmentTotalSecondsMax(), k, a.maxTotal)
+			cy.metric(metricname.SegmentDownloadBps(), k, a.bps/n)
+			cy.metric(metricname.SegmentDownloadBpsMin(), k, a.minBps)
+			cy.metric(metricname.SegmentDownloadRatio(), k, a.maxRatio)
 		}
 	}
 	if a.subtitles {
-		cy.metric("hls_subtitle_cues", k, float64(a.cues))
+		cy.metric(metricname.SubtitleCues(), k, float64(a.cues))
 	}
 	if a.analysed == 0 {
 		return
 	}
 	if !a.partial {
-		cy.metric("hls_media_duration_diff_seconds", k, a.durDiff)
+		cy.metric(metricname.MediaDurationDiffSeconds(), k, a.durDiff)
 	}
-	cy.metric("hls_media_pts_gap_seconds", k, a.ptsGap)
-	cy.metric("hls_media_sync_errors", k, float64(a.syncErrors))
-	cy.metric("hls_media_cc_errors", k, float64(a.ccErrors))
+	cy.metric(metricname.MediaPTSGapSeconds(), k, a.ptsGap)
+	cy.metric(metricname.MediaSyncErrors(), k, float64(a.syncErrors))
+	cy.metric(metricname.MediaCcErrors(), k, float64(a.ccErrors))
 	if a.clocked {
-		cy.metric("hls_ts_pcr_gap_seconds", k, a.pcrGap)
+		cy.metric(metricname.TSPCRGapSeconds(), k, a.pcrGap)
 		if a.hasLead {
-			cy.metric("hls_ts_decode_lead_seconds", k, a.lead)
+			cy.metric(metricname.TSDecodeLeadSeconds(), k, a.lead)
 		}
 	}
 	if a.hasAV {
-		cy.metric("hls_media_av_offset_seconds", k, a.avOffset)
+		cy.metric(metricname.MediaAVOffsetSeconds(), k, a.avOffset)
 	}
 	if a.videos > 0 {
 		n := float64(a.videos)
-		cy.metric("hls_media_keyframe_start", k, float64(a.keyframeStarts)/n)
-		cy.metric("hls_media_width", k, float64(a.width))
-		cy.metric("hls_media_height", k, float64(a.height))
-		cy.metric("hls_media_hdr", k, float64(a.hdr))
+		cy.metric(metricname.MediaKeyframeStart(), k, float64(a.keyframeStarts)/n)
+		cy.metric(metricname.MediaWidth(), k, float64(a.width))
+		cy.metric(metricname.MediaHeight(), k, float64(a.height))
+		cy.metric(metricname.MediaHdr(), k, float64(a.hdr))
 		if !a.partial {
-			cy.metric("hls_media_gop_seconds", k, a.maxGOP)
-			cy.metric("hls_media_fps", k, a.fps)
-			cy.metric("hls_media_video_bitrate_bps", k, a.vBitrate/n)
+			cy.metric(metricname.MediaGopSeconds(), k, a.maxGOP)
+			cy.metric(metricname.MediaFps(), k, a.fps)
+			cy.metric(metricname.MediaVideoBitrateBps(), k, a.vBitrate/n)
 		}
 	}
 	if a.aTracks > 0 && !a.partial {
-		cy.metric("hls_media_audio_bitrate_bps", k, a.aBitrate/float64(a.aTracks))
+		cy.metric(metricname.MediaAudioBitrateBps(), k, a.aBitrate/float64(a.aTracks))
 	}
 }
 

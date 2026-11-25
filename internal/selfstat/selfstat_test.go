@@ -7,6 +7,8 @@ import (
 	"runtime/metrics"
 	"testing"
 	"time"
+
+	"github.com/hotid/hls-monitor/internal/types/overload"
 )
 
 func TestQuantile(t *testing.T) {
@@ -46,7 +48,7 @@ func TestControlGroup(t *testing.T) {
 	m := &Monitor{cgroup: dir}
 	now := time.Now()
 	st := m.evaluate(sample{at: now.Add(-10 * time.Second)}, sample{at: now, cpu: 14 * time.Second, throttled: 3 * time.Second, late: 150 * time.Millisecond, lateMax: time.Second})
-	if st.CPUCores != 1.4 || st.CPULimit != 1.5 || st.CPUThrottled != 0.3 || !st.Overloaded || st.Reason != ReasonProcessor || st.Delay != 0.15 || st.DelayMax != 1 {
+	if st.CPUCores != 1.4 || st.CPULimit != 1.5 || st.CPUThrottled != 0.3 || !st.Overloaded || st.Reason != overload.Processor() || st.Delay != 0.15 || st.DelayMax != 1 {
 		t.Errorf("unexpected status %+v", st)
 	}
 	if st.MemoryBytes != 1<<20 || st.MemoryLimit != 512<<20 {
@@ -72,7 +74,7 @@ func TestSchedulerDelayIsOverload(t *testing.T) {
 	now := time.Now()
 	// Two goroutines in a hundred waited up to a second for a processor.
 	st := m.evaluate(sample{at: now.Add(-5 * time.Second), sched: hist(0, 0, 0, 0, 0)}, sample{at: now, sched: hist(90, 8, 0, 2, 0)})
-	if !st.Overloaded || st.Reason != ReasonProcessor || st.SchedulerDelay != 1 {
+	if !st.Overloaded || st.Reason != overload.Processor() || st.SchedulerDelay != 1 {
 		t.Errorf("status %+v", st)
 	}
 	st = m.evaluate(sample{at: now.Add(-5 * time.Second), sched: hist(0, 0, 0, 0, 0)}, sample{at: now, sched: hist(900, 99, 1, 0, 0)})
@@ -99,18 +101,18 @@ func TestWakeUpDelay(t *testing.T) {
 
 func TestOverloadedSince(t *testing.T) {
 	var none *Monitor
-	if none.Overloaded(time.Now()) != "" || none.Status().Overloaded {
+	if !none.Overloaded(time.Now()).IsZero() || none.Status().Overloaded {
 		t.Error("a nil monitor is never overloaded")
 	}
 	now := time.Now()
-	m := &Monitor{lastOver: now.Add(-time.Minute), reason: ReasonProcessor}
-	if got := m.Overloaded(now.Add(-2 * time.Minute)); got != ReasonProcessor {
+	m := &Monitor{lastOver: now.Add(-time.Minute), reason: overload.Processor()}
+	if got := m.Overloaded(now.Add(-2 * time.Minute)); got != overload.Processor() {
 		t.Errorf("a cycle that began before the overload: %q", got)
 	}
-	if got := m.Overloaded(now.Add(-time.Minute + 2*time.Second)); got != ReasonProcessor {
+	if got := m.Overloaded(now.Add(-time.Minute + 2*time.Second)); got != overload.Processor() {
 		t.Errorf("a cycle that began right after an overloaded sample: %q", got)
 	}
-	if got := m.Overloaded(now.Add(-30 * time.Second)); got != "" {
-		t.Errorf("a cycle that began after the overload had passed: %q", got)
+	if got := m.Overloaded(now.Add(-30 * time.Second)); !got.IsZero() {
+		t.Errorf("a cycle that began after the overload had passed: %s", got)
 	}
 }

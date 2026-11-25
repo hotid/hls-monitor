@@ -11,6 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/hotid/hls-monitor/internal/types/codec"
+	"github.com/hotid/hls-monitor/internal/types/container"
 )
 
 // TestAgainstFFprobe compares what the analyzer says about real segments
@@ -94,7 +97,7 @@ func compareWithFFprobe(t *testing.T, files []string) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if Detect(data) != ContainerTS {
+		if Detect(data) != container.TS() {
 			continue
 		}
 		ref, err := ffprobe(f)
@@ -118,10 +121,10 @@ func compareWithFFprobe(t *testing.T, files []string) {
 				differ("track missing", f, "PID %d (%s %s) is not reported", r.pid, r.kind, r.codec)
 				continue
 			}
-			if tr.Codec != r.codec {
+			if tr.Codec.String() != r.codec {
 				differ("codec", f, "PID %d: %s, ffprobe %s", r.pid, tr.Codec, r.codec)
 			}
-			if r.packets == 0 || (r.kind == KindVideo && r.width == 0) || (r.kind == KindAudio && r.sampleRate == 0) {
+			if r.packets == 0 || (r.kind == "video" && r.width == 0) || (r.kind == "audio" && r.sampleRate == 0) {
 				continue // ffprobe could not make sense of the track: no reference
 			}
 			if math.Abs(tr.StartPTS-r.start) > 0.002 {
@@ -131,7 +134,7 @@ func compareWithFFprobe(t *testing.T, files []string) {
 				differ(r.kind+" end", f, "PID %d: %.3f, ffprobe %.3f (%+.3f)", r.pid, tr.EndPTS, r.end, tr.EndPTS-r.end)
 			}
 			switch r.kind {
-			case KindVideo:
+			case "video":
 				videoTracks++
 				if tr.Width != r.width || tr.Height != r.height {
 					differ("picture size", f, "%dx%d, ffprobe %dx%d", tr.Width, tr.Height, r.width, r.height)
@@ -154,12 +157,12 @@ func compareWithFFprobe(t *testing.T, files []string) {
 				if math.Abs(tr.MaxGOP-r.maxGOP) > 0.002 {
 					differ("longest GOP", f, "%.3f, ffprobe %.3f", tr.MaxGOP, r.maxGOP)
 				}
-			case KindAudio:
+			case "audio":
 				audioTracks++
 				if tr.SampleRate != 0 && (tr.SampleRate != r.sampleRate || tr.Channels != r.channels) {
 					differ("audio format", f, "%d Hz %d ch, ffprobe %d Hz %d ch", tr.SampleRate, tr.Channels, r.sampleRate, r.channels)
 				}
-				if tr.Codec == "aac" && tr.Frames != r.packets {
+				if tr.Codec == codec.AAC() && tr.Frames != r.packets {
 					differ("audio frames", f, "%d, ffprobe %d", tr.Frames, r.packets)
 				}
 			}

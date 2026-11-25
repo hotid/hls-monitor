@@ -15,13 +15,20 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/hlstest"
 	"github.com/hotid/hls-monitor/internal/httpx"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/level"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 // changed is a fixture whose origin answers through change: what a
 // server or a CDN in front of the packager does to its answers.
-func changed(t *testing.T, opt hlstest.Options, path string, level Level, change func(r *http.Request, rec *httptest.ResponseRecorder)) *fixture {
+func changed(t *testing.T, opt hlstest.Options, path string, lv level.Level, change func(r *http.Request, rec *httptest.ResponseRecorder)) *fixture {
 	t.Helper()
-	f := newFixture(t, opt, path, level)
+	f := newFixture(t, opt, path, lv)
 	inner := f.origin.Handler()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := httptest.NewRecorder()
@@ -34,7 +41,7 @@ func changed(t *testing.T, opt hlstest.Options, path string, level Level, change
 		_, _ = w.Write(rec.Body.Bytes())
 	}))
 	t.Cleanup(srv.Close)
-	f.c = New(Target{ID: 1, URL: srv.URL + path, Level: level, TimeoutSec: 5}, nil)
+	f.c = New(Target{ID: id.StreamOf(1), URL: srv.URL + path, Level: lv, Picture: picturemode.Check(), TimeoutSec: 5}, nil)
 	f.c.now = func() time.Time { return f.clock }
 	f.c.loud.due = f.clock.Add(1000 * time.Hour)
 	return f
@@ -44,7 +51,7 @@ func changed(t *testing.T, opt hlstest.Options, path string, level Level, change
 // taken for the whole segment: where it ends says nothing of where the
 // segment does.
 func TestHeaderLevelPartOfUnknownWhole(t *testing.T) {
-	f := changed(t, hlstest.Options{PadTo: 200000}, "/v0/index.m3u8", LevelHeader, func(r *http.Request, rec *httptest.ResponseRecorder) {
+	f := changed(t, hlstest.Options{PadTo: 200000}, "/v0/index.m3u8", level.Header(), func(r *http.Request, rec *httptest.ResponseRecorder) {
 		var last int
 		if _, err := fmt.Sscanf(r.Header.Get("Range"), "bytes=0-%d", &last); err != nil || !strings.HasSuffix(r.URL.Path, ".ts") {
 			return
@@ -65,7 +72,7 @@ func TestHeaderLevelPartOfUnknownWhole(t *testing.T) {
 		wantClean(t, f.step(1))
 	}
 	// Its size is not known, and no bitrate is made of what was fetched.
-	if b, _ := metric(f.step(1), "hls_segment_bitrate_bps", VariantMedia); b != 0 {
+	if b, _ := metric(f.step(1), metricname.SegmentBitrateBps(), variantkey.Media()); b != 0 {
 		t.Errorf("bitrate of segments of unknown size = %.0f", b)
 	}
 }
@@ -75,7 +82,7 @@ func TestHeaderLevelPartOfUnknownWhole(t *testing.T) {
 func TestProgramDateTimeMovesBetweenReadings(t *testing.T) {
 	var shift atomic.Int64
 	date := regexp.MustCompile(`(?m)^#EXT-X-PROGRAM-DATE-TIME:(.+)$`)
-	f := changed(t, hlstest.Options{DateFirstOnly: true}, "/v0/index.m3u8", LevelPlaylist, func(r *http.Request, rec *httptest.ResponseRecorder) {
+	f := changed(t, hlstest.Options{DateFirstOnly: true}, "/v0/index.m3u8", level.Playlist(), func(r *http.Request, rec *httptest.ResponseRecorder) {
 		if !strings.HasSuffix(r.URL.Path, ".m3u8") || shift.Load() == 0 {
 			return
 		}
@@ -93,7 +100,7 @@ func TestProgramDateTimeMovesBetweenReadings(t *testing.T) {
 	wantClean(t, f.step(4))
 	wantClean(t, f.step(1))
 	shift.Store(int64(5 * time.Second))
-	p := wantProblem(t, f.step(1), ProbPDTDiscontinuity, SevWarn)
+	p := wantProblem(t, f.step(1), problemkind.PDTDiscontinuity(), severity.Warn())
 	if !strings.Contains(p.Message, "+5.000s") || !strings.Contains(p.Message, "between two readings") {
 		t.Errorf("message = %q", p.Message)
 	}
@@ -105,7 +112,7 @@ func TestProgramDateTimeMovesBetweenReadings(t *testing.T) {
 // same segment.
 func TestSegmentTokenIsNotAnotherSegment(t *testing.T) {
 	var n atomic.Int64
-	f := changed(t, hlstest.Options{}, "/v0/index.m3u8", LevelPlaylist, func(r *http.Request, rec *httptest.ResponseRecorder) {
+	f := changed(t, hlstest.Options{}, "/v0/index.m3u8", level.Playlist(), func(r *http.Request, rec *httptest.ResponseRecorder) {
 		if strings.HasSuffix(r.URL.Path, ".m3u8") {
 			token := "?token=" + string(rune('a'+n.Add(1)))
 			rec.Body = bytes.NewBuffer(regexp.MustCompile(`(?m)^(seg-\d+\.ts)$`).ReplaceAll(rec.Body.Bytes(), []byte("${1}"+token)))
@@ -148,16 +155,16 @@ func TestRangeOfAFileFromAServerWithoutRanges(t *testing.T) {
 
 // The level of whole segments reads of them what the level below does.
 func TestWholeSegmentsLevelReadsTheirBeginning(t *testing.T) {
-	f := newFixture(t, hlstest.Options{NoDiscontinuity: true}, "/v0/index.m3u8", LevelSegments)
+	f := newFixture(t, hlstest.Options{NoDiscontinuity: true}, "/v0/index.m3u8", level.Segments())
 	r := f.step(2)
 	wantClean(t, r)
 	if seg := r.Segments[0]; seg.Media == nil || seg.Media.Video() == nil || seg.Media.Video().Width != 160 {
 		t.Fatalf("the segment was not read: %+v", seg.Media)
 	}
-	if _, ok := metric(r, "hls_media_width", VariantMedia); !ok {
+	if _, ok := metric(r, metricname.MediaWidth(), variantkey.Media()); !ok {
 		t.Error("hls_media_width is missing at the level of whole segments")
 	}
 	wantClean(t, f.step(1))
 	// Where the sample loop starts over without a word of the playlist.
-	wantProblem(t, f.step(1), ProbPTSDiscontinuity, SevWarn)
+	wantProblem(t, f.step(1), problemkind.PTSDiscontinuity(), severity.Warn())
 }

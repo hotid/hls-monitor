@@ -15,6 +15,11 @@ import (
 	"github.com/hotid/hls-monitor/internal/hlstest"
 	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/capturestate"
+	"github.com/hotid/hls-monitor/internal/types/filerole"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 // stream is a fake stream and the means to ask for a capture of it.
@@ -40,7 +45,7 @@ func (s *stream) get(ctx context.Context, url string, offset, limit int64) (*htt
 
 // request is what a checker would hand over for the segment before the
 // last one of the playlist, having read the beginning of it.
-func (s *stream) request(id int64, kinds ...string) probe.CaptureRequest {
+func (s *stream) request(of int64, kinds ...problemkind.Kind) probe.CaptureRequest {
 	s.t.Helper()
 	pl, err := s.get(context.Background(), s.url, 0, 0)
 	if err != nil || !pl.OK() {
@@ -55,7 +60,7 @@ func (s *stream) request(id int64, kinds ...string) probe.CaptureRequest {
 	if err != nil || !head.OK() {
 		s.t.Fatalf("segment: %v", err)
 	}
-	return probe.CaptureRequest{StreamID: id, Variant: "v0", Kinds: kinds, At: time.Now(), PlaylistURL: s.url, Playlist: pl.Body,
+	return probe.CaptureRequest{StreamID: id.StreamOf(of), Variant: variantkey.OfURI("v0"), Kinds: kinds, At: time.Now(), PlaylistURL: s.url, Playlist: pl.Body,
 		TargetDuration: 1, Window: w, Seq: seg.Seq, Evidence: head.Body, Status: head.Status, Server: "192.0.2.1", Get: s.get}
 }
 
@@ -88,17 +93,17 @@ func open(t *testing.T, max int64) *Store {
 func TestCapture(t *testing.T) {
 	st := newStream(t)
 	s := open(t, 0)
-	rq := st.request(7, probe.ProbPictureBlack)
+	rq := st.request(7, problemkind.PictureBlack())
 	st.publish(6)
 	s.Capture(rq)
-	if l := s.List(7); len(l) != 1 || l[0].State != StatePending || l[0].Done {
+	if l := s.List(id.StreamOf(7)); len(l) != 1 || l[0].State != capturestate.Pending() || l[0].Done {
 		t.Fatalf("a capture that was just asked for: %+v", l)
 	}
 	// One of a stream is enough for a while.
-	s.Capture(st.request(7, probe.ProbPictureBlack))
+	s.Capture(st.request(7, problemkind.PictureBlack()))
 	s.Wait()
 
-	l := s.List(7)
+	l := s.List(id.StreamOf(7))
 	if len(l) != 1 || !l[0].Done || !l[0].Playable || l[0].Bytes == 0 {
 		t.Fatalf("captures: %+v", l)
 	}
@@ -107,9 +112,9 @@ func TestCapture(t *testing.T) {
 	var evidence *File
 	for i, f := range c.Files {
 		switch f.Role {
-		case "evidence":
+		case filerole.Evidence():
 			evidence = &c.Files[i]
-		case "segment":
+		case filerole.Segment():
 			byPosition[f.Position] = f
 		}
 	}
@@ -138,12 +143,12 @@ func TestCapture(t *testing.T) {
 	}
 
 	// Reported: kept. And it is all in the archive.
-	s.Confirm(7, []string{probe.ProbAudioSilent})
-	if s.List(7)[0].State != StatePending {
+	s.Confirm(id.StreamOf(7), []problemkind.Kind{problemkind.AudioSilent()})
+	if s.List(id.StreamOf(7))[0].State != capturestate.Pending() {
 		t.Fatal("kept for a problem it was not made for")
 	}
-	s.Confirm(7, []string{probe.ProbPictureBlack})
-	if c = s.List(7)[0]; c.State != StateKept || len(c.Confirmed) != 1 {
+	s.Confirm(id.StreamOf(7), []problemkind.Kind{problemkind.PictureBlack()})
+	if c = s.List(id.StreamOf(7))[0]; c.State != capturestate.Kept() || len(c.Confirmed) != 1 {
 		t.Fatalf("after the problem was reported: %+v", c)
 	}
 	var buf bytes.Buffer
@@ -166,12 +171,12 @@ func TestCapture(t *testing.T) {
 
 	// It is there after a restart, and gone when it is old.
 	again, err := Open(s.o)
-	if err != nil || len(again.List(0)) != 1 {
-		t.Fatalf("after a restart: %v, %+v", err, again.List(0))
+	if err != nil || len(again.List(id.StreamOf(0))) != 1 {
+		t.Fatalf("after a restart: %v, %+v", err, again.List(id.StreamOf(0)))
 	}
 	again.now = func() time.Time { return time.Now().Add(8 * 24 * time.Hour) }
 	again.Sweep()
-	if len(again.List(0)) != 0 {
+	if len(again.List(id.StreamOf(0))) != 0 {
 		t.Error("a capture eight days old is still kept")
 	}
 }
@@ -179,22 +184,22 @@ func TestCapture(t *testing.T) {
 func TestUnconfirmedCaptureIsDropped(t *testing.T) {
 	st := newStream(t)
 	s := open(t, 0)
-	rq := st.request(7, probe.ProbPictureBlack)
+	rq := st.request(7, problemkind.PictureBlack())
 	rq.Window = rq.Window[len(rq.Window)-2:] // nothing follows, little precedes: quick
 	rq.Playlist = nil
 	s.Capture(rq)
 	s.Wait()
-	if len(s.List(7)) != 1 {
+	if len(s.List(id.StreamOf(7))) != 1 {
 		t.Fatal("no capture")
 	}
 	s.Sweep()
-	if len(s.List(7)) != 1 {
+	if len(s.List(id.StreamOf(7))) != 1 {
 		t.Fatal("dropped before it could be confirmed")
 	}
 	s.now = func() time.Time { return time.Now().Add(pendingFor + time.Second) }
 	s.Sweep()
 	// A segment a decoder found fault with would be kept; these are sound.
-	if l := s.List(7); len(l) != 0 {
+	if l := s.List(id.StreamOf(7)); len(l) != 0 {
 		t.Fatalf("not confirmed and still kept: %+v", l)
 	}
 
@@ -206,30 +211,30 @@ func TestUnconfirmedCaptureIsDropped(t *testing.T) {
 	s.Wait()
 	s.now = func() time.Time { return time.Now().Add(pendingFor + time.Second) }
 	s.Sweep()
-	if l := s.List(8); len(l) != 1 || l[0].State != StateKept || !l[0].Manual {
+	if l := s.List(id.StreamOf(8)); len(l) != 1 || l[0].State != capturestate.Kept() || !l[0].Manual {
 		t.Fatalf("a capture that was asked for: %+v", l)
 	}
-	if !s.Delete(l8(s)) || len(s.List(8)) != 0 {
+	if !s.Delete(l8(s)) || len(s.List(id.StreamOf(8))) != 0 {
 		t.Error("it could not be deleted")
 	}
 }
 
-func l8(s *Store) string { return s.List(8)[0].ID }
+func l8(s *Store) string { return s.List(id.StreamOf(8))[0].ID }
 
 func TestCaptureLimits(t *testing.T) {
 	st := newStream(t)
 	// No room for a capture at all: none is made.
 	s := open(t, 1<<20)
-	s.Capture(st.request(7, probe.ProbPictureBlack))
+	s.Capture(st.request(7, problemkind.PictureBlack()))
 	s.Wait()
-	if u := s.Usage(); len(s.List(0)) != 0 || u.Refused != 1 || u.Made != 0 {
-		t.Fatalf("with no room: %+v, %d captures", u, len(s.List(0)))
+	if u := s.Usage(); len(s.List(id.StreamOf(0))) != 0 || u.Refused != 1 || u.Made != 0 {
+		t.Fatalf("with no room: %+v, %d captures", u, len(s.List(id.StreamOf(0))))
 	}
 
 	// One at a time from one server; another server is another matter.
 	s = open(t, 0)
 	block := make(chan struct{})
-	slow := st.request(1, probe.ProbPictureBlack)
+	slow := st.request(1, problemkind.PictureBlack())
 	slow.Playlist = nil
 	get := slow.Get
 	slow.Get = func(ctx context.Context, url string, offset, limit int64) (*httpx.Response, error) {
@@ -237,45 +242,45 @@ func TestCaptureLimits(t *testing.T) {
 		return get(ctx, url, offset, limit)
 	}
 	s.Capture(slow)
-	same := st.request(2, probe.ProbPictureBlack)
+	same := st.request(2, problemkind.PictureBlack())
 	same.Playlist = nil
 	s.Capture(same)
-	other := st.request(3, probe.ProbPictureBlack)
+	other := st.request(3, problemkind.PictureBlack())
 	other.Playlist, other.Server = nil, "192.0.2.2"
 	s.Capture(other)
-	third := st.request(4, probe.ProbPictureBlack)
+	third := st.request(4, problemkind.PictureBlack())
 	third.Playlist, third.Server = nil, "192.0.2.3"
 	s.Capture(third)
 	// What somebody asked for is made all the same.
 	asked := st.request(5)
 	asked.Playlist, asked.Manual = nil, true
 	s.Capture(asked)
-	if len(s.List(5)) != 1 {
+	if len(s.List(id.StreamOf(5))) != 1 {
 		t.Fatal("a capture that was asked for was turned away for those being made")
 	}
 	close(block)
 	s.Wait()
-	if len(s.List(1)) != 1 || len(s.List(2)) != 0 || len(s.List(3)) != 1 || len(s.List(4)) != 0 {
-		t.Fatalf("captures of streams 1 to 4: %d %d %d %d", len(s.List(1)), len(s.List(2)), len(s.List(3)), len(s.List(4)))
+	if len(s.List(id.StreamOf(1))) != 1 || len(s.List(id.StreamOf(2))) != 0 || len(s.List(id.StreamOf(3))) != 1 || len(s.List(id.StreamOf(4))) != 0 {
+		t.Fatalf("captures of streams 1 to 4: %d %d %d %d", len(s.List(id.StreamOf(1))), len(s.List(id.StreamOf(2))), len(s.List(id.StreamOf(3))), len(s.List(id.StreamOf(4))))
 	}
 	if u := s.Usage(); u.Refused != 2 || u.Made != 3 || u.Bytes == 0 {
 		t.Errorf("usage: %+v", u)
 	}
 
 	// When there is too much, what nobody confirmed goes first.
-	s.Delete(s.List(5)[0].ID)
-	s.Confirm(3, []string{probe.ProbPictureBlack})
+	s.Delete(s.List(id.StreamOf(5))[0].ID)
+	s.Confirm(id.StreamOf(3), []problemkind.Kind{problemkind.PictureBlack()})
 	s.mu.Lock()
-	s.o.MaxBytes = s.captures[s.listID(3)].Bytes + 1
+	s.o.MaxBytes = s.captures[s.listID(id.StreamOf(3))].Bytes + 1
 	s.mu.Unlock()
 	s.Sweep()
-	if len(s.List(1)) != 0 || len(s.List(3)) != 1 {
-		t.Errorf("after making room: %d unconfirmed, %d confirmed", len(s.List(1)), len(s.List(3)))
+	if len(s.List(id.StreamOf(1))) != 0 || len(s.List(id.StreamOf(3))) != 1 {
+		t.Errorf("after making room: %d unconfirmed, %d confirmed", len(s.List(id.StreamOf(1))), len(s.List(id.StreamOf(3))))
 	}
 }
 
 // listID is the id of the capture of a stream; the lock is held.
-func (s *Store) listID(streamID int64) string {
+func (s *Store) listID(streamID id.Stream) string {
 	for id, c := range s.captures {
 		if c.StreamID == streamID {
 			return id
@@ -287,45 +292,45 @@ func (s *Store) listID(streamID int64) string {
 func TestTheSameProblemIsCapturedOnce(t *testing.T) {
 	st := newStream(t)
 	s := open(t, 0)
-	short := func(id int64, kinds ...string) probe.CaptureRequest {
+	short := func(id int64, kinds ...problemkind.Kind) probe.CaptureRequest {
 		rq := st.request(id, kinds...)
 		rq.Window, rq.Playlist, rq.At = rq.Window[len(rq.Window)-2:], nil, s.now()
 		return rq
 	}
-	s.Capture(short(7, probe.ProbPTSDiscontinuity))
+	s.Capture(short(7, problemkind.PTSDiscontinuity()))
 	s.Wait()
-	s.Confirm(7, []string{probe.ProbPTSDiscontinuity})
+	s.Confirm(id.StreamOf(7), []problemkind.Kind{problemkind.PTSDiscontinuity()})
 	// An hour later the stream has the same thing wrong: no second capture.
 	s.now = func() time.Time { return time.Now().Add(time.Hour) }
-	s.Capture(short(7, probe.ProbPTSDiscontinuity))
+	s.Capture(short(7, problemkind.PTSDiscontinuity()))
 	s.Wait()
-	if len(s.List(7)) != 1 {
-		t.Fatalf("the same problem of the same stream was captured %d times", len(s.List(7)))
+	if len(s.List(id.StreamOf(7))) != 1 {
+		t.Fatalf("the same problem of the same stream was captured %d times", len(s.List(id.StreamOf(7))))
 	}
 	// Something else wrong with it is another matter, and so is another stream.
-	s.Capture(short(7, probe.ProbPictureBlack))
+	s.Capture(short(7, problemkind.PictureBlack()))
 	s.Wait()
-	s.Capture(short(8, probe.ProbPTSDiscontinuity))
+	s.Capture(short(8, problemkind.PTSDiscontinuity()))
 	s.Wait()
-	if len(s.List(7)) != 2 || len(s.List(8)) != 1 {
-		t.Fatalf("captures: %d of stream 7, %d of stream 8", len(s.List(7)), len(s.List(8)))
+	if len(s.List(id.StreamOf(7))) != 2 || len(s.List(id.StreamOf(8))) != 1 {
+		t.Fatalf("captures: %d of stream 7, %d of stream 8", len(s.List(id.StreamOf(7))), len(s.List(id.StreamOf(8))))
 	}
 	// A day later it is captured again.
 	s.now = func() time.Time { return time.Now().Add(25 * time.Hour) }
-	s.Capture(short(7, probe.ProbPTSDiscontinuity))
+	s.Capture(short(7, problemkind.PTSDiscontinuity()))
 	s.Wait()
-	if len(s.List(7)) != 3 {
-		t.Errorf("a day later: %d captures", len(s.List(7)))
+	if len(s.List(id.StreamOf(7))) != 3 {
+		t.Errorf("a day later: %d captures", len(s.List(id.StreamOf(7))))
 	}
 
 	// With too much kept, the common goes before the rare: of three
 	// captures of breaks in the timestamps and one of a black picture,
 	// room is made by dropping the oldest of the three.
-	s.Confirm(7, []string{probe.ProbPTSDiscontinuity, probe.ProbPictureBlack})
-	s.Confirm(8, []string{probe.ProbPTSDiscontinuity})
+	s.Confirm(id.StreamOf(7), []problemkind.Kind{problemkind.PTSDiscontinuity(), problemkind.PictureBlack()})
+	s.Confirm(id.StreamOf(8), []problemkind.Kind{problemkind.PTSDiscontinuity()})
 	var total int64
-	for _, c := range s.List(0) {
-		if c.State != StateKept {
+	for _, c := range s.List(id.StreamOf(0)) {
+		if c.State != capturestate.Kept() {
 			t.Fatalf("not kept: %+v", c)
 		}
 		total += c.Bytes
@@ -335,11 +340,11 @@ func TestTheSameProblemIsCapturedOnce(t *testing.T) {
 	s.mu.Unlock()
 	s.now = time.Now
 	s.Sweep()
-	left := map[string]int{}
-	for _, c := range s.List(0) {
+	left := map[problemkind.Kind]int{}
+	for _, c := range s.List(id.StreamOf(0)) {
 		left[c.Kinds[0]]++
 	}
-	if left[probe.ProbPictureBlack] != 1 || left[probe.ProbPTSDiscontinuity] != 2 {
+	if left[problemkind.PictureBlack()] != 1 || left[problemkind.PTSDiscontinuity()] != 2 {
 		t.Errorf("after making room: %v", left)
 	}
 }

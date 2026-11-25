@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/owner"
 )
 
 // The segment journal lives in a file of its own, next to the main
@@ -116,14 +118,14 @@ func openJournal(ctx context.Context, path string, maxBytes int64) (*sql.DB, err
 
 // JournalEntry is a checked segment to record.
 type JournalEntry struct {
-	VariantID int64
+	VariantID id.Variant
 	Segment   *probe.Segment
 }
 
 // AppendSegments records checked segments of one stream as seen by one
 // agent and drops the rows they push out. When the journal is full it makes
 // room by dropping its oldest rows and tries once more.
-func (s *Store) AppendSegments(ctx context.Context, streamID, agentID int64, entries []JournalEntry) error {
+func (s *Store) AppendSegments(ctx context.Context, streamID id.Stream, agentID id.Agent, entries []JournalEntry) error {
 	if len(entries) == 0 {
 		return nil
 	}
@@ -137,7 +139,7 @@ func (s *Store) AppendSegments(ctx context.Context, streamID, agentID int64, ent
 	return err
 }
 
-func (s *Store) appendSegments(ctx context.Context, streamID, agentID int64, entries []JournalEntry) error {
+func (s *Store) appendSegments(ctx context.Context, streamID id.Stream, agentID id.Agent, entries []JournalEntry) error {
 	tx, err := s.journal.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -145,7 +147,7 @@ func (s *Store) appendSegments(ctx context.Context, streamID, agentID int64, ent
 	defer func() { _ = tx.Rollback() }()
 
 	type class struct {
-		variantID int64
+		variantID id.Variant
 		flagged   int
 	}
 	touched := map[class]bool{}
@@ -163,7 +165,7 @@ func (s *Store) appendSegments(ctx context.Context, streamID, agentID int64, ent
 			INSERT INTO segments (stream_id, agent_id, variant_id, seq, time, url, duration, status, error, remote_addr, size, total_ms, problems, flagged, detail)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			streamID, agentID, e.VariantID, int64(seg.Seq), toMs(seg.Time), seg.URL, seg.Duration, seg.Status, seg.Error,
-			seg.RemoteAddr, seg.Size, seg.TotalMs, strings.Join(seg.Problems, ","), flagged, string(detail)); err != nil {
+			seg.RemoteAddr, seg.Size, seg.TotalMs, kindsText(seg.Problems), flagged, string(detail)); err != nil {
 			return err
 		}
 		touched[class{e.VariantID, flagged}] = true
@@ -227,16 +229,18 @@ func deleteInBatches(ctx context.Context, db *sql.DB, table, cond string, args .
 }
 
 // dropJournal forgets the journal rows of a stream or an agent that is gone.
-func (s *Store) dropJournal(ctx context.Context, column string, id int64) error {
-	_, err := deleteInBatches(ctx, s.journal, "segments", column+" = ?", id)
+// dropJournal deletes the journal of a stream, or what an agent wrote to
+// it, by the number of the one or the other.
+func (s *Store) dropJournal(ctx context.Context, of owner.Kind, n int64) error {
+	_, err := deleteInBatches(ctx, s.journal, "segments", of.String()+"_id = ?", n)
 	return err
 }
 
 // SegmentFilter selects journal rows.
 type SegmentFilter struct {
-	StreamID     int64
-	AgentID      int64
-	VariantID    int64
+	StreamID     id.Stream
+	AgentID      id.Agent
+	VariantID    id.Variant
 	OnlyProblems bool
 	Before       time.Time
 	Limit        int
@@ -246,11 +250,11 @@ type SegmentFilter struct {
 func (s *Store) ListSegments(ctx context.Context, f SegmentFilter) ([]*SegmentRecord, error) {
 	where := []string{"stream_id = ?"}
 	args := []any{f.StreamID}
-	if f.AgentID != 0 {
+	if !f.AgentID.IsZero() {
 		where = append(where, "agent_id = ?")
 		args = append(args, f.AgentID)
 	}
-	if f.VariantID != 0 {
+	if !f.VariantID.IsZero() {
 		where = append(where, "variant_id = ?")
 		args = append(args, f.VariantID)
 	}
@@ -283,10 +287,7 @@ func (s *Store) ListSegments(ctx context.Context, f SegmentFilter) ([]*SegmentRe
 		}
 		r.Seq = uint64(seq)
 		r.Time = fromMs(t)
-		r.Problems = []string{}
-		if problems != "" {
-			r.Problems = strings.Split(problems, ",")
-		}
+		r.Problems = readKinds(problems)
 		r.Detail = json.RawMessage(detail)
 		out = append(out, &r)
 	}

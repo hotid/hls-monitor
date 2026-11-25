@@ -6,7 +6,7 @@ import { fmtBytes, fmtDuration, fmtMs, fmtSeconds } from '@/format'
 import { dateLocale, t } from '@/i18n'
 import { conclusion } from '@/incident'
 import { useLive } from '@/stores/live'
-import type { DiagnoseEvent, Endpoint, Incident, Level, ProbeProblem, SegmentDetail, StreamDetail } from '@/types'
+import type { DiagnoseEvent, Endpoint, Incident, Level, ProbeProblem, SegmentDetail, StreamDetail, VariantKind } from '@/types'
 import IncidentDetails from '@/components/IncidentDetails.vue'
 import PlaylistPair from '@/components/PlaylistPair.vue'
 
@@ -44,7 +44,7 @@ function setVantage() {
 // ── What the run has shown so far ─────────────────────────────────────
 interface PlaylistRow {
   key: string
-  kind: string
+  kind: VariantKind
   name: string
   metrics: Record<string, number>
   source?: Endpoint
@@ -330,7 +330,7 @@ function keyframe(seg: SegmentDetail): boolean | undefined {
 
 function asIncident(f: Finding): Incident {
   return {
-    id: 0, stream_id: props.id, stream_name: info.value?.name ?? '', agent_id: 0, agent_name: '', variant_id: 0, variant_key: f.variant, variant_kind: '',
+    id: 0, stream_id: props.id, stream_name: info.value?.name ?? '', agent_id: 0, agent_name: '', variant_id: 0, variant_key: f.variant, variant_kind: f.variant === 'master' ? 'master' : f.variant === 'media' ? 'media' : 'video',
     kind: f.kind, severity: f.severity, message: f.message, started_at: f.first, last_seen: f.last, ended_at: null, count: f.count, episodes: 1, idle_seconds: 0, active: true, details: f.details,
   }
 }

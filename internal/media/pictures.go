@@ -4,6 +4,8 @@ import (
 	"bytes"
 
 	"github.com/Eyevinn/mp4ff/avc"
+
+	"github.com/hotid/hls-monitor/internal/types/codec"
 )
 
 // A PES packet usually carries one coded picture, but nothing in MPEG-TS
@@ -72,14 +74,14 @@ func (v *videoScanner) picture(out *pictureScan, key, field bool) {
 	v.keyOpen = key && field && !second
 }
 
-func (v *videoScanner) scan(codec string, data []byte, wantSPS bool) pictureScan {
+func (v *videoScanner) scan(of codec.Codec, data []byte, wantSPS bool) pictureScan {
 	out := pictureScan{known: true}
-	switch codec {
-	case "h264":
+	switch of {
+	case codec.H264():
 		v.scanH264(data, wantSPS, &out)
-	case "hevc":
+	case codec.HEVC():
 		v.scanHEVC(data, wantSPS, &out)
-	case "mpeg2video", "mpeg1video":
+	case codec.MPEG2Video(), codec.MPEG1Video():
 		v.scanMPEG2(data, &out)
 	default:
 		out.known = false

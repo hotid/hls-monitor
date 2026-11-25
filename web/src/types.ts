@@ -1,6 +1,67 @@
 export type Status = 'ok' | 'warn' | 'fail' | 'nodata' | 'disabled'
 export type Role = 'admin' | 'viewer'
 export type Level = 'playlist' | 'header' | 'segments' | 'container'
+export type Severity = 'info' | 'warn' | 'crit'
+export type VariantKind = 'master' | 'media' | 'video' | 'audio' | 'subtitles'
+export type TrackKind = 'video' | 'audio' | 'other'
+export type Container = 'ts' | 'fmp4' | 'aac' | 'vtt' | 'unknown'
+/** What a process that checks streams is short of. */
+export type Overload = 'processor'
+/** What can be wrong with a stream, or with a server (network_loss). */
+export type ProblemKind =
+  | 'playlist_unreachable'
+  | 'playlist_http_error'
+  | 'playlist_parse_error'
+  | 'playlist_syntax'
+  | 'playlist_stale'
+  | 'playlist_empty'
+  | 'sequence_regression'
+  | 'sequence_jump'
+  | 'sequence_renumbered'
+  | 'segment_changed'
+  | 'target_duration_exceeded'
+  | 'target_duration_changed'
+  | 'pdt_discontinuity'
+  | 'stream_ended'
+  | 'variants_changed'
+  | 'variants_out_of_sync'
+  | 'key_unavailable'
+  | 'init_unavailable'
+  | 'cert_expiring'
+  | 'segment_unreachable'
+  | 'segment_http_error'
+  | 'segment_truncated'
+  | 'segment_slow'
+  | 'playback_stall'
+  | 'bitrate_exceeds_declared'
+  | 'media_parse_error'
+  | 'ts_sync_error'
+  | 'ts_continuity_error'
+  | 'ts_transport_error'
+  | 'ts_no_pat_pmt'
+  | 'no_keyframe_start'
+  | 'duration_mismatch'
+  | 'pts_discontinuity'
+  | 'av_desync'
+  | 'media_params_changed'
+  | 'playlist_source_changed'
+  | 'segment_source_changed'
+  | 'picture_black'
+  | 'picture_frozen'
+  | 'audio_silent'
+  | 'picture_slate'
+  | 'picture_loop'
+  | 'audio_loop'
+  | 'audio_channel_silent'
+  | 'audio_quiet'
+  | 'audio_undecodable'
+  | 'audio_absent'
+  | 'media_undecodable'
+  | 'declared_mismatch'
+  | 'ts_clock_error'
+  | 'subtitles_invalid'
+  | 'vantage_behind'
+  | 'network_loss'
 
 export interface User {
   id: number
@@ -141,7 +202,7 @@ export interface Variant {
   id: number
   stream_id: number
   key: string
-  kind: 'master' | 'media' | 'video' | 'audio' | 'subtitles'
+  kind: VariantKind
   uri?: string
   name?: string
   bandwidth?: number
@@ -185,7 +246,7 @@ export interface AgentStatus {
   queue_dropped: number
   queue_failing?: boolean
   /** What the agent's host is short of, if anything. */
-  overloaded?: string
+  overloaded?: Overload
   streams: number
   /** Streams checked later than they should be. */
   behind: number
@@ -214,9 +275,9 @@ export interface Incident {
   agent_name: string
   variant_id: number
   variant_key: string
-  variant_kind: string
-  kind: string
-  severity: 'info' | 'warn' | 'crit'
+  variant_kind: VariantKind
+  kind: ProblemKind
+  severity: Severity
   message: string
   started_at: string
   last_seen: string
@@ -265,7 +326,7 @@ export interface ServerIncident {
   host: string
   ip: string
   /** The kind of the streams' problem, or "network_loss". */
-  kind: string
+  kind: ProblemKind
   severity: 'warn' | 'crit'
   message: string
   streams: number
@@ -317,15 +378,16 @@ export interface SeriesResponse {
 
 export interface MediaTrack {
   id: number
-  kind: string
-  codec: string
+  kind: TrackKind
+  /** Absent when the container does not say. */
+  codec?: string
   width?: number
   height?: number
   profile?: string
   level?: string
   fps?: number
   /** "PQ" or "HLG" for a picture of high dynamic range. */
-  range?: string
+  range?: 'PQ' | 'HLG'
   sample_rate?: number
   channels?: number
   frames: number
@@ -339,7 +401,7 @@ export interface MediaTrack {
 }
 
 export interface MediaInfo {
-  container: string
+  container: Container
   tracks?: MediaTrack[]
   packets?: number
   sync_errors?: number
@@ -362,7 +424,7 @@ export interface SegmentDetail {
   error?: string
   remote_addr?: string
   proto?: string
-  cache?: string
+  cache?: 'hit' | 'miss'
   size: number
   fetched?: number
   partial?: boolean
@@ -391,7 +453,7 @@ export interface SegmentRecord {
   remote_addr: string
   size: number
   total_ms: number
-  problems: string[]
+  problems: ProblemKind[]
   detail: SegmentDetail
 }
 
@@ -402,7 +464,7 @@ export interface Snapshot {
   variant_id: number
   time: string
   url: string
-  problems: string[]
+  problems: ProblemKind[]
   body?: string
   /** The playlist at the check before, and when it was received. */
   previous_body?: string
@@ -482,8 +544,8 @@ export interface ServersNetwork {
 }
 
 export interface ProbeProblem {
-  kind: string
-  severity: 'info' | 'warn' | 'crit'
+  kind: ProblemKind
+  severity: Severity
   variant: string
   message: string
   count: number
@@ -543,8 +605,8 @@ export interface Capture {
   /** The agent that made it; absent for one the server made. */
   agent_id?: number
   variant: string
-  kinds: string[]
-  confirmed?: string[]
+  kinds: ProblemKind[]
+  confirmed?: ProblemKind[]
   manual?: boolean
   state: 'pending' | 'kept' | 'found'
   at: string

@@ -2,11 +2,13 @@ package probe
 
 import (
 	"slices"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/media"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
 )
 
 // What an operator puts on air in place of a channel is most often a short
@@ -33,13 +35,9 @@ const (
 	keyMemory      = 10 * time.Minute
 	keyMemoryMax   = 512
 	soundMemoryMax = 4096
-	// SignatureMax is how many frames a clip is known by at the most.
-	SignatureMax = 256
 	// knownFor is for how long a playlist that played a known clip is
 	// taken to play it still: a long clip is known by a part of its frames.
 	knownFor = 2 * time.Minute
-	// soundKey is added to the key of a playlist for what its sound does.
-	soundKey = "/sound"
 )
 
 // coded is what the frames of a playlist are remembered by.
@@ -72,31 +70,10 @@ func clipOf(slates []Slate, hashes []uint64) *Slate {
 	return nil
 }
 
-// Signature writes the frames a clip is known by the way they are carried
-// in the details of an incident; ParseSignature reads them back, sorted.
-func Signature(hashes []uint64) string {
-	parts := make([]string, len(hashes))
-	for i, h := range hashes {
-		parts[i] = strconv.FormatUint(h, 16)
-	}
-	return strings.Join(parts, ",")
-}
-
-func ParseSignature(s string) []uint64 {
-	var out []uint64
-	for _, p := range strings.Split(s, ",") {
-		if h, err := strconv.ParseUint(p, 16, 64); err == nil && len(out) < SignatureMax {
-			out = append(out, h)
-		}
-	}
-	slices.Sort(out)
-	return slices.Compact(out)
-}
-
 // noteCoded looks at the coded frames of a segment that was read, and
 // tells whether the playlist plays the same thing over and over.
 func (c *Checker) noteCoded(v Variant, st *variantState, info *media.Info, at time.Time) {
-	if info == nil || c.t.Picture == PictureOff {
+	if info == nil || c.t.Picture == picturemode.Off() {
 		return
 	}
 	var slates []Slate
@@ -105,19 +82,19 @@ func (c *Checker) noteCoded(v Variant, st *variantState, info *media.Info, at ti
 	}
 	// A stream said to show a still picture is not asked what it shows;
 	// what it sounds like is another matter.
-	if video := info.Video(); video != nil && c.t.Picture == PictureCheck {
-		c.noteLoop(v.Key, v.Key, &st.keys, video.KeyHashes, false, false, slates, at)
+	if video := info.Video(); video != nil && c.t.Picture == picturemode.Check() {
+		c.noteLoop(standKey{variant: v.Key}, &st.keys, video.KeyHashes, false, false, slates, at)
 	}
 	if audio := info.Audio(); audio != nil {
 		// Sound that goes round with its picture is the picture's clip,
 		// and is told as that when the pictures have come round enough.
-		c.noteLoop(v.Key+soundKey, v.Key, &st.sound, audio.SoundHashes, true, st.keys.repeated.n > 0, slates, at)
+		c.noteLoop(standKey{variant: v.Key, sound: true}, &st.sound, audio.SoundHashes, true, st.keys.repeated.n > 0, slates, at)
 	}
 }
 
 // noteLoop takes the frames of one track of a segment. With quiet set a
 // clip found going round is not told: something else tells it.
-func (c *Checker) noteLoop(key, variant string, k *coded, hashes []uint64, sound, quiet bool, slates []Slate, at time.Time) {
+func (c *Checker) noteLoop(key standKey, k *coded, hashes []uint64, sound, quiet bool, slates []Slate, at time.Time) {
 	if len(hashes) == 0 {
 		return
 	}
@@ -168,7 +145,7 @@ func (c *Checker) noteLoop(key, variant string, k *coded, hashes []uint64, sound
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.loops == nil {
-		c.loops = map[string]standingProblem{}
+		c.loops = map[standKey]standingProblem{}
 	}
 	// A clip is found by its coded frames, between two looks: the stream
 	// is looked at now, once, for the incident to have a picture to show —
@@ -186,8 +163,8 @@ func (c *Checker) noteLoop(key, variant string, k *coded, hashes []uint64, sound
 		if sound {
 			message = "the stream plays the clip \"" + k.known + "\""
 		}
-		c.loops[key] = standingProblem{at: at, kind: ProbPictureSlate, severity: SevCrit, variant: variant, message: message,
-			details: []any{"slate", k.known, "known_by", "coded frames"}}
+		c.loops[key] = standingProblem{at: at, kind: problemkind.PictureSlate(), severity: severity.Crit(), variant: key.variant, message: message,
+			details: []detail.Field{detail.Slate(k.known), detail.KnownBy("coded frames")}}
 	case !quiet && k.repeated.n >= loopSegments && at.Sub(k.repeated.since) >= loopSpan:
 		// The clip is the frames seen since it began.
 		var clip []uint64
@@ -197,14 +174,15 @@ func (c *Checker) noteLoop(key, variant string, k *coded, hashes []uint64, sound
 			}
 		}
 		slices.Sort(clip)
-		p := standingProblem{at: at, kind: ProbPictureLoop, severity: SevCrit, variant: variant,
-			message: "the same pictures go round and round",
-			details: []any{"segments_in_a_row", k.repeated.n, "distinct_keyframes", len(clip), "since", k.repeated.since.UTC().Format(time.RFC3339),
-				"clip_signature", Signature(clip[:min(len(clip), SignatureMax)])}}
+		p := standingProblem{at: at, kind: problemkind.PictureLoop(), severity: severity.Crit(), variant: key.variant,
+			message: "the same pictures go round and round"}
+		distinct := detail.DistinctKeyframes(len(clip))
 		if sound {
-			p.kind, p.severity, p.message = ProbAudioLoop, SevWarn, "the same sound goes round and round"
-			p.details[2] = "distinct_frames"
+			p.kind, p.severity, p.message = problemkind.AudioLoop(), severity.Warn(), "the same sound goes round and round"
+			distinct = detail.DistinctFrames(len(clip))
 		}
+		p.details = []detail.Field{detail.SegmentsInARow(k.repeated.n), distinct, detail.Since(k.repeated.since),
+			detail.ClipSignature(clip[:min(len(clip), detail.SignatureMax)])}
 		c.loops[key] = p
 	default:
 		delete(c.loops, key)

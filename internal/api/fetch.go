@@ -14,6 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hotid/hls-monitor/internal/agentproto"
+	"github.com/hotid/hls-monitor/internal/types/errcode"
+	"github.com/hotid/hls-monitor/internal/types/id"
 )
 
 // Watching through an agent: the browser asks the server, the server asks
@@ -31,7 +33,7 @@ const (
 
 // fetchJob is one request on its way through an agent.
 type fetchJob struct {
-	agent int64
+	agent id.Agent
 	req   agentproto.FetchRequest
 	done  chan fetchDone
 	// stream is set for work an agent answers many times over, a live
@@ -61,15 +63,15 @@ type relayTiming struct {
 // relays holds the work waiting for agents and the work they have taken.
 type relays struct {
 	mu      sync.Mutex
-	queues  map[int64]chan *fetchJob
+	queues  map[id.Agent]chan *fetchJob
 	pending map[string]*fetchJob
 }
 
-func (r *relays) queue(agent int64) chan *fetchJob {
+func (r *relays) queue(agent id.Agent) chan *fetchJob {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.queues == nil {
-		r.queues, r.pending = map[int64]chan *fetchJob{}, map[string]*fetchJob{}
+		r.queues, r.pending = map[id.Agent]chan *fetchJob{}, map[string]*fetchJob{}
 	}
 	q := r.queues[agent]
 	if q == nil {
@@ -80,7 +82,7 @@ func (r *relays) queue(agent int64) chan *fetchJob {
 }
 
 // fetchThroughAgent has an agent fetch what job names.
-func (s *Server) fetchThroughAgent(ctx context.Context, agent int64, req agentproto.FetchRequest) (agentproto.FetchResult, []byte, *relayTiming) {
+func (s *Server) fetchThroughAgent(ctx context.Context, agent id.Agent, req agentproto.FetchRequest) (agentproto.FetchResult, []byte, *relayTiming) {
 	start := time.Now()
 	ms := func(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
 	var id [12]byte
@@ -129,7 +131,7 @@ func (s *Server) fetchThroughAgent(ctx context.Context, agent int64, req agentpr
 func (s *Server) agentFetchPoll(c *gin.Context) {
 	a := currentAgent(c)
 	if !a.Enabled {
-		fail(c, http.StatusForbidden, "agent_disabled", "the agent is disabled")
+		fail(c, http.StatusForbidden, errcode.AgentDisabled(), "the agent is disabled")
 		return
 	}
 	hold := time.NewTimer(s.fetchPoll)
@@ -162,7 +164,7 @@ func (s *Server) agentFetchResult(c *gin.Context) {
 	s.relays.mu.Unlock()
 	if job == nil || job.agent != a.ID {
 		// The viewer went away or gave up waiting.
-		fail(c, http.StatusNotFound, "not_found", "nobody waits for this any more")
+		fail(c, http.StatusNotFound, errcode.NotFound(), "nobody waits for this any more")
 		return
 	}
 	var res agentproto.FetchResult
@@ -185,7 +187,7 @@ func (s *Server) agentFetchResult(c *gin.Context) {
 		case job.stream <- fetchDone{res: res, body: body}:
 			c.Status(http.StatusNoContent)
 		case <-wait.C:
-			fail(c, http.StatusNotFound, "not_found", "nobody waits for this any more")
+			fail(c, http.StatusNotFound, errcode.NotFound(), "nobody waits for this any more")
 		}
 		return
 	}
@@ -200,7 +202,7 @@ func (s *Server) agentFetchResult(c *gin.Context) {
 // cycle with what every check found, until the time is up, the reader
 // stops (cycle returns false) or ctx is done. It tells why it ended:
 // "time", or what went wrong.
-func (s *Server) diagnoseThroughAgent(ctx context.Context, agent int64, d agentproto.DiagnoseJob, cycle func(agentproto.DiagnoseCycle) bool) string {
+func (s *Server) diagnoseThroughAgent(ctx context.Context, agent id.Agent, d agentproto.DiagnoseJob, cycle func(agentproto.DiagnoseCycle) bool) string {
 	var id [12]byte
 	_, _ = rand.Read(id[:])
 	job := &fetchJob{agent: agent, req: agentproto.FetchRequest{ID: hex.EncodeToString(id[:]), Diagnose: &d}, stream: make(chan fetchDone, 2)}

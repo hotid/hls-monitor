@@ -142,6 +142,7 @@ definitions:
   github_com_hotid_hls-monitor_internal_agentproto.ResultsRequest:
     properties:
       results:
+        description: Results has nil in place of a result that could not be read.
         items:
           $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Result'
         type: array
@@ -189,6 +190,8 @@ definitions:
         type: integer
       overloaded:
         description: Overloaded names what the agent's host is short of, if anything.
+        enum:
+        - processor
         type: string
       queue_bytes:
         type: integer
@@ -257,6 +260,10 @@ definitions:
       seq:
         type: integer
       state:
+        enum:
+        - pending
+        - kept
+        - found
         type: string
       stream_id:
         type: integer
@@ -292,9 +299,13 @@ definitions:
           one with what a decoder complained of, when it did.
         type: string
       role:
-        description: |-
-          Role is what it is: "evidence" (the bytes the check read),
-          "segment", "init", "playlist" or "master".
+        description: Role is what it is.
+        enum:
+        - evidence
+        - segment
+        - init
+        - playlist
+        - master
         type: string
       seq:
         description: |-
@@ -365,6 +376,12 @@ definitions:
         - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_media.TSClock'
         description: Clock is what the program clock of the segment says.
       container:
+        enum:
+        - ts
+        - fmp4
+        - aac
+        - vtt
+        - unknown
         type: string
       error:
         description: Error is set when the segment could not be parsed completely.
@@ -439,6 +456,7 @@ definitions:
       channels:
         type: integer
       codec:
+        description: Codec is not set when the container does not say.
         type: string
       end_pts:
         type: number
@@ -459,6 +477,10 @@ definitions:
       keyframes:
         type: integer
       kind:
+        enum:
+        - video
+        - audio
+        - other
         type: string
       level:
         type: string
@@ -471,8 +493,11 @@ definitions:
         type: string
       range:
         description: |-
-          Range is the dynamic range of the picture when it is a high one:
-          "PQ" (HDR10, Dolby Vision) or "HLG"; empty for standard.
+          Range is the dynamic range of the picture when it is a high one;
+          not set for standard.
+        enum:
+        - PQ
+        - HLG
         type: string
       sample_rate:
         type: integer
@@ -538,27 +563,6 @@ definitions:
         description: URL is the address the response finally came from.
         type: string
     type: object
-  github_com_hotid_hls-monitor_internal_probe.Level:
-    enum:
-    - playlist
-    - header
-    - segments
-    - container
-    type: string
-    x-enum-comments:
-      LevelContainer: plus container analysis
-      LevelPlaylist: playlists only
-      LevelSegments: plus segment downloads
-    x-enum-descriptions:
-    - playlists only
-    - ""
-    - plus segment downloads
-    - plus container analysis
-    x-enum-varnames:
-    - LevelPlaylist
-    - LevelHeader
-    - LevelSegments
-    - LevelContainer
   github_com_hotid_hls-monitor_internal_probe.Metric:
     properties:
       ip:
@@ -614,17 +618,19 @@ definitions:
         description: Count is how many times it occurred within the cycle.
         type: integer
       details:
-        additionalProperties: {}
         description: |-
           Details are the figures the conclusion was drawn from: what was
-          requested, what came back and what it was compared with. Keys are
-          stable identifiers; values are numbers, strings or lists of strings.
+          requested, what came back and what it was compared with.
         type: object
       kind:
         type: string
       message:
         type: string
       severity:
+        enum:
+        - info
+        - warn
+        - crit
         type: string
       variant:
         type: string
@@ -641,6 +647,8 @@ definitions:
           the cycle; empty when it kept up. Findings that rest on timing alone
           are left out of such a result: a monitor that cannot keep up measures
           its own delay, not the stream's.
+        enum:
+        - processor
         type: string
       own_clip:
         description: |-
@@ -670,6 +678,10 @@ definitions:
           $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Source'
         type: array
       status:
+        enum:
+        - ok
+        - warn
+        - fail
         type: string
       target_id:
         type: integer
@@ -688,6 +700,9 @@ definitions:
       bps:
         type: number
       cache:
+        enum:
+        - hit
+        - miss
         type: string
       connect_ms:
         type: number
@@ -811,16 +826,18 @@ definitions:
           playlist target duration.
         type: number
       level:
-        $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Level'
+        enum:
+        - playlist
+        - header
+        - segments
+        - container
+        type: string
       max_segments:
         description: MaxSegments limits segment downloads per variant per cycle; zero
           means 3.
         type: integer
       picture:
-        description: |-
-          Picture says what the picture and the sound are checked for: all of
-          it by default, PictureStatic when a picture that does not change is
-          what the stream shows, PictureOff not to look at all.
+        description: Picture says what the picture and the sound are checked for.
         type: string
       revision:
         description: Revision changes whenever the configuration changes.
@@ -846,6 +863,12 @@ definitions:
       key:
         type: string
       kind:
+        enum:
+        - master
+        - media
+        - video
+        - audio
+        - subtitles
         type: string
       language:
         type: string
@@ -941,6 +964,8 @@ definitions:
           needed; Reason says how that showed.
         type: boolean
       reason:
+        enum:
+        - processor
         type: string
       scheduler_delay_seconds:
         description: |-
@@ -974,6 +999,9 @@ definitions:
       id:
         type: integer
       kind:
+        enum:
+        - local
+        - remote
         type: string
       last_seen:
         type: string
@@ -1019,6 +1047,10 @@ definitions:
       message:
         type: string
       severity:
+        enum:
+        - info
+        - warn
+        - crit
         type: string
       started_at:
         type: string
@@ -1080,8 +1112,9 @@ definitions:
   github_com_hotid_hls-monitor_internal_store.ServerIncident:
     properties:
       details:
+        allOf:
+        - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.ServerIncidentDetails'
         description: Details name the streams concerned at the latest look.
-        type: object
       ended_at:
         type: string
       episodes:
@@ -1104,6 +1137,10 @@ definitions:
       message:
         type: string
       severity:
+        enum:
+        - info
+        - warn
+        - crit
         type: string
       started_at:
         type: string
@@ -1111,6 +1148,23 @@ definitions:
         description: Streams is the largest number of streams that had the problem
           at once.
         type: integer
+    type: object
+  github_com_hotid_hls-monitor_internal_store.ServerIncidentDetails:
+    properties:
+      example:
+        type: string
+      requests:
+        description: 'For loss: the figures of the last five minutes.'
+        type: number
+      retransmits:
+        type: number
+      streams:
+        description: |-
+          Streams had the problem at the latest look; Example is what one of
+          them said.
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.StreamRef'
+        type: array
     type: object
   github_com_hotid_hls-monitor_internal_store.Slate:
     properties:
@@ -1191,7 +1245,9 @@ definitions:
       variant_id:
         type: integer
       what:
-        description: playlist or segment
+        enum:
+        - playlist
+        - segment
         type: string
     type: object
   github_com_hotid_hls-monitor_internal_store.StreamPicture:
@@ -1226,6 +1282,13 @@ definitions:
       variant:
         type: string
     type: object
+  github_com_hotid_hls-monitor_internal_store.StreamRef:
+    properties:
+      id:
+        type: integer
+      name:
+        type: string
+    type: object
   github_com_hotid_hls-monitor_internal_store.Usage:
     properties:
       database_bytes:
@@ -1254,6 +1317,9 @@ definitions:
       id:
         type: integer
       role:
+        enum:
+        - admin
+        - viewer
         type: string
       username:
         type: string
@@ -1343,6 +1409,12 @@ definitions:
       checked_at:
         type: string
       status:
+        enum:
+        - ok
+        - warn
+        - fail
+        - nodata
+        - disabled
         type: string
       summary:
         additionalProperties:
@@ -1365,6 +1437,9 @@ definitions:
       id:
         type: integer
       kind:
+        enum:
+        - local
+        - remote
         type: string
       last_seen:
         type: string
@@ -1441,6 +1516,11 @@ definitions:
   internal_api.diagnoseEvent:
     properties:
       level:
+        enum:
+        - playlist
+        - header
+        - segments
+        - container
         type: string
       "n":
         description: 'Cycle: its number from one, how long it took and everything
@@ -1460,7 +1540,11 @@ definitions:
       took_ms:
         type: number
       type:
-        description: Type is "start", "cycle" or "end".
+        description: Type is what the line tells.
+        enum:
+        - start
+        - cycle
+        - end
         type: string
       url:
         description: 'Start: what is being checked and for how long.'
@@ -1487,6 +1571,9 @@ definitions:
       id:
         type: integer
       kind:
+        enum:
+        - local
+        - remote
         type: string
       last_seen:
         type: string
@@ -1520,6 +1607,11 @@ definitions:
       id:
         type: integer
       level:
+        enum:
+        - playlist
+        - header
+        - segments
+        - container
         type: string
       name:
         type: string
@@ -1559,6 +1651,12 @@ definitions:
       key:
         type: string
       kind:
+        enum:
+        - master
+        - media
+        - video
+        - audio
+        - subtitles
         type: string
       name:
         type: string
@@ -1636,9 +1734,12 @@ definitions:
           problem.
         type: boolean
       vantage:
-        description: |-
-          Vantage sums them up: "all" saw it, "some", "only_this" one, or
-          "single" when there is nothing to compare with.
+        description: Vantage sums them up.
+        enum:
+        - all
+        - some
+        - only_this
+        - single
         type: string
     type: object
   internal_api.listEntry:
@@ -1650,11 +1751,7 @@ definitions:
       reason:
         type: string
       status:
-        description: |-
-          Status: "new" for a stream that would be added, "created" for one
-          that was, "exists" when the address is checked already, "duplicate"
-          when the list has it twice, "invalid" when it is not an address the
-          monitor can check, "failed" when adding it went wrong.
+        description: Status is what became of it, or would.
         enum:
         - new
         - created
@@ -1689,9 +1786,7 @@ definitions:
           $ref: '#/definitions/internal_api.agentView'
         type: array
       counts:
-        additionalProperties:
-          type: integer
-        type: object
+        $ref: '#/definitions/internal_api.streamCounts'
       incidents:
         items:
           $ref: '#/definitions/github_com_hotid_hls-monitor_internal_store.Incident'
@@ -1715,19 +1810,30 @@ definitions:
       new:
         type: string
     type: object
-  internal_api.readiness:
+  internal_api.readinessChecks:
     properties:
       checks:
-        additionalProperties:
-          type: string
-        description: |-
-          Checks: database, time_series ("ok", "down", "disabled"), load
-          ("ok" or what the process is short of), checks ("ok", "behind").
-        type: object
+        description: Checks is ok, or behind when checks start later than they should.
+        type: string
+      database:
+        description: Database is ok or down.
+        type: string
+      load:
+        description: Load is ok or what the process is short of.
+        type: string
+      time_series:
+        description: TimeSeries is ok, down, or disabled when none is configured.
+        type: string
+    type: object
+  internal_api.readyAnswer:
+    properties:
+      checks:
+        $ref: '#/definitions/internal_api.readinessChecks'
       status:
-        description: |-
-          Status is "ok", "degraded" when the server works but something
-          needs attention, "unavailable" when it cannot do its job.
+        enum:
+        - ok
+        - degraded
+        - unavailable
         type: string
     type: object
   internal_api.scopeAgent:
@@ -1878,6 +1984,21 @@ definitions:
           server's own by default), or the one kept with an incident.
         type: integer
     type: object
+  internal_api.streamCounts:
+    properties:
+      disabled:
+        type: integer
+      fail:
+        type: integer
+      nodata:
+        type: integer
+      ok:
+        type: integer
+      total:
+        type: integer
+      warn:
+        type: integer
+    type: object
   internal_api.streamDetail:
     properties:
       agent_ids:
@@ -1915,10 +2036,7 @@ definitions:
           type: integer
         type: object
       picture:
-        description: |-
-          Picture is what the picture and the sound are checked for: "" for
-          everything, "static" when a still picture is what the stream shows,
-          "off" not to look.
+        description: Picture is what the picture and the sound are checked for.
         type: string
       picture_ref:
         allOf:
@@ -1929,6 +2047,12 @@ definitions:
       revision:
         type: integer
       status:
+        enum:
+        - ok
+        - warn
+        - fail
+        - nodata
+        - disabled
         type: string
       timeout_sec:
         type: number
@@ -2024,10 +2148,7 @@ definitions:
           type: integer
         type: object
       picture:
-        description: |-
-          Picture is what the picture and the sound are checked for: "" for
-          everything, "static" when a still picture is what the stream shows,
-          "off" not to look.
+        description: Picture is what the picture and the sound are checked for.
         type: string
       picture_ref:
         allOf:
@@ -2038,6 +2159,12 @@ definitions:
       revision:
         type: integer
       status:
+        enum:
+        - ok
+        - warn
+        - fail
+        - nodata
+        - disabled
         type: string
       timeout_sec:
         type: number
@@ -2136,6 +2263,12 @@ definitions:
       key:
         type: string
       kind:
+        enum:
+        - master
+        - media
+        - video
+        - audio
+        - subtitles
         type: string
       language:
         type: string
@@ -2180,10 +2313,10 @@ definitions:
       ip:
         type: string
       kind:
-        description: |-
-          Kind is "configured" for the stream's own address, with whatever
-          balancing and redirects lie behind it, and "server" for one
-          particular server asked directly.
+        description: 'Kind is what is asked: the stream''s own address or one server.'
+        enum:
+        - configured
+        - server
         type: string
       last_seen:
         type: string
@@ -2201,9 +2334,8 @@ definitions:
   internal_api.watchVantage:
     properties:
       available:
-        description: |-
-          Available tells that it can be used now; otherwise Why is
-          "offline" or "too_old" (an agent that does not take such requests).
+        description: Available tells that it can be used now; otherwise Why says why
+          not.
         type: boolean
       id:
         type: integer
@@ -2213,6 +2345,9 @@ definitions:
       name:
         type: string
       why:
+        enum:
+        - offline
+        - too_old
         type: string
     type: object
 info:
@@ -4016,11 +4151,11 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/internal_api.readiness'
+            $ref: '#/definitions/internal_api.readyAnswer'
         "503":
           description: Service Unavailable
           schema:
-            $ref: '#/definitions/internal_api.readiness'
+            $ref: '#/definitions/internal_api.readyAnswer'
       summary: 'Readiness: whether the server can do its job'
       tags:
       - system

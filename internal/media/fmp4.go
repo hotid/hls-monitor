@@ -7,6 +7,9 @@ import (
 	"github.com/Eyevinn/mp4ff/avc"
 	"github.com/Eyevinn/mp4ff/hevc"
 	"github.com/Eyevinn/mp4ff/mp4"
+
+	"github.com/hotid/hls-monitor/internal/types/codec"
+	"github.com/hotid/hls-monitor/internal/types/trackkind"
 )
 
 // Init holds what is needed from an fMP4 initialization section (EXT-X-MAP)
@@ -47,13 +50,13 @@ func initFromMoov(moov *mp4.MoovBox) *Init {
 		}
 		t := &initTrack{timescale: trak.Mdia.Mdhd.Timescale}
 		t.ID = trak.Tkhd.TrackID
-		t.Kind = KindOther
+		t.Kind = trackkind.Other()
 		if h := trak.Mdia.Hdlr; h != nil {
 			switch h.HandlerType {
 			case "vide":
-				t.Kind = KindVideo
+				t.Kind = trackkind.Video()
 			case "soun":
-				t.Kind = KindAudio
+				t.Kind = trackkind.Audio()
 			}
 		}
 		if moov.Mvex != nil {
@@ -72,11 +75,11 @@ func initFromMoov(moov *mp4.MoovBox) *Init {
 
 func describeSampleEntry(t *Track, stsd *mp4.StsdBox) {
 	visual := func(v *mp4.VisualSampleEntryBox) {
-		t.Codec = v.Type()
+		t.Codec = codec.Named(v.Type())
 		t.Width, t.Height = int(v.Width), int(v.Height)
 	}
 	audio := func(a *mp4.AudioSampleEntryBox) {
-		t.Codec = a.Type()
+		t.Codec = codec.Named(a.Type())
 		t.SampleRate, t.Channels = int(a.SampleRate), int(a.ChannelCount)
 	}
 	switch {
@@ -121,7 +124,7 @@ func describeSampleEntry(t *Track, stsd *mp4.StsdBox) {
 		audio(stsd.Opus)
 	default:
 		for _, c := range stsd.Children {
-			t.Codec = c.Type()
+			t.Codec = codec.Named(c.Type())
 			break
 		}
 	}
@@ -160,7 +163,7 @@ func analyzeFMP4(data []byte, init *Init, info *Info) {
 		}
 		t := &fmp4Track{}
 		t.ID = id
-		t.Kind = KindOther
+		t.Kind = trackkind.Other()
 		if init != nil {
 			if it, ok := init.tracks[id]; ok {
 				t.Track = it.Track
@@ -216,9 +219,9 @@ func analyzeFMP4(data []byte, init *Init, info *Info) {
 						}
 						switch {
 						case coded == nil:
-						case t.Kind == KindVideo && s.IsSync() && len(t.KeyHashes) < maxKeyHashes:
+						case t.Kind == trackkind.Video() && s.IsSync() && len(t.KeyHashes) < maxKeyHashes:
 							t.KeyHashes = append(t.KeyHashes, hashOf(coded))
-						case t.Kind == KindAudio && len(t.SoundHashes) < maxSoundHashes:
+						case t.Kind == trackkind.Audio() && len(t.SoundHashes) < maxSoundHashes:
 							t.SoundHashes = append(t.SoundHashes, hashOf(coded))
 						}
 						pts := dts + int64(s.CompositionTimeOffset)
@@ -230,14 +233,14 @@ func analyzeFMP4(data []byte, init *Init, info *Info) {
 							t.minPTS = min(t.minPTS, pts)
 							t.maxEnd = max(t.maxEnd, end)
 						}
-						if t.Kind == KindVideo && s.IsSync() {
+						if t.Kind == trackkind.Video() && s.IsSync() {
 							t.Keyframes++
 							t.keyPTS = append(t.keyPTS, pts)
 							if t.seen == 0 {
 								t.FirstKeyframe = true
 							}
 						}
-						if t.Kind == KindVideo && !s.IsSync() {
+						if t.Kind == trackkind.Video() && !s.IsSync() {
 							t.PlainBytes += int64(s.Size)
 							t.PlainFrames++
 						}
@@ -262,7 +265,7 @@ func analyzeFMP4(data []byte, init *Init, info *Info) {
 			t.HasTiming = true
 			t.StartPTS = float64(t.minPTS) / ts
 			t.EndPTS = float64(t.maxEnd) / ts
-			if t.Kind == KindVideo {
+			if t.Kind == trackkind.Video() {
 				if d := t.Duration(); d > 0 {
 					t.FPS = roundTo(float64(t.Frames)/d, 3)
 				}

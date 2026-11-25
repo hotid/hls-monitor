@@ -3,17 +3,17 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"slices"
 	"time"
 
-	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/id"
 )
 
 // Slate is a picture put on air in place of a channel, as somebody marked it.
 type Slate struct {
-	ID        int64        `json:"id"`
+	ID        id.Slate     `json:"id"`
 	Name      string       `json:"name"`
 	CreatedAt time.Time    `json:"created_at"`
 	Frames    []SlateFrame `json:"frames"`
@@ -28,7 +28,7 @@ type Slate struct {
 
 // SlateFrame is one picture of a slate.
 type SlateFrame struct {
-	ID        int64     `json:"id"`
+	ID        id.Frame  `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	// Cells is the picture shrunk, what looks are compared with.
 	Cells []byte `json:"-"`
@@ -46,7 +46,7 @@ func (s *Store) ListSlates(ctx context.Context) ([]*Slate, error) {
 	}
 	defer rows.Close()
 	out := []*Slate{}
-	byID := map[int64]*Slate{}
+	byID := map[id.Slate]*Slate{}
 	for rows.Next() {
 		var sl Slate
 		var at int64
@@ -67,7 +67,8 @@ func (s *Store) ListSlates(ctx context.Context) ([]*Slate, error) {
 	defer frames.Close()
 	for frames.Next() {
 		var f SlateFrame
-		var slate, at int64
+		var slate id.Slate
+		var at int64
 		if err := frames.Scan(&f.ID, &slate, &f.Cells, &at); err != nil {
 			return nil, err
 		}
@@ -85,7 +86,8 @@ func (s *Store) ListSlates(ctx context.Context) ([]*Slate, error) {
 	}
 	defer keys.Close()
 	for keys.Next() {
-		var slate, hash int64
+		var slate id.Slate
+		var hash int64
 		if err := keys.Scan(&slate, &hash); err != nil {
 			return nil, err
 		}
@@ -109,21 +111,16 @@ func (s *Store) ListSlates(ctx context.Context) ([]*Slate, error) {
 // known by its coded frames alone, for a picture that merely looks like it
 // may well be a fault. ErrConflict tells that the name is taken by the
 // other kind.
-func (s *Store) MarkSlate(ctx context.Context, name string, streamID, agentID, incidentID int64, own bool, now time.Time) (*Slate, error) {
+func (s *Store) MarkSlate(ctx context.Context, name string, streamID id.Stream, agentID id.Agent, incidentID id.Incident, own bool, now time.Time) (*Slate, error) {
 	var cells, jpeg []byte
 	var keys []uint64
 	var err error
-	if incidentID > 0 {
+	if !incidentID.IsZero() {
 		var details sql.NullString
 		if err = s.db.QueryRowContext(ctx, "SELECT details FROM incidents WHERE id = ?", incidentID).Scan(&details); err != nil {
 			return nil, notFound(err)
 		}
-		var d struct {
-			Signature string `json:"clip_signature"`
-		}
-		if json.Unmarshal([]byte(details.String), &d) == nil && d.Signature != "" {
-			keys = probe.ParseSignature(d.Signature)
-		}
+		keys = detail.Stored(details.String).Hashes(detail.KeyClipSignature())
 		err = s.db.QueryRowContext(ctx, "SELECT cells, jpeg FROM incident_pictures WHERE incident_id = ?", incidentID).Scan(&cells, &jpeg)
 	} else {
 		err = s.db.QueryRowContext(ctx, "SELECT cells, jpeg FROM stream_pictures WHERE stream_id = ? AND agent_id = ?", streamID, agentID).Scan(&cells, &jpeg)
@@ -135,27 +132,27 @@ func (s *Store) MarkSlate(ctx context.Context, name string, streamID, agentID, i
 	if !picture && len(keys) == 0 {
 		return nil, ErrNoPicture
 	}
-	var id int64
+	var marked id.Slate
 	err = s.Tx(ctx, func(tx *Tx) error {
 		if _, err := tx.q.ExecContext(ctx, "INSERT INTO slates (name, created_at, own) VALUES (?, ?, ?) ON CONFLICT (name) DO NOTHING", name, toMs(now), own); err != nil {
 			return err
 		}
 		var was bool
-		if err := tx.q.QueryRowContext(ctx, "SELECT id, own FROM slates WHERE name = ?", name).Scan(&id, &was); err != nil {
+		if err := tx.q.QueryRowContext(ctx, "SELECT id, own FROM slates WHERE name = ?", name).Scan(&marked, &was); err != nil {
 			return err
 		}
 		if was != own {
 			return ErrConflict
 		}
 		for _, h := range keys {
-			if _, err := tx.q.ExecContext(ctx, "INSERT INTO slate_keys (slate_id, hash) VALUES (?, ?) ON CONFLICT DO NOTHING", id, int64(h)); err != nil {
+			if _, err := tx.q.ExecContext(ctx, "INSERT INTO slate_keys (slate_id, hash) VALUES (?, ?) ON CONFLICT DO NOTHING", marked, int64(h)); err != nil {
 				return err
 			}
 		}
 		if !picture {
 			return nil
 		}
-		_, err := tx.q.ExecContext(ctx, "INSERT INTO slate_frames (slate_id, cells, jpeg, created_at) VALUES (?, ?, ?, ?)", id, cells, jpeg, toMs(now))
+		_, err := tx.q.ExecContext(ctx, "INSERT INTO slate_frames (slate_id, cells, jpeg, created_at) VALUES (?, ?, ?, ?)", marked, cells, jpeg, toMs(now))
 		return err
 	})
 	if err != nil {
@@ -166,7 +163,7 @@ func (s *Store) MarkSlate(ctx context.Context, name string, streamID, agentID, i
 		return nil, err
 	}
 	for _, sl := range all {
-		if sl.ID == id {
+		if sl.ID == marked {
 			return sl, nil
 		}
 	}
@@ -174,15 +171,15 @@ func (s *Store) MarkSlate(ctx context.Context, name string, streamID, agentID, i
 }
 
 // DeleteSlate forgets a slate and its frames.
-func (s *Store) DeleteSlate(ctx context.Context, id int64) error {
-	return affected(s.db.ExecContext(ctx, "DELETE FROM slates WHERE id = ?", id))
+func (s *Store) DeleteSlate(ctx context.Context, slateID id.Slate) error {
+	return affected(s.db.ExecContext(ctx, "DELETE FROM slates WHERE id = ?", slateID))
 }
 
 // DeleteSlateFrame forgets one picture of a slate, and the slate with it
 // when that was its last and it is not known by a clip either.
-func (s *Store) DeleteSlateFrame(ctx context.Context, frameID int64) error {
+func (s *Store) DeleteSlateFrame(ctx context.Context, frameID id.Frame) error {
 	return s.Tx(ctx, func(tx *Tx) error {
-		var slate int64
+		var slate id.Slate
 		if err := tx.q.QueryRowContext(ctx, "SELECT slate_id FROM slate_frames WHERE id = ?", frameID).Scan(&slate); err != nil {
 			return notFound(err)
 		}
@@ -195,6 +192,6 @@ func (s *Store) DeleteSlateFrame(ctx context.Context, frameID int64) error {
 }
 
 // SlateFrameJPEG returns the picture of a slate's frame.
-func (s *Store) SlateFrameJPEG(ctx context.Context, frameID int64) ([]byte, time.Time, error) {
+func (s *Store) SlateFrameJPEG(ctx context.Context, frameID id.Frame) ([]byte, time.Time, error) {
 	return s.jpeg(ctx, "SELECT jpeg, created_at FROM slate_frames WHERE id = ?", frameID)
 }

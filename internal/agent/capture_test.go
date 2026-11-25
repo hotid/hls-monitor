@@ -8,6 +8,7 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/api"
 	"github.com/hotid/hls-monitor/internal/capture"
+	"github.com/hotid/hls-monitor/internal/types/id"
 )
 
 // A capture asked for of a stream only an agent checks is made by the
@@ -23,7 +24,7 @@ func TestCaptureByAnAgent(t *testing.T) {
 	var en enrollment
 	e.call(http.StatusCreated, "POST", "/api/v1/agents", map[string]string{"name": "edge-1"}, &en)
 	e.call(http.StatusCreated, "POST", "/api/v1/streams", map[string]any{
-		"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "header", "agent_ids": []int64{en.Agent.ID},
+		"name": "live", "url": e.origin.URL + "/master.m3u8", "level": "header", "agent_ids": []int64{en.Agent.ID.Int64()},
 	}, nil)
 	// No agent in contact: nobody to ask.
 	e.call(http.StatusConflict, "POST", "/api/v1/streams/1/capture", nil, nil)
@@ -53,7 +54,7 @@ func TestCaptureByAnAgent(t *testing.T) {
 		return resp.StatusCode == http.StatusAccepted
 	})
 	waitFor(t, "the capture to reach the server", func() bool {
-		for _, c := range store.List(1) {
+		for _, c := range store.List(id.StreamOf(1)) {
 			if c.AgentID == en.Agent.ID && c.Done && c.Manual && len(c.Files) > 0 {
 				return true
 			}

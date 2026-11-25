@@ -5,18 +5,22 @@ import (
 	"database/sql"
 	"encoding/json"
 	"time"
+
+	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
 )
 
 // ServerIncident is something wrong with a server rather than with one of
 // its streams: the same problem on several streams at once, or the way to
 // the server losing packets.
 type ServerIncident struct {
-	ID       int64  `json:"id"`
-	Host     string `json:"host"`
-	IP       string `json:"ip"`
-	Kind     string `json:"kind"`
-	Severity string `json:"severity"`
-	Message  string `json:"message"`
+	ID       id.ServerIncident `json:"id"`
+	Host     string            `json:"host"`
+	IP       string            `json:"ip"`
+	Kind     problemkind.Kind  `json:"kind"`
+	Severity severity.Severity `json:"severity" enums:"info,warn,crit"`
+	Message  string            `json:"message"`
 	// Streams is the largest number of streams that had the problem at once.
 	Streams   int        `json:"streams"`
 	StartedAt time.Time  `json:"started_at"`
@@ -27,13 +31,42 @@ type ServerIncident struct {
 	Episodes    int     `json:"episodes"`
 	IdleSeconds float64 `json:"idle_seconds"`
 	// Details name the streams concerned at the latest look.
-	Details json.RawMessage `json:"details,omitempty" swaggertype:"object"`
+	Details ServerIncidentDetails `json:"details,omitzero"`
+}
+
+// StreamRef is enough to name a stream and link to it.
+type StreamRef struct {
+	ID   id.Stream `json:"id"`
+	Name string    `json:"name"`
+}
+
+// ServerIncidentDetails is what a server's incident tells besides its message.
+type ServerIncidentDetails struct {
+	// Streams had the problem at the latest look; Example is what one of
+	// them said.
+	Streams []StreamRef `json:"streams,omitempty"`
+	Example string      `json:"example,omitempty"`
+	// For loss: the figures of the last five minutes.
+	Requests    float64 `json:"requests,omitempty"`
+	Retransmits float64 `json:"retransmits,omitempty"`
+}
+
+// IsZero tells that there is nothing to tell.
+func (d ServerIncidentDetails) IsZero() bool {
+	return len(d.Streams) == 0 && d.Example == "" && d.Requests == 0 && d.Retransmits == 0
 }
 
 // ReportServerIncident opens an incident of a server, records that an open
 // one goes on, or opens again one that ended after reopenFrom.
 func (s *Store) ReportServerIncident(ctx context.Context, in ServerIncident, reopenFrom, now time.Time) error {
-	details := string(in.Details)
+	details := ""
+	if !in.Details.IsZero() {
+		b, err := json.Marshal(in.Details)
+		if err != nil {
+			return err
+		}
+		details = string(b)
+	}
 	return s.Tx(ctx, func(tx *Tx) error {
 		if _, err := tx.q.ExecContext(ctx, `
 			UPDATE server_incidents SET idle_ms = idle_ms + (? - ended_at), episodes = episodes + 1, ended_at = NULL
@@ -83,11 +116,18 @@ func (s *Store) ListServerIncidents(ctx context.Context, onlyOpen bool, limit in
 		var started, last, idle int64
 		var ended sql.NullInt64
 		var details string
-		if err := rows.Scan(&in.ID, &in.Host, &in.IP, &in.Kind, &in.Severity, &in.Message, &details, &started, &last, &ended, &in.Streams, &in.Episodes, &idle); err != nil {
+		var kind, sev past
+		if err := rows.Scan(&in.ID, &in.Host, &in.IP, &kind, &sev, &in.Message, &details, &started, &last, &ended, &in.Streams, &in.Episodes, &idle); err != nil {
 			return nil, err
 		}
+		var known bool
+		if in.Kind, in.Severity, known = recorded(kind, sev); !known {
+			continue
+		}
 		if details != "" {
-			in.Details = json.RawMessage(details)
+			// What cannot be read is what another version wrote: the
+			// incident is told without it.
+			_ = json.Unmarshal([]byte(details), &in.Details)
 		}
 		in.StartedAt, in.LastSeen, in.EndedAt = fromMs(started), fromMs(last), fromMsPtr(ended)
 		in.IdleSeconds = float64(idle) / 1000
