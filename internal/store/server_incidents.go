@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net/netip"
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/types/id"
@@ -17,7 +18,7 @@ import (
 type ServerIncident struct {
 	ID       id.ServerIncident `json:"id"`
 	Host     string            `json:"host"`
-	IP       string            `json:"ip"`
+	IP       netip.Addr        `json:"ip" swaggertype:"string"`
 	Kind     problemkind.Kind  `json:"kind"`
 	Severity severity.Severity `json:"severity" enums:"info,warn,crit"`
 	Message  string            `json:"message"`
@@ -72,19 +73,19 @@ func (s *Store) ReportServerIncident(ctx context.Context, in ServerIncident, reo
 			UPDATE server_incidents SET idle_ms = idle_ms + (? - ended_at), episodes = episodes + 1, ended_at = NULL
 			WHERE id = (SELECT id FROM server_incidents WHERE host = ? AND ip = ? AND kind = ? AND ended_at >= ? ORDER BY ended_at DESC LIMIT 1)
 			  AND NOT EXISTS (SELECT 1 FROM server_incidents WHERE host = ? AND ip = ? AND kind = ? AND ended_at IS NULL)`,
-			toMs(now), in.Host, in.IP, in.Kind, toMs(reopenFrom), in.Host, in.IP, in.Kind); err != nil {
+			toMs(now), in.Host, addrText(in.IP), in.Kind, toMs(reopenFrom), in.Host, addrText(in.IP), in.Kind); err != nil {
 			return err
 		}
 		_, err := tx.q.ExecContext(ctx, `
 			INSERT INTO server_incidents (host, ip, kind, severity, message, details, started_at, last_seen, streams)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (host, ip, kind) WHERE ended_at IS NULL DO UPDATE SET
-				severity = CASE WHEN excluded.severity = 'crit' OR server_incidents.severity = 'crit' THEN 'crit' ELSE 'warn' END,
+				severity = CASE WHEN excluded.severity = `+lit(severity.Crit())+` OR server_incidents.severity = `+lit(severity.Crit())+` THEN `+lit(severity.Crit())+` ELSE `+lit(severity.Warn())+` END,
 				message = excluded.message,
 				details = excluded.details,
 				last_seen = excluded.last_seen,
 				streams = max(server_incidents.streams, excluded.streams)`,
-			in.Host, in.IP, in.Kind, in.Severity, in.Message, details, toMs(now), toMs(now), in.Streams)
+			in.Host, addrText(in.IP), in.Kind, in.Severity, in.Message, details, toMs(now), toMs(now), in.Streams)
 		return err
 	})
 }
@@ -117,7 +118,7 @@ func (s *Store) ListServerIncidents(ctx context.Context, onlyOpen bool, limit in
 		var ended sql.NullInt64
 		var details string
 		var kind, sev past
-		if err := rows.Scan(&in.ID, &in.Host, &in.IP, &kind, &sev, &in.Message, &details, &started, &last, &ended, &in.Streams, &in.Episodes, &idle); err != nil {
+		if err := rows.Scan(&in.ID, &in.Host, (*storedAddr)(&in.IP), &kind, &sev, &in.Message, &details, &started, &last, &ended, &in.Streams, &in.Episodes, &idle); err != nil {
 			return nil, err
 		}
 		var known bool

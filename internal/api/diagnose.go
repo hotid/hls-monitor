@@ -11,11 +11,13 @@ import (
 	"github.com/hotid/hls-monitor/internal/agentproto"
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/store"
+	"github.com/hotid/hls-monitor/internal/types/diagnoseend"
 	"github.com/hotid/hls-monitor/internal/types/diagnosestep"
 	"github.com/hotid/hls-monitor/internal/types/errcode"
 	"github.com/hotid/hls-monitor/internal/types/id"
 	"github.com/hotid/hls-monitor/internal/types/level"
 	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/seconds"
 )
 
 const (
@@ -44,9 +46,10 @@ type diagnoseEvent struct {
 	TookMs float64       `json:"took_ms,omitempty"`
 	Result *probe.Result `json:"result,omitempty"`
 
-	// End: "time" when the requested duration has passed; from an agent
-	// it may instead say what went wrong.
-	Reason string `json:"reason,omitempty"`
+	// End: why it is over — the time asked for has passed, or what went
+	// wrong with the agent. Message is what the agent said when it refused.
+	Reason  diagnoseend.Reason `json:"reason,omitzero" swaggertype:"string" enums:"time,agent_not_taking,agent_refused,agent_too_old,agent_unreadable,agent_silent"`
+	Message string             `json:"message,omitempty"`
 }
 
 // diagnose godoc
@@ -90,8 +93,8 @@ func (s *Server) diagnose(c *gin.Context) {
 		ID:          st.ID,
 		URL:         st.URL,
 		Level:       lv,
-		IntervalSec: 1,
-		TimeoutSec:  st.TimeoutSec,
+		Interval:    seconds.Span(time.Second),
+		Timeout:     st.Timeout,
 		MaxSegments: max(st.MaxSegments, diagnoseSegments),
 		Headers:     st.Headers,
 		Insecure:    st.Insecure,
@@ -119,18 +122,18 @@ func (s *Server) diagnose(c *gin.Context) {
 		// left for its last word to arrive.
 		actx, stop := context.WithTimeout(c.Request.Context(), length+20*time.Second)
 		defer stop()
-		reason := s.diagnoseThroughAgent(actx, agentID, agentproto.DiagnoseJob{Target: target, Seconds: int(length.Seconds())}, func(cy agentproto.DiagnoseCycle) bool {
+		reason, said := s.diagnoseThroughAgent(actx, agentID, agentproto.DiagnoseJob{Target: target, Seconds: int(length.Seconds())}, func(cy agentproto.DiagnoseCycle) bool {
 			return send(diagnoseEvent{Type: diagnosestep.Cycle(), Time: cy.Result.Time, N: cy.N, TookMs: cy.TookMs, Result: cy.Result})
 		})
-		if reason != "" && c.Request.Context().Err() == nil {
-			send(diagnoseEvent{Type: diagnosestep.End(), Time: s.now(), Reason: reason})
+		if !reason.IsZero() && c.Request.Context().Err() == nil {
+			send(diagnoseEvent{Type: diagnosestep.End(), Time: s.now(), Reason: reason, Message: said})
 		}
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), length)
 	defer cancel()
 	if s.diagnoseHere(ctx, target, send) && c.Request.Context().Err() == nil {
-		send(diagnoseEvent{Type: diagnosestep.End(), Time: s.now(), Reason: "time"})
+		send(diagnoseEvent{Type: diagnosestep.End(), Time: s.now(), Reason: diagnoseend.Time()})
 	}
 }
 

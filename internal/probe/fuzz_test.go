@@ -10,6 +10,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/types/id"
 	"github.com/hotid/hls-monitor/internal/types/level"
 	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/seconds"
 )
 
 // A playlist is text from a server the monitor does not control. Whatever
@@ -33,7 +34,7 @@ func FuzzPlaylist(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, text string) {
 		body = text
-		c := New(Target{ID: id.StreamOf(1), URL: srv.URL + "/p.m3u8", Level: level.Segments(), Picture: picturemode.Check(), TimeoutSec: 2}, nil)
+		c := New(Target{ID: id.StreamOf(1), URL: srv.URL + "/p.m3u8", Level: level.Segments(), Picture: picturemode.Check(), Timeout: seconds.Of(2)}, nil)
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		// Twice: most of what a checker concludes is a difference between

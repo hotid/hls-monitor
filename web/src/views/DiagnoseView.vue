@@ -6,7 +6,7 @@ import { fmtBytes, fmtDuration, fmtMs, fmtSeconds } from '@/format'
 import { dateLocale, t } from '@/i18n'
 import { conclusion } from '@/incident'
 import { useLive } from '@/stores/live'
-import type { DiagnoseEvent, Endpoint, Incident, Level, ProbeProblem, SegmentDetail, StreamDetail, VariantKind } from '@/types'
+import type { DiagnoseEnd, DiagnoseEvent, Endpoint, Incident, Level, ProbeProblem, SegmentDetail, StreamDetail, VariantKind } from '@/types'
 import IncidentDetails from '@/components/IncidentDetails.vue'
 import PlaylistPair from '@/components/PlaylistPair.vue'
 
@@ -81,6 +81,21 @@ interface Finding extends ProbeProblem {
 
 const running = ref(false)
 const error = ref<string | null>(null)
+// What is said of a diagnosis an agent ended, when the agent said nothing itself.
+function endWhy(reason: Exclude<DiagnoseEnd, 'time'>): string {
+  switch (reason) {
+    case 'agent_not_taking':
+      return t('diagnose.endAgentNotTaking')
+    case 'agent_refused':
+      return t('diagnose.endAgentRefused')
+    case 'agent_too_old':
+      return t('diagnose.endAgentTooOld')
+    case 'agent_unreadable':
+      return t('diagnose.endAgentUnreadable')
+    case 'agent_silent':
+      return t('diagnose.endAgentSilent')
+  }
+}
 const ended = ref<'' | 'time' | 'stopped' | 'lost' | 'agent'>('')
 // What an agent said when its diagnosis ended for another reason than time.
 const endedWhy = ref('')
@@ -200,7 +215,7 @@ async function start() {
       else if (ev.type === 'cycle') onCycle(ev)
       else if (ev.type === 'end') {
         ended.value = ev.reason === 'time' || !ev.reason ? 'time' : 'agent'
-        endedWhy.value = ev.reason ?? ''
+        endedWhy.value = ev.reason && ev.reason !== 'time' ? ev.message || endWhy(ev.reason) : ''
       }
     })
     if (!ended.value) ended.value = 'lost'

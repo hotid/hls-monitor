@@ -8,11 +8,13 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
-	_ "modernc.org/sqlite" // database/sql driver "sqlite"
+	"modernc.org/sqlite" // also registers the database/sql driver "sqlite"
 
 	"github.com/hotid/hls-monitor/internal/types/id"
 )
@@ -167,9 +169,29 @@ func fromMsPtr(v sql.NullInt64) *time.Time {
 	return &t
 }
 
-func isUnique(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
+// What the database refuses is told apart by the code it gives, not by
+// the words that go with it: the words are for a reader and belong to the
+// driver, which may put them differently tomorrow.
+const (
+	codeFull       = 13   // SQLITE_FULL
+	codePrimaryKey = 1555 // SQLITE_CONSTRAINT_PRIMARYKEY
+	codeForeignKey = 787  // SQLITE_CONSTRAINT_FOREIGNKEY
+	codeUnique     = 2067 // SQLITE_CONSTRAINT_UNIQUE
+)
+
+// refusedWith tells whether the database refused something with one of
+// the given codes.
+func refusedWith(err error, codes ...int) bool {
+	var se *sqlite.Error
+	return errors.As(err, &se) && slices.Contains(codes, se.Code())
 }
+
+// isUnique: what is being stored is there already.
+func isUnique(err error) bool { return refusedWith(err, codeUnique, codePrimaryKey) }
+
+// RefersToMissing tells that something could not be stored because what
+// it belongs to — a stream, an agent — is not there any more.
+func RefersToMissing(err error) bool { return refusedWith(err, codeForeignKey) }
 
 func notFound(err error) error {
 	if errors.Is(err, sql.ErrNoRows) {
@@ -198,4 +220,57 @@ func placeholders(n int) string {
 		return ""
 	}
 	return strings.Repeat("?,", n-1) + "?"
+}
+
+// An address is text in the database, and nothing where it is not known.
+// What is there and is no address — written by a version that kept
+// whatever it was given — reads as not known.
+
+func addrText(a netip.Addr) string {
+	if !a.IsValid() {
+		return ""
+	}
+	return a.String()
+}
+
+func addrPortText(a netip.AddrPort) string {
+	if !a.IsValid() {
+		return ""
+	}
+	return a.String()
+}
+
+type storedAddr netip.Addr
+
+func (a *storedAddr) Scan(src any) error {
+	text, _ := src.(string)
+	ip, err := netip.ParseAddr(text)
+	if err != nil {
+		ip = netip.Addr{}
+	}
+	*a = storedAddr(ip)
+	return nil
+}
+
+type storedAddrPort netip.AddrPort
+
+func (a *storedAddrPort) Scan(src any) error {
+	text, _ := src.(string)
+	ap, err := netip.ParseAddrPort(text)
+	if err != nil {
+		ap = netip.AddrPort{}
+	}
+	*a = storedAddrPort(ap)
+	return nil
+}
+
+// lit writes a value of a closed set into the text of a statement, where
+// it cannot be given as an argument: the name comes from the type, so the
+// statement cannot say a value the set does not have.
+func lit(v fmt.Stringer) string {
+	name := v.String()
+	if strings.ContainsAny(name, `'"\`) {
+		panic("store: a value that cannot be written into a statement: " + name)
+	}
+	return "'" + name + "'"
 }

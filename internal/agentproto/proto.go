@@ -5,9 +5,15 @@ package agentproto
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/netip"
 
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/answerkind"
 	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/jobkind"
 	"github.com/hotid/hls-monitor/internal/types/overload"
 )
 
@@ -119,10 +125,14 @@ type FetchTiming struct {
 // the body of that request is the body that was fetched.
 const HeaderFetchResult = "X-Fetch-Result"
 
-// FetchRequest is one address for the agent to fetch.
+// FetchRequest is one piece of work for the agent: most often an address
+// to fetch, which gave it its name.
 type FetchRequest struct {
-	ID  string `json:"id"`
-	URL string `json:"url"`
+	ID string `json:"id"`
+	// Kind is what is asked. A server older than this field does not
+	// send it, and the work is told by what came with it: see Work.
+	Kind jobkind.Kind `json:"kind,omitzero" swaggertype:"string" enums:"fetch,diagnose,capture"`
+	URL  string       `json:"url"`
 	// Headers are sent only to the site of HeadersFor, the stream's own
 	// address.
 	Headers    map[string]string `json:"headers,omitempty"`
@@ -136,12 +146,65 @@ type FetchRequest struct {
 	RangeOffset int64 `json:"range_offset,omitempty"`
 	RangeLength int64 `json:"range_length,omitempty"`
 	MaxBody     int64 `json:"max_body"`
-	// Diagnose, when set, makes the request another kind of work
-	// altogether: nothing is fetched for the server, a stream is checked.
+	// Diagnose is what work of the kind diagnose is about: nothing is
+	// fetched for the server, a stream is checked.
 	Diagnose *DiagnoseJob `json:"diagnose,omitempty"`
-	// Capture, when set, asks for a capture of a stream at its next
-	// check. The answer has Status 202 when one will be made, 409 when not.
+	// Capture is what work of the kind capture is about: a capture of a
+	// stream at its next check. The answer has Status 202 when one will
+	// be made, 409 when not.
 	Capture *CaptureJob `json:"capture,omitempty"`
+}
+
+// Fetch, Diagnose and Capture make the work of each kind; nothing else
+// sets Kind, so that the kind and what it is about cannot disagree.
+
+// Fetch asks for the address in the request to be fetched.
+func Fetch(rq FetchRequest) FetchRequest {
+	rq.Kind, rq.Diagnose, rq.Capture = jobkind.Fetch(), nil, nil
+	return rq
+}
+
+// Diagnose asks for a stream to be checked for a while.
+func Diagnose(d DiagnoseJob) FetchRequest {
+	return FetchRequest{Kind: jobkind.Diagnose(), Diagnose: &d}
+}
+
+// Capture asks for a capture of a stream.
+func Capture(c CaptureJob) FetchRequest {
+	return FetchRequest{Kind: jobkind.Capture(), Capture: &c}
+}
+
+// Work tells what a request asks for, and refuses one that does not
+// say it in one way: a kind without what it is about, or with what
+// another kind is about. A request without a kind is of a server from
+// before kinds were told, and is read by what came with it.
+func (r *FetchRequest) Work() (jobkind.Kind, error) {
+	kind := r.Kind
+	if kind.IsZero() {
+		switch {
+		case r.Diagnose != nil && r.Capture != nil:
+			return kind, errors.New("the work is both a diagnosis and a capture")
+		case r.Diagnose != nil:
+			kind = jobkind.Diagnose()
+		case r.Capture != nil:
+			kind = jobkind.Capture()
+		default:
+			kind = jobkind.Fetch()
+		}
+	}
+	switch {
+	case r.ID == "":
+		return kind, errors.New("the work has no ID")
+	case (kind == jobkind.Diagnose()) != (r.Diagnose != nil):
+		return kind, fmt.Errorf("the work is %s and what it carries is not", kind)
+	case (kind == jobkind.Capture()) != (r.Capture != nil):
+		return kind, fmt.Errorf("the work is %s and what it carries is not", kind)
+	case kind == jobkind.Fetch() && r.URL == "":
+		return kind, errors.New("there is no address to fetch")
+	case kind != jobkind.Fetch() && r.URL != "":
+		return kind, fmt.Errorf("the work is %s and has an address to fetch", kind)
+	}
+	return kind, nil
 }
 
 // A live diagnosis from where an agent stands comes to it the way a fetch
@@ -149,9 +212,12 @@ type FetchRequest struct {
 // the stream every second for the time it is given and posts what every
 // check found to the address a fetch is answered at, one check a request:
 // the body is a DiagnoseCycle as JSON and the FetchResult that goes with
-// it has ContentType DiagnoseCycleType. A last request with
-// DiagnoseEndType and no body tells that the time is up. The server
+// it has the kind answerkind.DiagnoseCycle. A last request of the kind
+// answerkind.DiagnoseEnd and no body tells that the time is up. The server
 // answers 404 once nobody watches, and the agent stops.
+//
+// Before answers had a kind these two were told by ContentType, and an
+// agent still sets it, for a server from then.
 const (
 	DiagnoseCycleType = "application/x-hls-monitor-diagnose-cycle"
 	DiagnoseEndType   = "application/x-hls-monitor-diagnose-end"
@@ -175,19 +241,45 @@ type DiagnoseCycle struct {
 type FetchResult struct {
 	// Status is the HTTP status, zero when there was no answer; Error
 	// says why, or what broke the answer off.
-	Status       int    `json:"status"`
-	Error        string `json:"error,omitempty"`
-	ContentType  string `json:"content_type,omitempty"`
-	ContentRange string `json:"content_range,omitempty"`
-	AcceptRanges string `json:"accept_ranges,omitempty"`
+	Status int    `json:"status"`
+	Error  string `json:"error,omitempty"`
+	// Kind is what the answer is; see Answer.
+	Kind         answerkind.Kind `json:"kind,omitzero" swaggertype:"string" enums:"fetched,diagnose_cycle,diagnose_end"`
+	ContentType  string          `json:"content_type,omitempty"`
+	ContentRange string          `json:"content_range,omitempty"`
+	AcceptRanges string          `json:"accept_ranges,omitempty"`
 	// FinalURL is the address after redirects, RemoteAddr the server
 	// that answered, Inside whether the first connection went to an
 	// address that is not public.
-	FinalURL   string `json:"final_url,omitempty"`
-	RemoteAddr string `json:"remote_addr,omitempty"`
-	Inside     bool   `json:"inside,omitempty"`
+	FinalURL   string         `json:"final_url,omitempty"`
+	RemoteAddr netip.AddrPort `json:"remote_addr,omitzero" swaggertype:"string"`
+	Inside     bool           `json:"inside,omitempty"`
 	// Timing is how the request to the origin went.
 	Timing *FetchTiming `json:"timing,omitempty"`
+}
+
+// CycleAnswer is the answer one check of a diagnosis is sent with.
+func CycleAnswer() FetchResult {
+	return FetchResult{Status: http.StatusOK, Kind: answerkind.DiagnoseCycle(), ContentType: DiagnoseCycleType}
+}
+
+// EndAnswer is the answer that tells that the time of a diagnosis is up.
+func EndAnswer() FetchResult {
+	return FetchResult{Status: http.StatusOK, Kind: answerkind.DiagnoseEnd(), ContentType: DiagnoseEndType}
+}
+
+// Answer tells what an answer is. One without a kind is of an agent from
+// before kinds were told, and is read by its ContentType.
+func (r *FetchResult) Answer() answerkind.Kind {
+	switch {
+	case !r.Kind.IsZero():
+		return r.Kind
+	case r.ContentType == DiagnoseCycleType:
+		return answerkind.DiagnoseCycle()
+	case r.ContentType == DiagnoseEndType:
+		return answerkind.DiagnoseEnd()
+	}
+	return answerkind.Fetched()
 }
 
 // EnrollRequest exchanges a one-time enrollment token for a permanent key.

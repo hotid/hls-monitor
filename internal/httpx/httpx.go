@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -45,7 +46,7 @@ type Client struct {
 
 // redirectTrace collects what happened on the way to the final response.
 type redirectTrace struct {
-	addrs []string // remote address of every connection used, in order
+	addrs []netip.AddrPort // remote address of every connection used, in order
 	hops  []Hop
 }
 type redirectKey struct{}
@@ -143,10 +144,10 @@ type Request struct {
 
 // Hop is one redirect on the way to the final response.
 type Hop struct {
-	URL        string `json:"url"`
-	Status     int    `json:"status"`
-	RemoteAddr string `json:"remote_addr,omitempty"`
-	Server     string `json:"server,omitempty"`
+	URL        string         `json:"url"`
+	Status     int            `json:"status"`
+	RemoteAddr netip.AddrPort `json:"remote_addr,omitzero" swaggertype:"string"`
+	Server     string         `json:"server,omitempty"`
 }
 
 // Response is the outcome of a request that reached the server.
@@ -160,7 +161,7 @@ type Response struct {
 	// RemoteAddr and Header.
 	Hops []Hop
 
-	RemoteAddr string // ip:port of the server that answered
+	RemoteAddr netip.AddrPort // the address of the server that answered; not valid when none did
 	// Inside tells that the first connection of the request was made to
 	// an address that is not public.
 	Inside     bool
@@ -312,7 +313,7 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 		GotConn: func(i httptrace.GotConnInfo) {
 			res.ConnReused = i.Reused
 			if i.Conn != nil {
-				res.RemoteAddr = i.Conn.RemoteAddr().String()
+				res.RemoteAddr = AddrPortOf(i.Conn.RemoteAddr())
 				lastConn = i.Conn
 			}
 			rt.addrs = append(rt.addrs, res.RemoteAddr)
@@ -320,7 +321,7 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 			// from before: the request is written to it at once, and may
 			// be answered before the end is noticed. The connection is
 			// closed, so that nothing is written.
-			if res.RemoteAddr != "" && !reach.use(res.RemoteAddr) && i.Conn != nil {
+			if res.RemoteAddr.IsValid() && !reach.use(res.RemoteAddr.Addr()) && i.Conn != nil {
 				_ = i.Conn.Close()
 			}
 		},
@@ -369,7 +370,7 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 		return res, cause
 	}
 	if len(rt.addrs) > 0 {
-		res.Inside = !addrPublic(rt.addrs[0])
+		res.Inside = !addrPublic(rt.addrs[0].Addr())
 	}
 
 	res.Status = resp.StatusCode
@@ -471,4 +472,31 @@ func proxyOf(r *http.Request) (*url.URL, error) {
 		st.viaProxy.Store(u != nil)
 	}
 	return u, err
+}
+
+// AddrPortOf is the address of the far end of a connection; not valid
+// for a connection that is not one over TCP.
+func AddrPortOf(a net.Addr) netip.AddrPort {
+	if t, ok := a.(*net.TCPAddr); ok {
+		ap := t.AddrPort()
+		return netip.AddrPortFrom(ap.Addr().Unmap(), ap.Port())
+	}
+	return netip.AddrPort{}
+}
+
+// IsWeb tells whether an address is one of the web: http or https. It is
+// the one place that says which schemes the monitor goes to.
+func IsWeb(u *url.URL) bool { return u != nil && (u.Scheme == "http" || u.Scheme == "https") }
+
+// ParseWebURL reads an absolute address of the web: http or https, with a
+// host.
+func ParseWebURL(text string) (*url.URL, error) {
+	u, err := url.Parse(text)
+	if err != nil {
+		return nil, err
+	}
+	if !IsWeb(u) || u.Host == "" {
+		return nil, errors.New("not an absolute http or https URL")
+	}
+	return u, nil
 }

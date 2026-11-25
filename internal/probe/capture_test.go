@@ -58,7 +58,7 @@ func TestSuspicionIsCaptured(t *testing.T) {
 	}
 	rq := capt.asked[0]
 	if rq.StreamID != id.StreamOf(1) || len(rq.Kinds) != 1 || rq.Kinds[0] != problemkind.PictureBlack() || rq.Manual || len(rq.Evidence) == 0 ||
-		len(rq.Playlist) == 0 || len(rq.Window) < 2 || rq.Get == nil || rq.Status != 206 || rq.Server == "" {
+		len(rq.Playlist) == 0 || len(rq.Window) < 2 || rq.Get == nil || rq.Status != 206 || !rq.Server.IsValid() {
 		t.Fatalf("the request: kinds %v, %d bytes, %d segments, status %d, server %q", rq.Kinds, len(rq.Evidence), len(rq.Window), rq.Status, rq.Server)
 	}
 	found := false

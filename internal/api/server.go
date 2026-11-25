@@ -301,6 +301,25 @@ func queryID[T any, P identifier[T]](c *gin.Context, name string) T {
 	return v
 }
 
+// queryChoice reads a parameter that is yes or no: true or 1, false or
+// 0. told is false when it is absent or is neither.
+func queryChoice(c *gin.Context, name string) (yes, told bool) {
+	switch c.Query(name) {
+	case "true", "1":
+		return true, true
+	case "false", "0":
+		return false, true
+	}
+	return false, false
+}
+
+// queryFlag reads a parameter that is yes when it says so, and no
+// otherwise.
+func queryFlag(c *gin.Context, name string) bool {
+	yes, _ := queryChoice(c, name)
+	return yes
+}
+
 func queryInt(c *gin.Context, name string) int64 {
 	v, _ := strconv.ParseInt(c.Query(name), 10, 64)
 	return v

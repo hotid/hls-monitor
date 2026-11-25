@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -655,11 +656,11 @@ func TestIncidentScope(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	report("a", store.LocalAgentID(), node.Of("bad-server", "10.0.0.6"))
+	report("a", store.LocalAgentID(), node.Of("bad-server", netip.MustParseAddr("10.0.0.6")))
 	report("a", edge.ID, node.Node{}) // the other vantage point sees nothing wrong
-	report("b", store.LocalAgentID(), node.Of("bad-server", "10.0.0.6"))
-	report("c", store.LocalAgentID(), node.Of("bad-server", "10.0.0.6"))
-	report("d", store.LocalAgentID(), node.Of("good-server", "10.0.0.1"))
+	report("b", store.LocalAgentID(), node.Of("bad-server", netip.MustParseAddr("10.0.0.6")))
+	report("c", store.LocalAgentID(), node.Of("bad-server", netip.MustParseAddr("10.0.0.6")))
+	report("d", store.LocalAgentID(), node.Of("good-server", netip.MustParseAddr("10.0.0.1")))
 
 	c := e.login("viewer")
 	var list []store.Incident
@@ -675,7 +676,7 @@ func TestIncidentScope(t *testing.T) {
 	if sc.Vantage != vantagescope.OnlyThis() || len(sc.Agents) != 2 {
 		t.Errorf("vantage = %q with agents %+v; want only_this of two", sc.Vantage, sc.Agents)
 	}
-	if !sc.ServerWide || len(sc.SameServer) != 2 || sc.SameServer[0].Name != "b" || sc.Elsewhere != 1 || sc.Server != node.Of("bad-server", "10.0.0.6") {
+	if !sc.ServerWide || len(sc.SameServer) != 2 || sc.SameServer[0].Name != "b" || sc.Elsewhere != 1 || sc.Server != node.Of("bad-server", netip.MustParseAddr("10.0.0.6")) {
 		t.Errorf("server scope = %+v; want streams b and c on the same server, one elsewhere", sc)
 	}
 	c.want(404, "GET", "/api/v1/incidents/999999/scope", nil, nil)
@@ -1051,17 +1052,17 @@ func TestServerIncidents(t *testing.T) {
 	}
 
 	// Two streams of a server are two streams; a third makes it the server's.
-	report("a", node.Of("bad-server", "10.0.0.6"))
-	report("b", node.Of("bad-server", "10.0.0.6"))
-	report("z", node.Of("other-server", "10.0.0.9"))
+	report("a", node.Of("bad-server", netip.MustParseAddr("10.0.0.6")))
+	report("b", node.Of("bad-server", netip.MustParseAddr("10.0.0.6")))
+	report("z", node.Of("other-server", netip.MustParseAddr("10.0.0.9")))
 	e.srv.WatchServers(ctx)
 	if got := list(""); len(got) != 0 {
 		t.Fatalf("two streams made an incident of the server: %+v", got)
 	}
-	report("c", node.Of("bad-server", "10.0.0.6"))
+	report("c", node.Of("bad-server", netip.MustParseAddr("10.0.0.6")))
 	e.srv.WatchServers(ctx)
 	got := list("?open=true")
-	if len(got) != 1 || got[0].Host != "bad-server" || got[0].IP != "10.0.0.6" || got[0].Kind != problemkind.PlaylistHTTP() ||
+	if len(got) != 1 || got[0].Host != "bad-server" || got[0].IP.String() != "10.0.0.6" || got[0].Kind != problemkind.PlaylistHTTP() ||
 		got[0].Severity != severity.Crit() || got[0].Streams != 3 || got[0].EndedAt != nil {
 		t.Fatalf("server incidents = %+v", got)
 	}
@@ -1096,7 +1097,7 @@ func TestServerIncidents(t *testing.T) {
 	// It comes back a few minutes later: the same incident goes on.
 	step(time.Minute)
 	for _, name := range []string{"a", "b", "c"} {
-		report(name, node.Of("bad-server", "10.0.0.6"))
+		report(name, node.Of("bad-server", netip.MustParseAddr("10.0.0.6")))
 	}
 	e.srv.WatchServers(ctx)
 	got = list("")

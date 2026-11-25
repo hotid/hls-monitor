@@ -20,6 +20,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/types/metricname"
 	"github.com/hotid/hls-monitor/internal/types/picturemode"
 	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/seconds"
 	"github.com/hotid/hls-monitor/internal/types/severity"
 	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
@@ -41,7 +42,7 @@ func changed(t *testing.T, opt hlstest.Options, path string, lv level.Level, cha
 		_, _ = w.Write(rec.Body.Bytes())
 	}))
 	t.Cleanup(srv.Close)
-	f.c = New(Target{ID: id.StreamOf(1), URL: srv.URL + path, Level: lv, Picture: picturemode.Check(), TimeoutSec: 5}, nil)
+	f.c = New(Target{ID: id.StreamOf(1), URL: srv.URL + path, Level: lv, Picture: picturemode.Check(), Timeout: seconds.Of(5)}, nil)
 	f.c.now = func() time.Time { return f.clock }
 	f.c.loud.due = f.clock.Add(1000 * time.Hour)
 	return f

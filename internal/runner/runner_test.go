@@ -15,6 +15,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/types/level"
 	"github.com/hotid/hls-monitor/internal/types/overload"
 	"github.com/hotid/hls-monitor/internal/types/picturemode"
+	"github.com/hotid/hls-monitor/internal/types/seconds"
 )
 
 type collector struct {
@@ -60,7 +61,7 @@ func TestSyncAndCheckNow(t *testing.T) {
 
 	// A long interval: after the first cycle nothing happens unless asked.
 	target := func(of, rev int64) probe.Target {
-		return probe.Target{ID: id.StreamOf(of), URL: srv.URL + "/v0/index.m3u8", Level: level.Playlist(), Picture: picturemode.Check(), IntervalSec: 3600, Revision: rev}
+		return probe.Target{ID: id.StreamOf(of), URL: srv.URL + "/v0/index.m3u8", Level: level.Playlist(), Picture: picturemode.Check(), Interval: seconds.Of(3600), Revision: rev}
 	}
 	r.Sync([]probe.Target{target(1, 1), target(2, 1)})
 	waitFor(t, "first cycles", func() bool { return col.count(1) == 1 && col.count(2) == 1 })
@@ -139,7 +140,7 @@ func TestBehindIsTheRunnersOwnDelay(t *testing.T) {
 		cycles.Add(1)
 	}, "test", nil)
 	defer r.Stop()
-	r.Sync([]probe.Target{{ID: id.StreamOf(1), URL: srv.URL + "/v0/index.m3u8", Level: level.Playlist(), Picture: picturemode.Check(), IntervalSec: 0.2, Revision: 1}})
+	r.Sync([]probe.Target{{ID: id.StreamOf(1), URL: srv.URL + "/v0/index.m3u8", Level: level.Playlist(), Picture: picturemode.Check(), Interval: seconds.Of(0.2), Revision: 1}})
 
 	waitFor(t, "the first cycle", func() bool { return cycles.Load() >= 1 })
 	delay.Store(int64(1300 * time.Millisecond))
@@ -178,7 +179,7 @@ func TestCrashedCycleDoesNotStopTheRunner(t *testing.T) {
 		}
 		return overload.Reason{}
 	})
-	r.Sync([]probe.Target{{ID: id.StreamOf(1), URL: srv.URL + "/v0/index.m3u8", Level: level.Playlist(), Picture: picturemode.Check(), IntervalSec: 3600, Revision: 1}})
+	r.Sync([]probe.Target{{ID: id.StreamOf(1), URL: srv.URL + "/v0/index.m3u8", Level: level.Playlist(), Picture: picturemode.Check(), Interval: seconds.Of(3600), Revision: 1}})
 	waitFor(t, "the crash to be counted", func() bool { return r.Stats().Crashed == 1 })
 	if col.count(1) != 0 {
 		t.Error("a crashed cycle must not be reported")

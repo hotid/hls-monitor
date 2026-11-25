@@ -35,7 +35,7 @@ type variantState struct {
 	// had, told or counted from the one before.
 	dated map[uint64]time.Time
 
-	signature      string
+	signature      playlistMark
 	lastChange     time.Time
 	targetDuration float64
 	// window is the playlist's segments as last read, and windowTD its
@@ -486,7 +486,7 @@ func (c *Checker) inspectPlaylist(cy *cycle, v Variant, plURL string, p *m3u8.Me
 	}
 
 	// Freshness: a live playlist must keep changing.
-	sig := fmt.Sprintf("%d/%d/%s/%v", p.SeqNo, n, lastSeg.URI, p.Closed)
+	sig := playlistMark{seq: p.SeqNo, segments: n, last: lastSeg.URI, closed: p.Closed}
 	if sig != st.signature {
 		if !st.lastChange.IsZero() {
 			cy.metric(metricname.PlaylistUpdateIntervalSeconds(), v.Key, now.Sub(st.lastChange).Seconds())
@@ -643,4 +643,13 @@ func renumbered(lastSeq, first, last uint64, segs []plSegment, elapsed float64, 
 	}
 	missed := float64(first - lastSeq - 1)
 	return missed*max(shortest, 0.5) > 3*elapsed+60
+}
+
+// playlistMark is what a playlist is told to have changed by: where it
+// starts, how many segments it has, the last of them and whether it ended.
+type playlistMark struct {
+	seq      uint64
+	segments int
+	last     string
+	closed   bool
 }

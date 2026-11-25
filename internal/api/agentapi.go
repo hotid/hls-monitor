@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 
@@ -89,7 +90,7 @@ func (s *Server) agentEnroll(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
-	_ = s.st.TouchAgent(c.Request.Context(), a.ID, now, req.Version, c.ClientIP(), nil)
+	_ = s.st.TouchAgent(c.Request.Context(), a.ID, now, req.Version, clientAddr(c), nil)
 	s.log.Info("agent enrolled", "agent", a.Name, "ip", c.ClientIP())
 	c.JSON(http.StatusOK, agentproto.EnrollResponse{AgentID: a.ID, Name: a.Name, Key: key})
 }
@@ -116,7 +117,7 @@ func (s *Server) agentConfig(c *gin.Context) {
 		d := float64(v - now.UnixMilli())
 		offset = &d
 	}
-	_ = s.st.TouchAgent(ctx, a.ID, now, c.GetHeader(agentproto.HeaderVersion), c.ClientIP(), offset)
+	_ = s.st.TouchAgent(ctx, a.ID, now, c.GetHeader(agentproto.HeaderVersion), clientAddr(c), offset)
 
 	targets, err := s.st.TargetsForAgent(ctx, a.ID)
 	if s.storeError(c, err) {
@@ -225,6 +226,13 @@ func (s *Server) agentResults(c *gin.Context) {
 		}
 		resp.Accepted++
 	}
-	_ = s.st.TouchAgent(ctx, a.ID, s.now(), c.GetHeader(agentproto.HeaderVersion), c.ClientIP(), nil)
+	_ = s.st.TouchAgent(ctx, a.ID, s.now(), c.GetHeader(agentproto.HeaderVersion), clientAddr(c), nil)
 	c.JSON(http.StatusOK, resp)
+}
+
+// clientAddr is the address a request came from, as the router tells it
+// after the proxies it trusts; not valid when it tells none.
+func clientAddr(c *gin.Context) netip.Addr {
+	ip, _ := netip.ParseAddr(c.ClientIP())
+	return ip.Unmap()
 }

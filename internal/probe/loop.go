@@ -6,6 +6,7 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/media"
 	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/id"
 	"github.com/hotid/hls-monitor/internal/types/picturemode"
 	"github.com/hotid/hls-monitor/internal/types/problemkind"
 	"github.com/hotid/hls-monitor/internal/types/severity"
@@ -44,10 +45,20 @@ const (
 type coded struct {
 	seen     map[uint64]time.Time
 	repeated run
-	// known is the clip the playlist was last found to play, and when.
-	known   string
-	own     bool
+	// known is the clip the playlist was last found to play, and when;
+	// there is none while knownAt is not set.
+	known   knownClip
 	knownAt time.Time
+}
+
+// knownClip is a clip a playlist was found to play: which one it is, what
+// it is called and whether it is the channel's own. It is which one that
+// tells it from another, not the name, which is for a reader and may be
+// changed while the clip plays.
+type knownClip struct {
+	id   id.Slate
+	name string
+	own  bool
 }
 
 // clipOf returns the known clip a segment's frames belong to: the one
@@ -138,9 +149,9 @@ func (c *Checker) noteLoop(key standKey, k *coded, hashes []uint64, sound, quiet
 	}
 	k.repeated.note(again, at)
 	if clip := clipOf(slates, hashes); clip != nil {
-		k.known, k.own, k.knownAt = clip.Name, clip.Own, at
+		k.known, k.knownAt = knownClip{id: clip.ID, name: clip.Name, own: clip.Own}, at
 	}
-	known := k.known != "" && at.Sub(k.knownAt) < knownFor
+	known := !k.knownAt.IsZero() && at.Sub(k.knownAt) < knownFor
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -150,21 +161,21 @@ func (c *Checker) noteLoop(key standKey, k *coded, hashes []uint64, sound, quiet
 	// A clip is found by its coded frames, between two looks: the stream
 	// is looked at now, once, for the incident to have a picture to show —
 	// not every time a clip that drops out for a segment comes back.
-	if _, told := c.loops[key]; !told && c.PictureEvery > 0 && at.Sub(c.clipAt) >= knownFor && ((known && !k.own) || (!quiet && k.repeated.n >= loopSegments && at.Sub(k.repeated.since) >= loopSpan)) {
+	if _, told := c.loops[key]; !told && c.PictureEvery > 0 && at.Sub(c.clipAt) >= knownFor && ((known && !k.known.own) || (!quiet && k.repeated.n >= loopSegments && at.Sub(k.repeated.since) >= loopSpan)) {
 		c.looks.at = at.Add(-c.PictureEvery)
 	}
 	switch {
-	case known && k.own:
+	case known && k.known.own:
 		// What the channel itself plays over and over is not a fault.
-		c.ownAt, c.ownName = at, k.known
+		c.ownAt, c.ownName = at, k.known.name
 		delete(c.loops, key)
 	case known:
-		message := "the stream shows the slate \"" + k.known + "\""
+		message := "the stream shows the slate \"" + k.known.name + "\""
 		if sound {
-			message = "the stream plays the clip \"" + k.known + "\""
+			message = "the stream plays the clip \"" + k.known.name + "\""
 		}
 		c.loops[key] = standingProblem{at: at, kind: problemkind.PictureSlate(), severity: severity.Crit(), variant: key.variant, message: message,
-			details: []detail.Field{detail.Slate(k.known), detail.KnownBy("coded frames")}}
+			details: []detail.Field{detail.Slate(k.known.name), detail.KnownBy("coded frames")}}
 	case !quiet && k.repeated.n >= loopSegments && at.Sub(k.repeated.since) >= loopSpan:
 		// The clip is the frames seen since it began.
 		var clip []uint64

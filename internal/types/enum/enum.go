@@ -27,10 +27,16 @@ type Domain interface {
 // Set is the names of the values of one domain, in the order they were
 // defined.
 type Set struct {
-	what  string
-	names []string // names[0] is not a value
-	index map[string]uint8
+	what   string
+	names  []string // names[0] is not a value
+	index  map[string]uint8
+	sealed bool
 }
+
+// Seal ends the defining of the set. The package that owns it does so
+// once its values are there, and from then on the set is what it is:
+// nothing can add to it while the program runs.
+func (s *Set) Seal() { s.sealed = true }
 
 // NewSet starts a set; what names it in messages.
 func NewSet(what string) *Set {
@@ -46,10 +52,13 @@ func set[D Domain]() *Set {
 }
 
 // Def adds a value to the set of D. It is for the variables of the package
-// that owns the set, and nothing else: a set does not grow while the
-// program runs.
+// that owns the set, and nothing else: the package seals the set when it
+// is loaded, and a sealed set refuses more.
 func Def[D Domain](name string) Of[D] {
 	s := set[D]()
+	if s.sealed {
+		panic(fmt.Sprintf("enum: %s %q defined after the set was sealed", s.what, name))
+	}
 	if _, dup := s.index[name]; dup {
 		panic(fmt.Sprintf("enum: %s %q defined twice", s.what, name))
 	}

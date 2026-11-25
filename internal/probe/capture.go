@@ -2,7 +2,7 @@ package probe
 
 import (
 	"context"
-	"net"
+	"net/netip"
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/httpx"
@@ -58,7 +58,7 @@ type CaptureRequest struct {
 	Evidence      []byte
 	EvidenceWhole bool
 	Status        int
-	Server        string
+	Server        netip.Addr
 	Software      string
 
 	// Get fetches an address the way the checker does: with the stream's
@@ -125,9 +125,7 @@ func (c *Checker) capture(v Variant, plURL string, plResp, entry *httpx.Response
 		PlaylistURL: plURL, Seq: s.seq, TargetDuration: st.windowTD,
 		Evidence: append([]byte(nil), resp.Body...), EvidenceWhole: whole, Status: resp.Status,
 	}
-	if host, _, err := net.SplitHostPort(resp.RemoteAddr); err == nil {
-		rq.Server = host
-	}
+	rq.Server = resp.RemoteAddr.Addr()
 	rq.Software = resp.Header.Get("Server")
 	if plResp != nil {
 		rq.Playlist = append([]byte(nil), plResp.Body...)

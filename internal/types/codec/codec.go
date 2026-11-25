@@ -13,21 +13,28 @@ import (
 // is written (see Named).
 //
 // The zero Codec is that of no track.
-type Codec struct{ name string }
+type Codec struct {
+	name string
+	// family is found once, when the coding is named: it is asked for
+	// with every segment read.
+	family codecfamily.Family
+}
 
-func H264() Codec       { return Codec{"h264"} }
-func HEVC() Codec       { return Codec{"hevc"} }
-func MPEG2Video() Codec { return Codec{"mpeg2video"} }
-func MPEG1Video() Codec { return Codec{"mpeg1video"} }
-func MPEG4() Codec      { return Codec{"mpeg4"} }
-func AAC() Codec        { return Codec{"aac"} }
+func of(name string) Codec { return Codec{name: name, family: codecfamily.OfTrack(name)} }
+
+func H264() Codec       { return of("h264") }
+func HEVC() Codec       { return of("hevc") }
+func MPEG2Video() Codec { return of("mpeg2video") }
+func MPEG1Video() Codec { return of("mpeg1video") }
+func MPEG4() Codec      { return of("mpeg4") }
+func AAC() Codec        { return of("aac") }
 
 // AACLATM is AAC in the LATM transport rather than in ADTS.
-func AACLATM() Codec { return Codec{"aac-latm"} }
-func MP3() Codec     { return Codec{"mp3"} }
-func AC3() Codec     { return Codec{"ac3"} }
-func EAC3() Codec    { return Codec{"eac3"} }
-func DTS() Codec     { return Codec{"dts"} }
+func AACLATM() Codec { return of("aac-latm") }
+func MP3() Codec     { return of("mp3") }
+func AC3() Codec     { return of("ac3") }
+func EAC3() Codec    { return of("eac3") }
+func DTS() Codec     { return of("dts") }
 
 // Named is a coding known only by what the container calls it: the type
 // of a sample entry of MP4, or a stream type of MPEG-TS the monitor has no
@@ -36,7 +43,7 @@ func Named(name string) Codec {
 	if name == "" {
 		panic("codec: a coding with no name")
 	}
-	return Codec{name}
+	return of(name)
 }
 
 // IsZero tells that no coding was set.
@@ -53,10 +60,7 @@ func (c Codec) String() string {
 // Family is the coding by the name that is the same in a playlist and in a
 // container; not set for one the monitor does not compare.
 func (c Codec) Family() codecfamily.Family {
-	if c.name == "" {
-		return codecfamily.Family{}
-	}
-	return codecfamily.OfTrack(c.name)
+	return c.family
 }
 
 func (c Codec) MarshalText() ([]byte, error) {
@@ -70,6 +74,6 @@ func (c *Codec) UnmarshalText(b []byte) error {
 	if len(b) == 0 {
 		return errors.New("empty codec")
 	}
-	c.name = string(b)
+	*c = of(string(b))
 	return nil
 }

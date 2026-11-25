@@ -10,6 +10,10 @@ var set = enum.NewSet("reason a vantage point cannot be used")
 
 func (domain) Set() *enum.Set { return set }
 
+// The values of the set are all defined by the time the package is
+// loaded; nothing is added after.
+func init() { set.Seal() }
+
 type value = enum.Of[domain]
 
 // Why is one reason a vantage point cannot be used.

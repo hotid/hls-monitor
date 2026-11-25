@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
-	"net"
 	"net/url"
 	"slices"
 	"strings"
@@ -142,8 +141,8 @@ func (c *Checker) Target() Target { return c.t }
 // A configured interval is an upper bound: a playlist whose window is
 // shorter is polled as often as needed not to miss segments in between.
 func (c *Checker) Interval() time.Duration {
-	if c.t.IntervalSec > 0 {
-		d := time.Duration(c.t.IntervalSec * float64(time.Second))
+	if c.t.Interval > 0 {
+		d := c.t.Interval.Duration()
 		if c.maxInterval > 0 && c.maxInterval < d {
 			return c.maxInterval
 		}
@@ -156,8 +155,8 @@ func (c *Checker) Interval() time.Duration {
 var freshJitter = func(d time.Duration) time.Duration { return time.Duration(rand.Int64N(int64(d))) }
 
 func (c *Checker) timeout() time.Duration {
-	if c.t.TimeoutSec > 0 {
-		return time.Duration(c.t.TimeoutSec * float64(time.Second))
+	if c.t.Timeout > 0 {
+		return c.t.Timeout.Duration()
 	}
 	return 10 * time.Second
 }
@@ -228,7 +227,7 @@ func (c *Checker) Run(ctx context.Context) *Result {
 			cy.metric(metricname.TLSSeconds(), key, resp.TLS.Seconds()/n)
 		}
 	}
-	if resp != nil && resp.RemoteAddr != "" {
+	if resp != nil && resp.RemoteAddr.IsValid() {
 		c.inside = resp.Inside
 	}
 
@@ -383,7 +382,7 @@ func (c *Checker) playlistResponse(cy *cycle, variant variantkey.Key, reqURL str
 	// address consecutive requests may reach different ones.
 	ep := endpoint(reqURL, resp)
 	cy.source(variant, ep, false)
-	cy.about(variant, detail.PlaylistServer(ep.Node()), detail.PlaylistSoftware(ep.Headers["Server"]), detail.PlaylistRedirects(hopLines(ep.Redirects)), detail.PlaylistBytes(resp.Size))
+	cy.about(variant, detail.PlaylistServer(ep.Node()), detail.PlaylistSoftware(ep.Software()), detail.PlaylistRedirects(hopLines(ep.Redirects)), detail.PlaylistBytes(resp.Size))
 	if ep.URL != reqURL {
 		cy.about(variant, detail.PlaylistFinalURL(ep.URL))
 	}
@@ -420,11 +419,7 @@ func endpoint(reqURL string, resp *httpx.Response) *Endpoint {
 			e.Host = u.Hostname()
 		}
 	}
-	if host, _, err := net.SplitHostPort(resp.RemoteAddr); err == nil {
-		e.IP = host
-	} else {
-		e.IP = resp.RemoteAddr
-	}
+	e.IP = resp.RemoteAddr.Addr()
 	return e
 }
 
@@ -739,24 +734,43 @@ func (c *Checker) checkVariant(ctx context.Context, cy *cycle, v Variant, base s
 // redirect made several times in a row, as by a server that redirects to
 // itself, is one line with a count.
 func hopLines(hops []httpx.Hop) []string {
-	out := make([]string, 0, len(hops))
-	repeats := 1
+	// A redirect is who answered, with what, and where it sent the
+	// request; a run of the same one is that redirect and how many times.
+	type redirect struct {
+		status      int
+		url, server string
+		to          string
+	}
+	type run struct {
+		redirect
+		times int
+	}
+	var runs []run
 	for i, h := range hops {
-		line := fmt.Sprintf("HTTP %d %s", h.Status, h.URL)
-		if h.Server != "" {
-			line += " (" + h.Server + ")"
-		}
+		r := redirect{status: h.Status, url: h.URL, server: h.Server}
 		if i+1 < len(hops) {
-			line += " → " + hops[i+1].URL
+			r.to = hops[i+1].URL
 		} else if i > 0 && hops[i-1].URL == h.URL {
-			line += " → " + h.URL // the last of a run to itself: it did it again
+			r.to = h.URL // the last of a run to itself: it did it again
 		}
-		if n := len(out); n > 0 && strings.TrimSuffix(out[n-1], fmt.Sprintf(" ×%d", repeats)) == line {
-			repeats++
-			out[n-1] = fmt.Sprintf("%s ×%d", line, repeats)
+		if n := len(runs); n > 0 && runs[n-1].redirect == r {
+			runs[n-1].times++
 			continue
 		}
-		repeats = 1
+		runs = append(runs, run{redirect: r, times: 1})
+	}
+	out := make([]string, 0, len(runs))
+	for _, r := range runs {
+		line := fmt.Sprintf("HTTP %d %s", r.status, r.url)
+		if r.server != "" {
+			line += " (" + r.server + ")"
+		}
+		if r.to != "" {
+			line += " → " + r.to
+		}
+		if r.times > 1 {
+			line += fmt.Sprintf(" ×%d", r.times)
+		}
 		out = append(out, line)
 	}
 	return out

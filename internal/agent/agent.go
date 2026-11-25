@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/agentproto"
+	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/picture"
 	"github.com/hotid/hls-monitor/internal/probe"
 	"github.com/hotid/hls-monitor/internal/runner"
@@ -123,8 +124,8 @@ func Run(ctx context.Context, opt Options) error {
 	if opt.Log == nil {
 		opt.Log = slog.Default()
 	}
-	u, err := url.Parse(opt.ServerURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	_, err := httpx.ParseWebURL(opt.ServerURL)
+	if err != nil {
 		return fmt.Errorf("server URL must be an absolute http or https URL, got %q", opt.ServerURL)
 	}
 	a := &Agent{

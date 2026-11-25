@@ -2788,7 +2788,7 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "capture": {
-                    "description": "Capture, when set, asks for a capture of a stream at its next\ncheck. The answer has Status 202 when one will be made, 409 when not.",
+                    "description": "Capture is what work of the kind capture is about: a capture of a\nstream at its next check. The answer has Status 202 when one will\nbe made, 409 when not.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.CaptureJob"
@@ -2796,7 +2796,7 @@ const docTemplate = `{
                     ]
                 },
                 "diagnose": {
-                    "description": "Diagnose, when set, makes the request another kind of work\naltogether: nothing is fetched for the server, a stream is checked.",
+                    "description": "Diagnose is what work of the kind diagnose is about: nothing is\nfetched for the server, a stream is checked.",
                     "allOf": [
                         {
                             "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_agentproto.DiagnoseJob"
@@ -2825,6 +2825,15 @@ const docTemplate = `{
                 },
                 "inside": {
                     "type": "boolean"
+                },
+                "kind": {
+                    "description": "Kind is what is asked. A server older than this field does not\nsend it, and the work is told by what came with it: see Work.",
+                    "type": "string",
+                    "enum": [
+                        "fetch",
+                        "diagnose",
+                        "capture"
+                    ]
                 },
                 "max_body": {
                     "type": "integer"
@@ -3566,6 +3575,13 @@ const docTemplate = `{
                         "fail"
                     ]
                 },
+                "statuses": {
+                    "description": "Statuses is what the cycle came to for each playlist it has\nsomething to say of.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.VariantStatus"
+                    }
+                },
                 "target_id": {
                     "type": "integer"
                 },
@@ -3759,7 +3775,7 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "interval_sec": {
-                    "description": "IntervalSec is the pause between cycles; zero derives it from the\nplaylist target duration.",
+                    "description": "Interval is the pause between cycles; zero derives it from the\nplaylist target duration.",
                     "type": "number"
                 },
                 "level": {
@@ -3784,7 +3800,7 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "timeout_sec": {
-                    "description": "TimeoutSec bounds a single HTTP request; zero means 10 seconds.",
+                    "description": "Timeout bounds a single HTTP request; zero means 10 seconds.",
                     "type": "number"
                 },
                 "url": {
@@ -3833,6 +3849,22 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "uri": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_hotid_hls-monitor_internal_probe.VariantStatus": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "ok",
+                        "warn",
+                        "fail"
+                    ]
+                },
+                "variant": {
                     "type": "string"
                 }
             }
@@ -4698,13 +4730,24 @@ const docTemplate = `{
                         "container"
                     ]
                 },
+                "message": {
+                    "type": "string"
+                },
                 "n": {
                     "description": "Cycle: its number from one, how long it took and everything it found.",
                     "type": "integer"
                 },
                 "reason": {
-                    "description": "End: \"time\" when the requested duration has passed; from an agent\nit may instead say what went wrong.",
-                    "type": "string"
+                    "description": "End: why it is over — the time asked for has passed, or what went\nwrong with the agent. Message is what the agent said when it refused.",
+                    "type": "string",
+                    "enum": [
+                        "time",
+                        "agent_not_taking",
+                        "agent_refused",
+                        "agent_too_old",
+                        "agent_unreadable",
+                        "agent_silent"
+                    ]
                 },
                 "result": {
                     "$ref": "#/definitions/github_com_hotid_hls-monitor_internal_probe.Result"

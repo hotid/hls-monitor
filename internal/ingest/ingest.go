@@ -8,7 +8,6 @@ import (
 	"errors"
 	"log/slog"
 	"math"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -196,7 +195,7 @@ func (in *Ingester) apply(ctx context.Context, agentID id.Agent, r *probe.Result
 		if err != nil {
 			return err
 		}
-		if last != 0 && a.t.UnixMilli() <= last {
+		if !last.IsZero() && !a.t.Truncate(time.Millisecond).After(last) {
 			return ErrStale
 		}
 		if r.Variants != nil {
@@ -219,7 +218,7 @@ func (in *Ingester) apply(ctx context.Context, agentID id.Agent, r *probe.Result
 		return nil
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+		if store.RefersToMissing(err) {
 			return store.ErrNotFound // the stream or the agent was deleted meanwhile
 		}
 		return err
@@ -323,23 +322,42 @@ func (a *applying) states() error {
 	if err != nil {
 		return err
 	}
+	told := map[variantkey.Key]status.Status{}
+	for _, s := range r.Statuses {
+		told[s.Variant] = s.Status
+	}
 	for key, vals := range a.perVariant {
 		vid, err := a.variantID(key)
 		if err != nil {
 			return err
 		}
+		// The status of a playlist is what the result says it is. An agent
+		// older than that tells it only as a figure among the others, and
+		// it is read from there — of this result, not of the one before.
+		st, known := told[key]
+		if rank, has := vals[metricname.Status()]; !known && has {
+			st, known = status.OfRank(rank)
+		}
 		if a.up[key] {
-			for name, v := range previous[vid] {
+			for name, v := range previous[vid].Metrics {
 				if _, ok := vals[name]; !ok {
 					vals[name] = v
 				}
+			}
+		}
+		if !known {
+			// A result with figures of a playlist and no word on how it
+			// is: what was known of it stays, and nothing is made up.
+			if st = previous[vid].Status; st.IsZero() {
+				a.in.log.Warn("a result has figures of a playlist and no status for it; its state is not stored", "stream", r.TargetID, "variant", key)
+				continue
 			}
 		}
 		var pl, seg *probe.Endpoint
 		if src, ok := sources[key]; ok {
 			pl, seg = src.Playlist, src.Segment
 		}
-		if err := tx.SaveVariantState(ctx, vid, a.agentID, statusOf(vals[metricname.Status()]), a.t, vals, pl, seg); err != nil {
+		if err := tx.SaveVariantState(ctx, vid, a.agentID, st, a.t, vals, pl, seg); err != nil {
 			return err
 		}
 		for what, e := range map[sourcekind.Kind]*probe.Endpoint{sourcekind.Playlist(): pl, sourcekind.Segment(): seg} {
@@ -471,17 +489,6 @@ func (a *applying) quiet() error {
 		}
 	}
 	return nil
-}
-
-// statusOf reads a status back from the number a series holds it as.
-func statusOf(v float64) status.Status {
-	switch {
-	case v >= 2:
-		return status.Fail()
-	case v >= 1:
-		return status.Warn()
-	}
-	return status.OK()
 }
 
 func summarize(r *probe.Result, streamLevel map[metricname.Name]float64, perVariant map[variantkey.Key]map[metricname.Name]float64) map[summarykey.Key]float64 {

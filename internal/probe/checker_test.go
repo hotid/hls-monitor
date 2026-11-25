@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"runtime"
 	"strconv"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/types/overload"
 	"github.com/hotid/hls-monitor/internal/types/picturemode"
 	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/seconds"
 	"github.com/hotid/hls-monitor/internal/types/severity"
 	"github.com/hotid/hls-monitor/internal/types/status"
 	"github.com/hotid/hls-monitor/internal/types/variantkey"
@@ -45,7 +47,7 @@ func newFixture(t *testing.T, opt hlstest.Options, path string, lv level.Level) 
 	f := &fixture{t: t, origin: hlstest.New(opt), clock: time.Now()}
 	f.srv = httptest.NewServer(f.origin.Handler())
 	t.Cleanup(f.srv.Close)
-	f.c = New(Target{ID: id.StreamOf(1), URL: f.srv.URL + path, Level: lv, Picture: picturemode.Check(), TimeoutSec: 5}, nil)
+	f.c = New(Target{ID: id.StreamOf(1), URL: f.srv.URL + path, Level: lv, Picture: picturemode.Check(), Timeout: seconds.Of(5)}, nil)
 	f.c.now = func() time.Time { return f.clock }
 	// Loudness is measured by tests of its own: elsewhere it would add
 	// to the sound listened to.
@@ -73,7 +75,7 @@ func hasProblem(r *Result, kind problemkind.Kind) *Problem {
 }
 
 // num is a figure of a problem that is a number; zero when it has none.
-func num(s detail.Set, k detail.Key) float64 {
+func num(s detail.Set, k detail.NumberKey) float64 {
 	v, _ := s.Number(k)
 	return v
 }
@@ -476,7 +478,7 @@ func TestRedirectingBalancer(t *testing.T) {
 		t.Fatalf("sources = %+v", r.Sources)
 	}
 	pl := r.Sources[0].Playlist
-	if pl == nil || pl.URL != a.URL+"/v0/index.m3u8" || pl.Host != hostOf(a) || pl.IP != "127.0.0.1" {
+	if pl == nil || pl.URL != a.URL+"/v0/index.m3u8" || pl.Host != hostOf(a) || pl.IP.String() != "127.0.0.1" {
 		t.Fatalf("playlist endpoint = %+v, want server A", pl)
 	}
 	if len(pl.Redirects) != 1 || pl.Redirects[0].URL != f.srv.URL+"/lb/v0/index.m3u8" || pl.Redirects[0].Status != 302 {
@@ -534,8 +536,8 @@ func TestEndpointHostDropsDefaultPort(t *testing.T) {
 		"https://edge.example.com:80/a.m3u8":  "edge.example.com:80",
 		"http://edge.example.com/a.m3u8":      "edge.example.com",
 	} {
-		e := endpoint(in, &httpx.Response{FinalURL: in, RemoteAddr: "10.0.0.4:80"})
-		if e.Host != want || e.IP != "10.0.0.4" {
+		e := endpoint(in, &httpx.Response{FinalURL: in, RemoteAddr: netip.MustParseAddrPort("10.0.0.4:80")})
+		if e.Host != want || e.IP.String() != "10.0.0.4" {
 			t.Errorf("%s: host %q ip %q, want host %q", in, e.Host, e.IP, want)
 		}
 	}
@@ -545,7 +547,7 @@ func TestEndpointHostDropsDefaultPort(t *testing.T) {
 // segments between checks; the checker shortens it as far as needed.
 func TestConfiguredIntervalIsCappedByWindow(t *testing.T) {
 	f := newFixture(t, hlstest.Options{Window: 4}, "/v0/index.m3u8", level.Playlist())
-	f.c.t.IntervalSec = 60
+	f.c.t.Interval = seconds.Of(60)
 	if got := f.c.Interval(); got != time.Minute {
 		t.Fatalf("interval before the first cycle = %s, want the configured one", got)
 	}
@@ -558,7 +560,7 @@ func TestConfiguredIntervalIsCappedByWindow(t *testing.T) {
 
 	// A window long enough for the configured interval leaves it alone.
 	g := newFixture(t, hlstest.Options{Window: 5}, "/v0/index.m3u8", level.Playlist())
-	g.c.t.IntervalSec = 2
+	g.c.t.Interval = seconds.Of(2)
 	wantClean(t, g.step(5))
 	if got := g.c.Interval(); got != 2*time.Second {
 		t.Errorf("interval = %s, want the configured 2s", got)
@@ -1013,7 +1015,7 @@ func TestWayToTheServerIsRecorded(t *testing.T) {
 		}
 	}
 	rq := byName[metricname.ServerRequests()]
-	if rq.Value < 2 || rq.IP != "127.0.0.1" || !strings.HasPrefix(rq.Server, "127.0.0.1:") {
+	if rq.Value < 2 || rq.IP.String() != "127.0.0.1" || !strings.HasPrefix(rq.Server, "127.0.0.1:") {
 		t.Errorf("hls_server_requests = %+v; want the playlist and its segments from the test server", rq)
 	}
 	if rtt := byName[metricname.ServerRTTSeconds()]; rtt.Value <= 0 || rtt.Value > 1 {

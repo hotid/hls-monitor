@@ -57,19 +57,20 @@ func (s *Server) listCaptures(c *gin.Context) {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/captures/{id}/archive [get]
 func (s *Server) captureArchive(c *gin.Context) {
-	id := c.Param("id")
-	if s.captures == nil || !s.hasCapture(id) {
+	// What is no ID of a capture names none: it is not looked for.
+	id, err := capture.ParseID(c.Param("id"))
+	if err != nil || s.captures == nil || !s.hasCapture(id) {
 		fail(c, http.StatusNotFound, errcode.NotFound(), "not found")
 		return
 	}
 	c.Header("Content-Type", "application/zip")
-	c.Header("Content-Disposition", `attachment; filename="capture-`+id+`.zip"`)
+	c.Header("Content-Disposition", `attachment; filename="capture-`+id.String()+`.zip"`)
 	if err := s.captures.WriteZip(c.Writer, id); err != nil {
 		s.log.Warn("a capture could not be sent", "capture", id, "error", err)
 	}
 }
 
-func (s *Server) hasCapture(name string) bool {
+func (s *Server) hasCapture(name capture.ID) bool {
 	for _, cp := range s.captures.List(id.Stream{}) {
 		if cp.ID == name && cp.Done {
 			return true
@@ -88,11 +89,12 @@ func (s *Server) hasCapture(name string) bool {
 //	@Failure	404	{object}	apiError
 //	@Router		/api/v1/captures/{id} [delete]
 func (s *Server) deleteCapture(c *gin.Context) {
-	if s.captures == nil || !s.captures.Delete(c.Param("id")) {
+	which, err := capture.ParseID(c.Param("id"))
+	if err != nil || s.captures == nil || !s.captures.Delete(which) {
 		fail(c, http.StatusNotFound, errcode.NotFound(), "not found")
 		return
 	}
-	s.log.Info("a capture was deleted", "capture", c.Param("id"), "by", currentUser(c).Username)
+	s.log.Info("a capture was deleted", "capture", which, "by", currentUser(c).Username)
 	c.Status(http.StatusNoContent)
 }
 
@@ -147,7 +149,7 @@ func (s *Server) captureThroughAgent(ctx context.Context, stream id.Stream) id.A
 			continue
 		}
 		actx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		res, _, _ := s.fetchThroughAgent(actx, agent, agentproto.FetchRequest{Capture: &agentproto.CaptureJob{StreamID: stream}})
+		res, _, _ := s.fetchThroughAgent(actx, agent, agentproto.Capture(agentproto.CaptureJob{StreamID: stream}))
 		cancel()
 		if res.Status == http.StatusAccepted {
 			return agent

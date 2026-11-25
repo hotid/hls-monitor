@@ -14,6 +14,10 @@ var set = enum.NewSet("stream status")
 
 func (domain) Set() *enum.Set { return set }
 
+// The values of the set are all defined by the time the package is
+// loaded; nothing is added after.
+func init() { set.Seal() }
+
 type value = enum.Of[domain]
 
 // Status is one stream status.
@@ -79,5 +83,19 @@ func (s Status) Checked() bool { return s == ok || s == warn || s == fail }
 // Worse tells whether s, the result of a check, is worse than o. A state
 // that is no result of a check is worse than none and better than any.
 func (s Status) Worse(o Status) bool {
-	return s.Checked() && (!o.Checked() || s.Ord() > o.Ord())
+	return s.Checked() && (!o.Checked() || s.weight() > o.weight())
+}
+
+// weight orders the results of a check by how bad they are; it does not
+// follow from the order the states are defined in.
+func (s Status) weight() int {
+	switch s {
+	case ok:
+		return 1
+	case warn:
+		return 2
+	case fail:
+		return 3
+	}
+	panic("streamstatus: the weight of a state that is no result of a check")
 }

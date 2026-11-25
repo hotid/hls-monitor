@@ -106,7 +106,7 @@ func (a *Agent) captureLoop(ctx context.Context) {
 }
 
 // sendCapture sends one capture as an archive.
-func (a *Agent) sendCapture(ctx context.Context, id string) (int, error) {
+func (a *Agent) sendCapture(ctx context.Context, id capture.ID) (int, error) {
 	f, err := os.CreateTemp("", "hls-monitor-capture-*.zip")
 	if err != nil {
 		return 0, err

@@ -46,3 +46,4 @@ replace github.com/hotid/hls-monitor/internal/types/id.Slate integer
 replace github.com/hotid/hls-monitor/internal/types/id.Frame integer
 replace github.com/hotid/hls-monitor/internal/types/id.Snapshot integer
 replace github.com/hotid/hls-monitor/internal/types/id.Record integer
+replace github.com/hotid/hls-monitor/internal/capture.ID string

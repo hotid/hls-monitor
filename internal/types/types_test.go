@@ -3,15 +3,19 @@ package types_test
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/types/detail"
+	"github.com/hotid/hls-monitor/internal/types/enum"
 	"github.com/hotid/hls-monitor/internal/types/id"
 	"github.com/hotid/hls-monitor/internal/types/node"
 	"github.com/hotid/hls-monitor/internal/types/picturemode"
 	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/seconds"
 	"github.com/hotid/hls-monitor/internal/types/severity"
 	"github.com/hotid/hls-monitor/internal/types/status"
 	"github.com/hotid/hls-monitor/internal/types/variantkey"
@@ -90,13 +94,13 @@ func TestValuesInADatabase(t *testing.T) {
 func TestFigures(t *testing.T) {
 	at := time.Date(2026, 3, 1, 12, 0, 0, 0, time.FixedZone("x", 3600))
 	s := detail.Of(
-		detail.UnchangedFor(15*time.Second), detail.SegmentSequence(uint64(41)), detail.PlaylistServer(node.Of("edge-1", "10.0.0.5")),
+		detail.UnchangedFor(15*time.Second), detail.SegmentSequence(uint64(41)), detail.PlaylistServer(node.Of("edge-1", netip.MustParseAddr("10.0.0.5"))),
 		detail.PlaylistRedirects([]string{"HTTP 302 http://a/"}), detail.Since(at), detail.ComparedWith(variantkey.OfURI("lo.m3u8")),
 		detail.ClipSignature([]uint64{17, 3}), detail.MediaRate(0.33349), detail.PlaylistError(""), detail.PlaylistURL("http://a/"))
 	// The first value stays; a later one replaces it only when asked to.
 	s.Add(detail.PlaylistURL("http://b/"))
 	b, err := json.Marshal(s)
-	want := `{"clip_signature":"11,3","compared_with":"lo.m3u8","media_rate":0.333,"playlist_redirects":["HTTP 302 http://a/"],"playlist_server":"edge-1 10.0.0.5","playlist_url":"http://a/","segment_sequence":41,"since":"2026-03-01T11:00:00Z","unchanged_for":15}`
+	want := `{"clip_signature":"3,11","compared_with":"lo.m3u8","media_rate":0.333,"playlist_redirects":["HTTP 302 http://a/"],"playlist_server":"edge-1 10.0.0.5","playlist_url":"http://a/","segment_sequence":41,"since":"2026-03-01T11:00:00Z","unchanged_for":15}`
 	if err != nil || string(b) != want {
 		t.Fatalf("written as\n%s, %v\nwant\n%s", b, err, want)
 	}
@@ -112,7 +116,7 @@ func TestFigures(t *testing.T) {
 	if n, ok := back.Number(detail.KeyUnchangedFor()); !ok || n != 15 {
 		t.Errorf("unchanged_for = %v, %v", n, ok)
 	}
-	if at := back.Server(detail.KeyPlaylistServer()); at.Host() != "edge-1" || at.IP() != "10.0.0.5" {
+	if at := back.Server(detail.KeyPlaylistServer()); at.Host() != "edge-1" || at.IP().String() != "10.0.0.5" {
 		t.Errorf("server = %+v", at)
 	}
 	if h := back.Hashes(detail.KeyClipSignature()); len(h) != 2 || h[0] != 3 || h[1] != 17 {
@@ -176,10 +180,10 @@ func TestIdentifiers(t *testing.T) {
 
 func TestServersAndPlaylists(t *testing.T) {
 	n, err := node.Parse("edge-1.example.tv:8080 2001:db8::1")
-	if err != nil || n.Host() != "edge-1.example.tv:8080" || n.IP() != "2001:db8::1" || n.String() != "edge-1.example.tv:8080 2001:db8::1" {
+	if err != nil || n.Host() != "edge-1.example.tv:8080" || n.IP().String() != "2001:db8::1" || n.String() != "edge-1.example.tv:8080 2001:db8::1" {
 		t.Errorf("a server read as %+v, %v", n, err)
 	}
-	if only, _ := node.Parse("edge-2"); only.Host() != "edge-2" || only.IP() != "" {
+	if only, _ := node.Parse("edge-2"); only.Host() != "edge-2" || only.IP().IsValid() {
 		t.Errorf("a server without an address read as %+v", only)
 	}
 	if _, err := node.Parse(" "); err == nil || !(node.Node{}).IsZero() || (node.Node{}).String() != "" {
@@ -195,3 +199,41 @@ func TestServersAndPlaylists(t *testing.T) {
 		t.Errorf("a key that was never set was written: %v", err)
 	}
 }
+
+// A set is what its package made it: nothing is added while the program
+// runs. What is worse than what is said, not read off the order of
+// definition, and the numbers the series hold are fixed.
+func TestSetsAreClosed(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("a value was added to a set after its package was loaded")
+		}
+	}()
+	for st, want := range map[status.Status]float64{status.OK(): 0, status.Warn(): 1, status.Fail(): 2} {
+		back, ok := status.OfRank(want)
+		if st.Rank() != want || !ok || back != st {
+			t.Errorf("status %v has the rank %v and reads back as %v", st, st.Rank(), back)
+		}
+	}
+	for _, v := range []float64{-1, 0.5, 1.5, 3, math.NaN()} {
+		if st, ok := status.OfRank(v); ok {
+			t.Errorf("%v was read as the status %v", v, st)
+		}
+	}
+	if !severity.Crit().Worse(severity.Warn()) || !severity.Warn().Worse(severity.Info()) || severity.Info().Worse(severity.Info()) {
+		t.Error("severities are not in order")
+	}
+	if seconds.Of(1.5).Duration() != 1500*time.Millisecond {
+		t.Errorf("1.5 seconds is %v", seconds.Of(1.5))
+	}
+	if b, err := json.Marshal(seconds.Of(2)); err != nil || string(b) != "2" {
+		t.Errorf("two seconds written as %s, %v", b, err)
+	}
+	_ = enum.Def[extraDomain]("late")
+}
+
+type extraDomain struct{}
+
+var extraSet = func() *enum.Set { s := enum.NewSet("test"); s.Seal(); return s }()
+
+func (extraDomain) Set() *enum.Set { return extraSet }

@@ -12,6 +12,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/ingest"
 	"github.com/hotid/hls-monitor/internal/store"
 	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/node"
 	"github.com/hotid/hls-monitor/internal/types/problemkind"
 	"github.com/hotid/hls-monitor/internal/types/severity"
 )
@@ -58,8 +59,8 @@ func (s *Server) WatchServers(ctx context.Context) {
 		return
 	}
 	type key struct {
-		host, ip string
-		kind     problemkind.Kind
+		at   node.Node
+		kind problemkind.Kind
 	}
 	type group struct {
 		streams  map[id.Stream]string
@@ -77,7 +78,7 @@ func (s *Server) WatchServers(ctx context.Context) {
 		if at.IsZero() {
 			continue
 		}
-		k := key{at.Host(), at.IP(), in.Kind}
+		k := key{at, in.Kind}
 		g := groups[k]
 		if g == nil {
 			g = &group{streams: map[id.Stream]string{}, severity: severity.Warn()}
@@ -104,16 +105,16 @@ func (s *Server) WatchServers(ctx context.Context) {
 			d.Streams = append(d.Streams, streamRef{ID: id, Name: name})
 		}
 		sort.Slice(d.Streams, func(i, j int) bool { return d.Streams[i].Name < d.Streams[j].Name })
-		report(store.ServerIncident{Host: k.host, IP: k.ip, Kind: k.kind, Severity: g.severity, Streams: len(g.streams),
+		report(store.ServerIncident{Host: k.at.Host(), IP: k.at.IP(), Kind: k.kind, Severity: g.severity, Streams: len(g.streams),
 			Message: fmt.Sprintf("%d streams at once: %s", len(g.streams), g.example)}, d)
 	}
 	// Loss that hovers about the limit would begin and end all the time:
 	// an incident that is open goes on until the loss is down to half of it.
-	losing := map[[2]string]bool{}
+	losing := map[node.Node]bool{}
 	if openNow, err := s.st.ListServerIncidents(ctx, true, 2000); err == nil {
 		for _, in := range openNow {
 			if in.Kind == problemkind.NetworkLoss() {
-				losing[[2]string{in.Host, in.IP}] = true
+				losing[node.Of(in.Host, in.IP)] = true
 			}
 		}
 	}
@@ -122,7 +123,7 @@ func (s *Server) WatchServers(ctx context.Context) {
 		if !n.Lossy && !still {
 			continue
 		}
-		report(store.ServerIncident{Host: k[0], IP: k[1], Kind: problemkind.NetworkLoss(), Severity: severity.Warn(),
+		report(store.ServerIncident{Host: k.Host(), IP: k.IP(), Kind: problemkind.NetworkLoss(), Severity: severity.Warn(),
 			Message: fmt.Sprintf("%.1f %% of %.0f requests in five minutes needed a retransmission", 100*n.Retransmits/n.Requests, n.Requests)},
 			store.ServerIncidentDetails{Requests: n.Requests, Retransmits: n.Retransmits})
 	}
@@ -143,7 +144,7 @@ func (s *Server) WatchServers(ctx context.Context) {
 //	@Success	200	{array}	store.ServerIncident
 //	@Router		/api/v1/server-incidents [get]
 func (s *Server) listServerIncidents(c *gin.Context) {
-	rows, err := s.st.ListServerIncidents(c.Request.Context(), c.Query("open") == "true" || c.Query("open") == "1", int(queryInt(c, "limit")))
+	rows, err := s.st.ListServerIncidents(c.Request.Context(), queryFlag(c, "open"), int(queryInt(c, "limit")))
 	if s.storeError(c, err) {
 		return
 	}

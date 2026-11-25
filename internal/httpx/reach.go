@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"net/netip"
 	"sync"
 	"sync/atomic"
@@ -51,9 +50,10 @@ type reachState struct {
 	inside bool // the first of them was not to a public address
 }
 
-// allowed reports whether the request may use a connection to addr
-// (ip:port). The caller holds no lock.
-func (st *reachState) allowed(addr string) bool {
+// allowed reports whether the request may use a connection to an
+// address; one that is not valid is not known to be public. The caller
+// holds no lock.
+func (st *reachState) allowed(addr netip.Addr) bool {
 	if st.mode == ReachAny || st.viaProxy.Load() {
 		return true
 	}
@@ -72,9 +72,9 @@ func (st *reachState) allowed(addr string) bool {
 // use records that the request was given a connection to addr, new or
 // kept from before, and ends the request when it may not have it: false
 // is returned then.
-func (st *reachState) use(addr string) bool {
+func (st *reachState) use(addr netip.Addr) bool {
 	if !st.allowed(addr) {
-		st.cancel(fmt.Errorf("%s: %w", hostOf(addr), ErrNotPublic))
+		st.cancel(fmt.Errorf("%s: %w", addr, ErrNotPublic))
 		return false
 	}
 	st.mu.Lock()
@@ -89,26 +89,19 @@ func (st *reachState) use(addr string) bool {
 // controlDial is the dialer's hook: it refuses a connection before
 // anything is sent.
 func controlDial(ctx context.Context, _, address string, _ syscall.RawConn) error {
-	if st, ok := ctx.Value(reachKey{}).(*reachState); ok && !st.allowed(address) {
+	st, ok := ctx.Value(reachKey{}).(*reachState)
+	if !ok {
+		return nil
+	}
+	// The dialer tells where it connects in text; it is read once, here.
+	ap, _ := netip.ParseAddrPort(address)
+	if !st.allowed(ap.Addr().Unmap()) {
 		return ErrNotPublic
 	}
 	return nil
 }
 
-func hostOf(addr string) string {
-	if h, _, err := net.SplitHostPort(addr); err == nil {
-		return h
-	}
-	return addr
-}
-
-func addrPublic(addr string) bool {
-	ip, err := netip.ParseAddr(hostOf(addr))
-	if err != nil {
-		return false
-	}
-	return Public(ip)
-}
+func addrPublic(addr netip.Addr) bool { return addr.IsValid() && Public(addr) }
 
 // notPublic are the ranges that are not loopback, private or link-local
 // by the library's definition, and still do not belong to the Internet.

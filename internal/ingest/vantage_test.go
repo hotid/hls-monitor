@@ -92,7 +92,7 @@ func TestVantagePointBehind(t *testing.T) {
 }
 
 // num is a figure of a problem that is a number; zero when it has none.
-func num(s detail.Set, k detail.Key) float64 {
+func num(s detail.Set, k detail.NumberKey) float64 {
 	v, _ := s.Number(k)
 	return v
 }

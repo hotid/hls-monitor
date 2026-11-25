@@ -108,9 +108,9 @@ func (tx *Tx) ReportIncident(ctx context.Context, streamID id.Stream, agentID id
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (stream_id, agent_id, variant_id, kind) WHERE ended_at IS NULL DO UPDATE SET
 			severity = CASE
-				WHEN excluded.severity = 'crit' OR incidents.severity = 'crit' THEN 'crit'
-				WHEN excluded.severity = 'warn' OR incidents.severity = 'warn' THEN 'warn'
-				ELSE 'info' END,
+				WHEN excluded.severity = `+lit(severity.Crit())+` OR incidents.severity = `+lit(severity.Crit())+` THEN `+lit(severity.Crit())+`
+				WHEN excluded.severity = `+lit(severity.Warn())+` OR incidents.severity = `+lit(severity.Warn())+` THEN `+lit(severity.Warn())+`
+				ELSE `+lit(severity.Info())+` END,
 			message = excluded.message,
 			details = CASE WHEN excluded.details <> '' THEN excluded.details ELSE incidents.details END,
 			last_seen = excluded.last_seen,
@@ -261,15 +261,18 @@ func (s *Store) OpenIncidentCounts(ctx context.Context) (map[id.Stream]map[sever
 	return out, rows.Err()
 }
 
+// OpenCount is how many open incidents there are: failures and warnings.
+type OpenCount struct{ Crit, Warn int }
+
 // OpenIncidentsByAgent counts the open incidents found from every vantage
-// point: failures and warnings, in that order. Events are not counted.
-func (s *Store) OpenIncidentsByAgent(ctx context.Context) (map[id.Agent][2]int, error) {
+// point. Events are not counted.
+func (s *Store) OpenIncidentsByAgent(ctx context.Context) (map[id.Agent]OpenCount, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT agent_id, severity, COUNT(*) FROM incidents WHERE ended_at IS NULL AND severity <> ? GROUP BY agent_id, severity", severity.Info())
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[id.Agent][2]int{}
+	out := map[id.Agent]OpenCount{}
 	for rows.Next() {
 		var of id.Agent
 		var sev severity.Severity
@@ -279,9 +282,9 @@ func (s *Store) OpenIncidentsByAgent(ctx context.Context) (map[id.Agent][2]int, 
 		}
 		c := out[of]
 		if sev == severity.Crit() {
-			c[0] += n
+			c.Crit += n
 		} else {
-			c[1] += n
+			c.Warn += n
 		}
 		out[of] = c
 	}

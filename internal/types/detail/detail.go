@@ -20,6 +20,7 @@ import (
 
 	"github.com/hotid/hls-monitor/internal/types/enum"
 	"github.com/hotid/hls-monitor/internal/types/node"
+	"github.com/hotid/hls-monitor/internal/types/variantkey"
 )
 
 type domain struct{}
@@ -27,6 +28,10 @@ type domain struct{}
 var set = enum.NewSet("detail")
 
 func (domain) Set() *enum.Set { return set }
+
+// The values of the set are all defined by the time the package is
+// loaded; nothing is added after.
+func init() { set.Seal() }
 
 type value = enum.Of[domain]
 
@@ -70,14 +75,19 @@ type integer interface {
 	~int | ~int8 | ~int16 | ~int32 | ~int64 | ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64
 }
 
-// Field is one figure: its key and its value. The zero Field is no figure
-// at all, and so is a text that is empty or a list with nothing in it:
-// adding one to a Set adds nothing.
+// Field is one figure: its key and its value, as what the value is — a
+// number, a text, a moment, a server. It becomes text only where a set is
+// written out. The zero Field is no figure at all, and so is a text that
+// is empty or a list with nothing in it: adding one to a Set adds nothing.
 type Field struct {
-	key   Key
-	num   float64
-	text  string
-	lines []string
+	key     Key
+	num     float64
+	text    string
+	lines   []string
+	at      time.Time
+	variant variantkey.Key
+	hashes  []uint64
+	server  node.Node
 }
 
 // Key is which figure it is.
@@ -115,34 +125,36 @@ func timeField(k Key, v time.Time) Field {
 	if v.IsZero() {
 		return Field{}
 	}
-	return Field{key: k, text: v.UTC().Format(time.RFC3339)}
+	// A figure tells a moment to the second.
+	return Field{key: k, at: v.UTC().Truncate(time.Second)}
+}
+
+func variantField(k Key, v variantkey.Key) Field {
+	if v.IsZero() {
+		return Field{}
+	}
+	return Field{key: k, variant: v}
+}
+
+func serverField(k Key, v node.Node) Field {
+	if v.IsZero() {
+		return Field{}
+	}
+	return Field{key: k, server: v}
 }
 
 // SignatureMax is how many coded frames a clip is known by at the most.
 const SignatureMax = 256
 
-// hashesField is the coded frames a clip is known by. Outside the program
-// they are written in hexadecimal with commas between.
+// hashesField is the coded frames a clip is known by: sorted, each once.
+// Outside the program they are written in hexadecimal with commas between.
 func hashesField(k Key, v []uint64) Field {
 	if len(v) == 0 {
 		return Field{}
 	}
-	parts := make([]string, len(v))
-	for i, h := range v {
-		parts[i] = strconv.FormatUint(h, 16)
-	}
-	return Field{key: k, text: strings.Join(parts, ",")}
-}
-
-// Hashes is a figure that is the coded frames of a clip, sorted and
-// without repeats; nil when the set has none such.
-func (s Set) Hashes(k Key) []uint64 {
-	f, ok := s.m[k]
-	if !ok || k.kind() != hashesValue {
-		return nil
-	}
-	out, _ := parseHashes(f.text)
-	return out
+	v = slices.Clone(v)
+	slices.Sort(v)
+	return Field{key: k, hashes: slices.Compact(v)}
 }
 
 func parseHashes(text string) ([]uint64, error) {
@@ -156,20 +168,34 @@ func parseHashes(text string) ([]uint64, error) {
 			out = append(out, h)
 		}
 	}
-	slices.Sort(out)
-	return slices.Compact(out), nil
+	return out, nil
 }
 
+// MarshalJSON writes the value the way it is told outside the program.
 func (f Field) MarshalJSON() ([]byte, error) {
 	switch f.key.kind() {
 	case numberValue, countValue:
 		return json.Marshal(f.num)
 	case linesValue:
 		return json.Marshal(f.lines)
+	case timeValue:
+		return json.Marshal(f.at.Format(time.RFC3339))
+	case variantValue:
+		return json.Marshal(f.variant.String())
+	case serverValue:
+		return json.Marshal(f.server.String())
+	case hashesValue:
+		parts := make([]string, len(f.hashes))
+		for i, h := range f.hashes {
+			parts[i] = strconv.FormatUint(h, 16)
+		}
+		return json.Marshal(strings.Join(parts, ","))
 	}
 	return json.Marshal(f.text)
 }
 
+// unmarshal reads the value of the figure k, into what it is. This is the
+// one place where the text of a figure is taken apart.
 func (f *Field) unmarshal(k Key, raw []byte) error {
 	f.key = k
 	switch k.kind() {
@@ -178,15 +204,57 @@ func (f *Field) unmarshal(k Key, raw []byte) error {
 	case linesValue:
 		return json.Unmarshal(raw, &f.lines)
 	}
-	if err := json.Unmarshal(raw, &f.text); err != nil {
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
 		return err
 	}
-	if k.kind() == hashesValue {
-		_, err := parseHashes(f.text)
-		return err
+	var err error
+	switch k.kind() {
+	case timeValue:
+		f.at, err = time.Parse(time.RFC3339, text)
+	case variantValue:
+		f.variant, err = variantkey.Parse(text)
+	case serverValue:
+		f.server, err = node.Parse(text)
+	case hashesValue:
+		var hs []uint64
+		if hs, err = parseHashes(text); err == nil {
+			*f = hashesField(k, hs)
+		}
+	default:
+		f.text = text
 	}
-	return nil
+	return err
 }
+
+// A key says, by its type, what the value of its figure is, so that a
+// number is not asked for where there is a server: the compiler refuses.
+
+// NumberKey names a figure that is a number.
+type NumberKey struct{ Key }
+
+// TextKey names a figure that is text.
+type TextKey struct{ Key }
+
+// LinesKey names a figure that is a list of lines.
+type LinesKey struct{ Key }
+
+// TimeKey names a figure that is a moment.
+type TimeKey struct{ Key }
+
+// VariantKey names a figure that is a playlist.
+type VariantKey struct{ Key }
+
+// HashesKey names a figure that is the coded frames of a clip.
+type HashesKey struct{ Key }
+
+// ServerKey names a figure that is a server.
+type ServerKey struct{ Key }
+
+// Named is any key, whatever its figure is.
+type Named interface{ named() Key }
+
+func (k Key) named() Key { return k }
 
 // Set is the figures of one problem, one of a kind.
 type Set struct {
@@ -236,42 +304,37 @@ func (s Set) Len() int { return len(s.m) }
 func (s Set) IsZero() bool { return len(s.m) == 0 }
 
 // Has tells whether the set has the figure.
-func (s Set) Has(k Key) bool {
-	_, ok := s.m[k]
+func (s Set) Has(k Named) bool {
+	_, ok := s.m[k.named()]
 	return ok
 }
 
 // Number is a figure that is a number; false when the set has none such.
-func (s Set) Number(k Key) (float64, bool) {
-	f, ok := s.m[k]
-	if !ok || (k.kind() != numberValue && k.kind() != countValue) {
-		return 0, false
-	}
-	return f.num, true
+func (s Set) Number(k NumberKey) (float64, bool) {
+	f, ok := s.m[k.Key]
+	return f.num, ok
 }
 
-// Text is a figure that is text, a moment or a playlist's key; empty when
-// the set has none such.
-func (s Set) Text(k Key) string {
-	if kind := k.kind(); kind == numberValue || kind == countValue || kind == linesValue || kind == hashesValue || kind == serverValue {
-		return ""
-	}
-	return s.m[k].text
-}
+// Text is a figure that is text; empty when the set has none such.
+func (s Set) Text(k TextKey) string { return s.m[k.Key].text }
+
+// Lines is a figure that is a list of lines.
+func (s Set) Lines(k LinesKey) []string { return s.m[k.Key].lines }
+
+// Time is a figure that is a moment; the zero time when the set has none
+// such.
+func (s Set) Time(k TimeKey) time.Time { return s.m[k.Key].at }
+
+// Variant is a figure that is a playlist; none when the set has none such.
+func (s Set) Variant(k VariantKey) variantkey.Key { return s.m[k.Key].variant }
+
+// Hashes is a figure that is the coded frames of a clip, sorted and
+// without repeats; nil when the set has none such.
+func (s Set) Hashes(k HashesKey) []uint64 { return s.m[k.Key].hashes }
 
 // Server is a figure that names a server; no server when the set has
 // none such.
-func (s Set) Server(k Key) node.Node {
-	f, ok := s.m[k]
-	if !ok || k.kind() != serverValue {
-		return node.Node{}
-	}
-	n, _ := node.Parse(f.text)
-	return n
-}
-
-// Lines is a figure that is a list of lines.
-func (s Set) Lines(k Key) []string { return s.m[k].lines }
+func (s Set) Server(k ServerKey) node.Node { return s.m[k.Key].server }
 
 // MarshalJSON writes the set as an object, the names of the figures in order.
 func (s Set) MarshalJSON() ([]byte, error) {

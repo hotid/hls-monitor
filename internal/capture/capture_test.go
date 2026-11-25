@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,7 +62,7 @@ func (s *stream) request(of int64, kinds ...problemkind.Kind) probe.CaptureReque
 		s.t.Fatalf("segment: %v", err)
 	}
 	return probe.CaptureRequest{StreamID: id.StreamOf(of), Variant: variantkey.OfURI("v0"), Kinds: kinds, At: time.Now(), PlaylistURL: s.url, Playlist: pl.Body,
-		TargetDuration: 1, Window: w, Seq: seg.Seq, Evidence: head.Body, Status: head.Status, Server: "192.0.2.1", Get: s.get}
+		TargetDuration: 1, Window: w, Seq: seg.Seq, Evidence: head.Body, Status: head.Status, Server: netip.MustParseAddr("192.0.2.1"), Get: s.get}
 }
 
 // publish lets the stream go on while a capture waits for what follows.
@@ -118,7 +119,7 @@ func TestCapture(t *testing.T) {
 			byPosition[f.Position] = f
 		}
 	}
-	if evidence == nil || evidence.Whole || evidence.AfterDetection || evidence.Bytes != 1880 || evidence.Server != "192.0.2.1" {
+	if evidence == nil || evidence.Whole || evidence.AfterDetection || evidence.Bytes != 1880 || evidence.Server.String() != "192.0.2.1" {
 		t.Fatalf("the bytes the check read: %+v", evidence)
 	}
 	// The segment itself, fetched whole after the finding and said to be so.
@@ -134,11 +135,11 @@ func TestCapture(t *testing.T) {
 		t.Error("ffprobe said nothing of the segment in question")
 	}
 	// It plays with no stream to ask: the playlist names the files saved.
-	index, err := os.ReadFile(filepath.Join(s.o.Dir, c.ID, "index.m3u8"))
+	index, err := os.ReadFile(filepath.Join(s.o.Dir, c.ID.String(), "index.m3u8"))
 	if err != nil || strings.Count(string(index), "segments/") != 9 || !strings.Contains(string(index), "#EXT-X-ENDLIST") || strings.Contains(string(index), "http") {
 		t.Fatalf("index.m3u8: %v\n%s", err, index)
 	}
-	if _, err := os.Stat(filepath.Join(s.o.Dir, c.ID, "source", "playlist.m3u8")); err != nil {
+	if _, err := os.Stat(filepath.Join(s.o.Dir, c.ID.String(), "source", "playlist.m3u8")); err != nil {
 		t.Errorf("the playlist as it was: %v", err)
 	}
 
@@ -161,7 +162,7 @@ func TestCapture(t *testing.T) {
 	}
 	names := map[string]bool{}
 	for _, f := range zr.File {
-		names[strings.TrimPrefix(f.Name, c.ID+"/")] = true
+		names[strings.TrimPrefix(f.Name, c.ID.String()+"/")] = true
 	}
 	for _, want := range []string{"capture.json", "index.m3u8", "source/playlist.m3u8", byPosition[0].Name, evidence.Name} {
 		if !names[want] {
@@ -219,7 +220,7 @@ func TestUnconfirmedCaptureIsDropped(t *testing.T) {
 	}
 }
 
-func l8(s *Store) string { return s.List(id.StreamOf(8))[0].ID }
+func l8(s *Store) ID { return s.List(id.StreamOf(8))[0].ID }
 
 func TestCaptureLimits(t *testing.T) {
 	st := newStream(t)
@@ -246,10 +247,10 @@ func TestCaptureLimits(t *testing.T) {
 	same.Playlist = nil
 	s.Capture(same)
 	other := st.request(3, problemkind.PictureBlack())
-	other.Playlist, other.Server = nil, "192.0.2.2"
+	other.Playlist, other.Server = nil, netip.MustParseAddr("192.0.2.2")
 	s.Capture(other)
 	third := st.request(4, problemkind.PictureBlack())
-	third.Playlist, third.Server = nil, "192.0.2.3"
+	third.Playlist, third.Server = nil, netip.MustParseAddr("192.0.2.3")
 	s.Capture(third)
 	// What somebody asked for is made all the same.
 	asked := st.request(5)
@@ -280,13 +281,13 @@ func TestCaptureLimits(t *testing.T) {
 }
 
 // listID is the id of the capture of a stream; the lock is held.
-func (s *Store) listID(streamID id.Stream) string {
+func (s *Store) listID(streamID id.Stream) ID {
 	for id, c := range s.captures {
 		if c.StreamID == streamID {
 			return id
 		}
 	}
-	return ""
+	return ID{}
 }
 
 func TestTheSameProblemIsCapturedOnce(t *testing.T) {

@@ -575,8 +575,13 @@ export interface DiagnoseEvent {
   n?: number
   took_ms?: number
   result?: ProbeResult
-  reason?: string
+  reason?: DiagnoseEnd
+  /** What the agent said when it refused. */
+  message?: string
 }
+
+/** Why a live diagnosis ended. */
+export type DiagnoseEnd = 'time' | 'agent_not_taking' | 'agent_refused' | 'agent_too_old' | 'agent_unreadable' | 'agent_silent'
 
 export interface Aggregate {
   from: number

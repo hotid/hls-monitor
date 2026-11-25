@@ -10,6 +10,10 @@ var set = enum.NewSet("video range")
 
 func (domain) Set() *enum.Set { return set }
 
+// The values of the set are all defined by the time the package is
+// loaded; nothing is added after.
+func init() { set.Seal() }
+
 type value = enum.Of[domain]
 
 // Range is one video range.
@@ -44,4 +48,18 @@ func Values() []Range {
 		out[i] = Range{v}
 	}
 	return out
+}
+
+// Gauge is the range as the number its series holds: 0 for a picture of
+// standard range — which is what no range set means here — 1 for PQ, 2
+// for HLG. The numbers are what is stored and what the pages read; they
+// do not follow from the order the ranges are defined in.
+func (r Range) Gauge() float64 {
+	switch r {
+	case pq:
+		return 1
+	case hlg:
+		return 2
+	}
+	return 0
 }

@@ -9,6 +9,10 @@ var set = enum.NewSet("readiness")
 
 func (domain) Set() *enum.Set { return set }
 
+// The values of the set are all defined by the time the package is
+// loaded; nothing is added after.
+func init() { set.Seal() }
+
 type value = enum.Of[domain]
 
 // Status is one readiness.

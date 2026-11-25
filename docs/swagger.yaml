@@ -67,14 +67,15 @@ definitions:
         allOf:
         - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.CaptureJob'
         description: |-
-          Capture, when set, asks for a capture of a stream at its next
-          check. The answer has Status 202 when one will be made, 409 when not.
+          Capture is what work of the kind capture is about: a capture of a
+          stream at its next check. The answer has Status 202 when one will
+          be made, 409 when not.
       diagnose:
         allOf:
         - $ref: '#/definitions/github_com_hotid_hls-monitor_internal_agentproto.DiagnoseJob'
         description: |-
-          Diagnose, when set, makes the request another kind of work
-          altogether: nothing is fetched for the server, a stream is checked.
+          Diagnose is what work of the kind diagnose is about: nothing is
+          fetched for the server, a stream is checked.
       entry:
         description: |-
           Entry marks the stream's own address; Inside tells that it was not
@@ -95,6 +96,15 @@ definitions:
         type: boolean
       inside:
         type: boolean
+      kind:
+        description: |-
+          Kind is what is asked. A server older than this field does not
+          send it, and the work is told by what came with it: see Work.
+        enum:
+        - fetch
+        - diagnose
+        - capture
+        type: string
       max_body:
         type: integer
       range_length:
@@ -683,6 +693,13 @@ definitions:
         - warn
         - fail
         type: string
+      statuses:
+        description: |-
+          Statuses is what the cycle came to for each playlist it has
+          something to say of.
+        items:
+          $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.VariantStatus'
+        type: array
       target_id:
         type: integer
       time:
@@ -822,7 +839,7 @@ definitions:
         type: boolean
       interval_sec:
         description: |-
-          IntervalSec is the pause between cycles; zero derives it from the
+          Interval is the pause between cycles; zero derives it from the
           playlist target duration.
         type: number
       level:
@@ -843,7 +860,7 @@ definitions:
         description: Revision changes whenever the configuration changes.
         type: integer
       timeout_sec:
-        description: TimeoutSec bounds a single HTTP request; zero means 10 seconds.
+        description: Timeout bounds a single HTTP request; zero means 10 seconds.
         type: number
       url:
         type: string
@@ -877,6 +894,17 @@ definitions:
       resolution:
         type: string
       uri:
+        type: string
+    type: object
+  github_com_hotid_hls-monitor_internal_probe.VariantStatus:
+    properties:
+      status:
+        enum:
+        - ok
+        - warn
+        - fail
+        type: string
+      variant:
         type: string
     type: object
   github_com_hotid_hls-monitor_internal_runner.Stats:
@@ -1522,14 +1550,23 @@ definitions:
         - segments
         - container
         type: string
+      message:
+        type: string
       "n":
         description: 'Cycle: its number from one, how long it took and everything
           it found.'
         type: integer
       reason:
         description: |-
-          End: "time" when the requested duration has passed; from an agent
-          it may instead say what went wrong.
+          End: why it is over — the time asked for has passed, or what went
+          wrong with the agent. Message is what the agent said when it refused.
+        enum:
+        - time
+        - agent_not_taking
+        - agent_refused
+        - agent_too_old
+        - agent_unreadable
+        - agent_silent
         type: string
       result:
         $ref: '#/definitions/github_com_hotid_hls-monitor_internal_probe.Result'

@@ -14,6 +14,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/agentproto"
 	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/relay"
+	"github.com/hotid/hls-monitor/internal/types/jobkind"
 )
 
 // Somebody watching a stream through this agent: the server cannot reach
@@ -42,12 +43,8 @@ func (a *Agent) fetchLoop(ctx context.Context) {
 		switch {
 		case ctx.Err() != nil:
 			return
-		case err == nil && status == http.StatusOK && job.ID != "" && job.Diagnose != nil:
-			a.diagnose(ctx, job)
-		case err == nil && status == http.StatusOK && job.ID != "" && job.Capture != nil:
-			a.captureNow(ctx, job)
-		case err == nil && status == http.StatusOK && job.ID != "":
-			a.fetch(ctx, job)
+		case err == nil && status == http.StatusOK:
+			a.work(ctx, job)
 		case err == nil && status == http.StatusNoContent:
 			// Nothing to do; ask again.
 		case err == nil && status == http.StatusNotFound:
@@ -57,6 +54,28 @@ func (a *Agent) fetchLoop(ctx context.Context) {
 			// Out of contact, disabled or not enrolled: configLoop reports it.
 			sleepCtx(ctx, 10*time.Second)
 		}
+	}
+}
+
+// work does what a piece of work asks for. Work that does not say what
+// it is in one way is not guessed at: it is refused, when there is an ID
+// to refuse it by.
+func (a *Agent) work(ctx context.Context, job agentproto.FetchRequest) {
+	kind, err := job.Work()
+	if err != nil {
+		a.log.Warn("work that cannot be done was given", "error", err)
+		if job.ID != "" {
+			a.answer(ctx, job.ID, agentproto.FetchResult{Error: "the agent cannot tell what is asked: " + err.Error()}, nil)
+		}
+		return
+	}
+	switch kind {
+	case jobkind.Diagnose():
+		a.diagnose(ctx, job)
+	case jobkind.Capture():
+		a.captureNow(ctx, job)
+	case jobkind.Fetch():
+		a.fetch(ctx, job)
 	}
 }
 
@@ -106,7 +125,7 @@ func (a *Agent) diagnose(ctx context.Context, job agentproto.FetchRequest) {
 			return
 		}
 		// Nobody watches any more: the server says so.
-		if !a.answer(dctx, job.ID, agentproto.FetchResult{Status: http.StatusOK, ContentType: agentproto.DiagnoseCycleType}, body) && dctx.Err() == nil {
+		if !a.answer(dctx, job.ID, agentproto.CycleAnswer(), body) && dctx.Err() == nil {
 			return
 		}
 		if !sleepCtx(dctx, time.Until(start.Add(checker.Interval()))) {
@@ -115,7 +134,7 @@ func (a *Agent) diagnose(ctx context.Context, job agentproto.FetchRequest) {
 	}
 	if ctx.Err() == nil {
 		actx, stop := context.WithTimeout(ctx, 10*time.Second)
-		a.answer(actx, job.ID, agentproto.FetchResult{Status: http.StatusOK, ContentType: agentproto.DiagnoseEndType}, nil)
+		a.answer(actx, job.ID, agentproto.EndAnswer(), nil)
 		stop()
 	}
 }

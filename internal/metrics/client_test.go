@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"sync"
 	"testing"
@@ -254,10 +255,10 @@ func TestServerLabels(t *testing.T) {
 	c := New(srv.URL, nil)
 	ts := time.UnixMilli(1700000000123)
 	c.Write([]Sample{
-		{Name: metricname.ServerRequests(), Stream: id.StreamOf(3), Agent: id.AgentOf(1), Server: "edge-1.example.com:8080", IP: "2001:db8::1", Value: 4, Time: ts},
+		{Name: metricname.ServerRequests(), Stream: id.StreamOf(3), Agent: id.AgentOf(1), Server: "edge-1.example.com:8080", IP: netip.MustParseAddr("2001:db8::1"), Value: 4, Time: ts},
 		// A name from a playlist is text of somebody else's: what cannot
 		// be a host is not written at all.
-		{Name: metricname.ServerRequests(), Stream: id.StreamOf(3), Agent: id.AgentOf(1), Server: `a"} 1 1` + "\nevil", IP: "10.0.0.1", Value: 5, Time: ts},
+		{Name: metricname.ServerRequests(), Stream: id.StreamOf(3), Agent: id.AgentOf(1), Server: `a"} 1 1` + "\nevil", IP: netip.MustParseAddr("10.0.0.1"), Value: 5, Time: ts},
 	})
 	if err := c.Flush(context.Background()); err != nil {
 		t.Fatal(err)

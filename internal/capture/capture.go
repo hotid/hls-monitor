@@ -17,10 +17,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
@@ -81,13 +81,13 @@ type File struct {
 	// Seq and Duration are those of a segment in its playlist; Position
 	// is where it stands to the one the finding is about: 0, before (<0)
 	// or after (>0).
-	Seq      uint64  `json:"seq,omitempty"`
-	Duration float64 `json:"duration,omitempty"`
-	Position int     `json:"position"`
-	Status   int     `json:"status,omitempty"`
-	Server   string  `json:"server,omitempty"`
-	Software string  `json:"software,omitempty"`
-	Bytes    int64   `json:"bytes"`
+	Seq      uint64     `json:"seq,omitempty"`
+	Duration float64    `json:"duration,omitempty"`
+	Position int        `json:"position"`
+	Status   int        `json:"status,omitempty"`
+	Server   netip.Addr `json:"server,omitzero" swaggertype:"string"`
+	Software string     `json:"software,omitempty"`
+	Bytes    int64      `json:"bytes"`
 	// Whole tells that all of the segment is there, not its beginning.
 	Whole bool `json:"whole"`
 	// AfterDetection tells that the file was fetched after the check
@@ -105,7 +105,7 @@ type File struct {
 
 // Capture describes one capture: it is its capture.json.
 type Capture struct {
-	ID       string    `json:"id"`
+	ID       ID        `json:"id"`
 	StreamID id.Stream `json:"stream_id"`
 	// AgentID is the agent that made it, for a capture an agent sent; 0
 	// for one the server made itself.
@@ -148,11 +148,11 @@ type Store struct {
 	now func() time.Time
 
 	mu       sync.Mutex
-	captures map[string]*Capture
+	captures map[ID]*Capture
 	// last is when a stream was last captured; busy the servers a
 	// capture is being made from, and running how many are being made.
 	last    map[id.Stream]time.Time
-	busy    map[string]bool
+	busy    map[netip.Addr]bool
 	running int
 	wg      sync.WaitGroup
 
@@ -174,7 +174,7 @@ func Open(o Options) (*Store, error) {
 	if err := os.MkdirAll(o.Dir, 0o750); err != nil {
 		return nil, err
 	}
-	s := &Store{o: o, now: time.Now, captures: map[string]*Capture{}, last: map[id.Stream]time.Time{}, busy: map[string]bool{}}
+	s := &Store{o: o, now: time.Now, captures: map[ID]*Capture{}, last: map[id.Stream]time.Time{}, busy: map[netip.Addr]bool{}}
 	entries, err := os.ReadDir(o.Dir)
 	if err != nil {
 		return nil, err
@@ -185,7 +185,7 @@ func Open(o Options) (*Store, error) {
 		}
 		var c Capture
 		b, err := os.ReadFile(filepath.Join(o.Dir, e.Name(), "capture.json"))
-		if err != nil || json.Unmarshal(b, &c) != nil || c.ID != e.Name() || !c.Done {
+		if err != nil || json.Unmarshal(b, &c) != nil || c.ID.String() != e.Name() || !c.Done {
 			_ = os.RemoveAll(filepath.Join(o.Dir, e.Name()))
 			continue
 		}
@@ -257,7 +257,7 @@ func clone(c *Capture) Capture {
 }
 
 // Delete removes a capture that is not being made.
-func (s *Store) Delete(id string) bool {
+func (s *Store) Delete(id ID) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c, ok := s.captures[id]
@@ -287,7 +287,7 @@ func (s *Store) Forget(streamID id.Stream, agentID id.Agent) int {
 // drop removes a capture; the lock is held.
 func (s *Store) drop(c *Capture) {
 	delete(s.captures, c.ID)
-	_ = os.RemoveAll(filepath.Join(s.o.Dir, c.ID))
+	_ = os.RemoveAll(filepath.Join(s.o.Dir, c.ID.String()))
 }
 
 // Confirm keeps what was captured of a stream on suspicion of problems
@@ -413,7 +413,7 @@ func (s *Store) fit(more int64) bool {
 		var victim *Capture
 		worse := func(a, b *Capture) bool { // a goes before b
 			if a.State != b.State {
-				return a.State.Ord() < b.State.Ord()
+				return a.State.GoesBefore(b.State)
 			}
 			if a.State == capturestate.Kept() && many[what(a)] != many[what(b)] {
 				return many[what(a)] > many[what(b)]
@@ -444,7 +444,7 @@ func (s *Store) fit(more int64) bool {
 func (s *Store) write(c *Capture) {
 	b, err := json.MarshalIndent(c, "", "  ")
 	if err == nil {
-		err = os.WriteFile(filepath.Join(s.o.Dir, c.ID, "capture.json"), b, 0o640)
+		err = os.WriteFile(filepath.Join(s.o.Dir, c.ID.String(), "capture.json"), b, 0o640)
 	}
 	if err != nil {
 		s.o.Log.Warn("cannot write the description of a capture", "capture", c.ID, "error", err)
@@ -472,13 +472,13 @@ func (s *Store) Capture(rq probe.CaptureRequest) {
 		return
 	// What somebody asked for is not turned away for the captures the
 	// checks are making; only for want of room.
-	case (!rq.Manual && (s.running >= Parallel || (server != "" && s.busy[server]))) || !s.fit(captureMax):
+	case (!rq.Manual && (s.running >= Parallel || (server.IsValid() && s.busy[server]))) || !s.fit(captureMax):
 		s.refused++
 		s.mu.Unlock()
 		return
 	}
 	c := &Capture{
-		ID:       fmt.Sprintf("%s-s%d-%d", rq.At.UTC().Format("20060102T150405"), rq.StreamID, rq.Seq),
+		ID:       newID(rq.At, rq.StreamID, rq.Seq),
 		StreamID: rq.StreamID, Variant: rq.Variant, Kinds: slices.Clone(rq.Kinds), Manual: rq.Manual,
 		State: capturestate.Pending(), At: rq.At, Seq: rq.Seq,
 	}
@@ -489,7 +489,7 @@ func (s *Store) Capture(rq probe.CaptureRequest) {
 		s.mu.Unlock()
 		return
 	}
-	if err := os.MkdirAll(filepath.Join(s.o.Dir, c.ID), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Join(s.o.Dir, c.ID.String()), 0o750); err != nil {
 		s.mu.Unlock()
 		s.o.Log.Warn("cannot make a capture", "error", err)
 		return
@@ -498,11 +498,11 @@ func (s *Store) Capture(rq probe.CaptureRequest) {
 	s.last[rq.StreamID] = s.now()
 	s.made++
 	if rq.Manual {
-		server = ""
+		server = netip.Addr{}
 	} else {
 		s.running++
 	}
-	if server != "" {
+	if server.IsValid() {
 		s.busy[server] = true
 	}
 	s.wg.Add(1)
@@ -518,7 +518,7 @@ func (s *Store) Capture(rq probe.CaptureRequest) {
 			if !rq.Manual {
 				s.running--
 			}
-			if server != "" {
+			if server.IsValid() {
 				delete(s.busy, server)
 			}
 			c.Done = true
@@ -550,7 +550,7 @@ type saved struct {
 
 // make does the work of a capture.
 func (s *Store) make(c *Capture, rq probe.CaptureRequest) {
-	j := &job{s: s, c: c, rq: rq, dir: filepath.Join(s.o.Dir, c.ID), inits: map[string][]byte{}, order: map[uint64]saved{}}
+	j := &job{s: s, c: c, rq: rq, dir: filepath.Join(s.o.Dir, c.ID.String()), inits: map[string][]byte{}, order: map[uint64]saved{}}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
@@ -690,9 +690,7 @@ func (j *job) segment(ctx context.Context, seg probe.CaptureSegment, position in
 		cancel()
 		if resp != nil {
 			f.Status = resp.Status
-			if host, _, e := splitHost(resp.RemoteAddr); e == nil {
-				f.Server = host
-			}
+			f.Server = resp.RemoteAddr.Addr()
 			f.Software = resp.Header.Get("Server")
 			// What came is kept even when it is not all of it.
 			body = resp.Body
@@ -714,14 +712,6 @@ func (j *job) segment(ctx context.Context, seg probe.CaptureSegment, position in
 	if f.Whole && len(body) > 0 {
 		j.order[seg.Seq] = saved{seg: seg, name: f.Name, init: init}
 	}
-}
-
-func splitHost(addr string) (string, string, error) {
-	i := strings.LastIndexByte(addr, ':')
-	if i < 0 {
-		return "", "", errors.New("no port")
-	}
-	return strings.Trim(addr[:i], "[]"), addr[i+1:], nil
 }
 
 // init fetches an initialization section once and returns the name it is
@@ -946,7 +936,7 @@ func (j *job) playlist() {
 }
 
 // WriteZip writes a capture as an archive.
-func (s *Store) WriteZip(w io.Writer, id string) error {
+func (s *Store) WriteZip(w io.Writer, id ID) error {
 	s.mu.Lock()
 	c, ok := s.captures[id]
 	done := ok && c.Done
@@ -954,7 +944,7 @@ func (s *Store) WriteZip(w io.Writer, id string) error {
 	if !done {
 		return os.ErrNotExist
 	}
-	root := filepath.Join(s.o.Dir, id)
+	root := filepath.Join(s.o.Dir, id.String())
 	zw := zip.NewWriter(w)
 	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -969,7 +959,7 @@ func (s *Store) WriteZip(w io.Writer, id string) error {
 		if strings.HasPrefix(filepath.ToSlash(rel), "segments/") || strings.HasPrefix(filepath.ToSlash(rel), "evidence/") {
 			method = zip.Store
 		}
-		fw, err := zw.CreateHeader(&zip.FileHeader{Name: id + "/" + filepath.ToSlash(rel), Method: method, Modified: s.now()})
+		fw, err := zw.CreateHeader(&zip.FileHeader{Name: id.String() + "/" + filepath.ToSlash(rel), Method: method, Modified: s.now()})
 		if err != nil {
 			return err
 		}

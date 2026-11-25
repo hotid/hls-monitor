@@ -13,6 +13,10 @@ var set = enum.NewSet("severity")
 
 func (domain) Set() *enum.Set { return set }
 
+// The values of the set are all defined by the time the package is
+// loaded; nothing is added after.
+func init() { set.Seal() }
+
 type value = enum.Of[domain]
 
 // Severity is one severity.
@@ -52,4 +56,18 @@ func Values() []Severity {
 }
 
 // Worse tells whether s is worse than o.
-func (s Severity) Worse(o Severity) bool { return s.Ord() > o.Ord() }
+func (s Severity) Worse(o Severity) bool { return s.weight() > o.weight() }
+
+// weight orders severities by how bad they are. It is said here and does
+// not follow from the order they are defined in.
+func (s Severity) weight() int {
+	switch s {
+	case info:
+		return 1
+	case warn:
+		return 2
+	case crit:
+		return 3
+	}
+	panic("severity: the weight of a severity that was never set")
+}

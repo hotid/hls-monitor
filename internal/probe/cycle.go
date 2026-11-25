@@ -13,6 +13,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/types/detail"
 	"github.com/hotid/hls-monitor/internal/types/id"
 	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/node"
 	"github.com/hotid/hls-monitor/internal/types/overload"
 	"github.com/hotid/hls-monitor/internal/types/problemkind"
 	"github.com/hotid/hls-monitor/internal/types/severity"
@@ -42,7 +43,7 @@ type cycle struct {
 	// cycle used.
 	tcp map[variantkey.Key]*tcpSeen
 	// servers holds the same by the server that answered.
-	servers map[serverKey]*serverSeen
+	servers map[node.Node]*serverSeen
 
 	minTargetDuration float64
 	// minSlack is the shortest time, across live playlists, in which a
@@ -130,11 +131,11 @@ func (cy *cycle) network(variant variantkey.Key, resp *httpx.Response) {
 	// The same by server: loss and delay belong to the way to a server far
 	// more than to one stream among those it serves.
 	at := serverOf(resp)
-	if at.host == "" {
+	if at.Host() == "" {
 		return
 	}
 	if cy.servers == nil {
-		cy.servers = map[serverKey]*serverSeen{}
+		cy.servers = map[node.Node]*serverSeen{}
 	}
 	s := cy.servers[at]
 	if s == nil {
@@ -147,19 +148,12 @@ func (cy *cycle) network(variant variantkey.Key, resp *httpx.Response) {
 	s.retransmits += float64(resp.TCP.NewRetransmits)
 }
 
-// serverKey names a server: the host that answered and the address the
-// connection went to.
-type serverKey struct{ host, ip string }
-
 // serverSeen sums up the requests one server answered in a cycle.
 type serverSeen struct {
 	requests, rtt, outOfOrder, retransmits float64
 }
 
-func serverOf(resp *httpx.Response) serverKey {
-	e := endpoint(resp.URL, resp)
-	return serverKey{host: e.Host, ip: e.IP}
-}
+func serverOf(resp *httpx.Response) node.Node { return endpoint(resp.URL, resp).Node() }
 
 // doubt marks the latest occurrence of a problem as resting on timing
 // alone: it would look the same if the checking process were the slow one.
@@ -360,8 +354,10 @@ func (cy *cycle) finish(elapsed time.Duration) *Result {
 	})
 
 	for key, r := range perVariant {
+		cy.res.Statuses = append(cy.res.Statuses, VariantStatus{Variant: key, Status: r})
 		cy.res.Metrics = append(cy.res.Metrics, Metric{Name: metricname.Status(), Variant: key, Value: r.Rank()})
 	}
+	sort.Slice(cy.res.Statuses, func(i, j int) bool { return cy.res.Statuses[i].Variant.Compare(cy.res.Statuses[j].Variant) < 0 })
 	for key, t := range cy.tcp {
 		cy.res.Metrics = append(cy.res.Metrics,
 			Metric{Name: metricname.TCPRTTSeconds(), Variant: key, Value: t.rtt},
@@ -370,10 +366,10 @@ func (cy *cycle) finish(elapsed time.Duration) *Result {
 	}
 	for at, s := range cy.servers {
 		cy.res.Metrics = append(cy.res.Metrics,
-			Metric{Name: metricname.ServerRequests(), Server: at.host, IP: at.ip, Value: s.requests},
-			Metric{Name: metricname.ServerRTTSeconds(), Server: at.host, IP: at.ip, Value: s.rtt / s.requests},
-			Metric{Name: metricname.ServerOutOfOrder(), Server: at.host, IP: at.ip, Value: s.outOfOrder},
-			Metric{Name: metricname.ServerRetransmits(), Server: at.host, IP: at.ip, Value: s.retransmits})
+			Metric{Name: metricname.ServerRequests(), Server: at.Host(), IP: at.IP(), Value: s.requests},
+			Metric{Name: metricname.ServerRTTSeconds(), Server: at.Host(), IP: at.IP(), Value: s.rtt / s.requests},
+			Metric{Name: metricname.ServerOutOfOrder(), Server: at.Host(), IP: at.IP(), Value: s.outOfOrder},
+			Metric{Name: metricname.ServerRetransmits(), Server: at.Host(), IP: at.IP(), Value: s.retransmits})
 	}
 	cy.res.Metrics = append(cy.res.Metrics,
 		Metric{Name: metricname.StreamStatus(), Value: overall.Rank()},

@@ -73,5 +73,10 @@
   "wholeSegmentsAndParsingOfTheir": "Whole segments and parsing of their contents: tracks, timestamps, MPEG-TS errors",
   "withEvents": "With events",
   "withMediaParsing": "With media parsing",
-  "withProblemsOnly": "With problems only"
+  "withProblemsOnly": "With problems only",
+  "endAgentNotTaking": "the agent is not taking requests: it is out of contact or busy",
+  "endAgentRefused": "the agent refused",
+  "endAgentTooOld": "the agent is too old for this",
+  "endAgentUnreadable": "the agent sent something that cannot be read",
+  "endAgentSilent": "the agent stopped answering"
 }

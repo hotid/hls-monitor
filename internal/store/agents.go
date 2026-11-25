@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/netip"
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/types/agentkind"
@@ -22,7 +23,7 @@ type Agent struct {
 	CreatedAt     time.Time      `json:"created_at"`
 	LastSeen      *time.Time     `json:"last_seen"`
 	Version       string         `json:"version"`
-	RemoteAddr    string         `json:"remote_addr"`
+	RemoteAddr    netip.Addr     `json:"remote_addr" swaggertype:"string"`
 	ClockOffsetMs *float64       `json:"clock_offset_ms"`
 }
 
@@ -33,7 +34,7 @@ func scanAgent(row interface{ Scan(...any) error }) (*Agent, error) {
 	var created int64
 	var enrollExp, lastSeen sql.NullInt64
 	var offset sql.NullFloat64
-	if err := row.Scan(&a.ID, &a.Name, &a.Kind, &a.Enabled, &a.Enrolled, &enrollExp, &created, &lastSeen, &a.Version, &a.RemoteAddr, &offset); err != nil {
+	if err := row.Scan(&a.ID, &a.Name, &a.Kind, &a.Enabled, &a.Enrolled, &enrollExp, &created, &lastSeen, &a.Version, (*storedAddr)(&a.RemoteAddr), &offset); err != nil {
 		return nil, notFound(err)
 	}
 	a.CreatedAt = fromMs(created)
@@ -147,9 +148,9 @@ func (s *Store) AgentByKey(ctx context.Context, keyHash []byte) (*Agent, error) 
 }
 
 // TouchAgent records that an agent was heard from.
-func (s *Store) TouchAgent(ctx context.Context, agentID id.Agent, now time.Time, version, remoteAddr string, clockOffsetMs *float64) error {
+func (s *Store) TouchAgent(ctx context.Context, agentID id.Agent, now time.Time, version string, remoteAddr netip.Addr, clockOffsetMs *float64) error {
 	_, err := s.db.ExecContext(ctx,
 		"UPDATE agents SET last_seen = ?, version = ?, remote_addr = ?, clock_offset_ms = COALESCE(?, clock_offset_ms) WHERE id = ?",
-		toMs(now), version, remoteAddr, clockOffsetMs, agentID)
+		toMs(now), version, addrText(remoteAddr), clockOffsetMs, agentID)
 	return err
 }

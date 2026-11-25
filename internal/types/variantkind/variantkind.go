@@ -9,6 +9,10 @@ var set = enum.NewSet("variant kind")
 
 func (domain) Set() *enum.Set { return set }
 
+// The values of the set are all defined by the time the package is
+// loaded; nothing is added after.
+func init() { set.Seal() }
+
 type value = enum.Of[domain]
 
 // Kind is one variant kind.

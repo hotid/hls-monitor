@@ -165,7 +165,7 @@ func (s *Store) appendSegments(ctx context.Context, streamID id.Stream, agentID 
 			INSERT INTO segments (stream_id, agent_id, variant_id, seq, time, url, duration, status, error, remote_addr, size, total_ms, problems, flagged, detail)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			streamID, agentID, e.VariantID, int64(seg.Seq), toMs(seg.Time), seg.URL, seg.Duration, seg.Status, seg.Error,
-			seg.RemoteAddr, seg.Size, seg.TotalMs, kindsText(seg.Problems), flagged, string(detail)); err != nil {
+			addrPortText(seg.RemoteAddr), seg.Size, seg.TotalMs, kindsText(seg.Problems), flagged, string(detail)); err != nil {
 			return err
 		}
 		touched[class{e.VariantID, flagged}] = true
@@ -188,9 +188,8 @@ func (s *Store) appendSegments(ctx context.Context, streamID id.Stream, agentID 
 	return tx.Commit()
 }
 
-func isFull(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "database or disk is full")
-}
+// isFull: there is no room left for the database to grow into.
+func isFull(err error) bool { return refusedWith(err, codeFull) }
 
 // makeRoom drops the oldest fifth of the journal. Deleting needs no new
 // pages, so it works on a full file.
@@ -282,7 +281,7 @@ func (s *Store) ListSegments(ctx context.Context, f SegmentFilter) ([]*SegmentRe
 		var seq, t int64
 		var problems, detail string
 		if err := rows.Scan(&r.ID, &r.StreamID, &r.AgentID, &r.VariantID, &seq, &t, &r.URL, &r.Duration, &r.Status, &r.Error,
-			&r.RemoteAddr, &r.Size, &r.TotalMs, &problems, &detail); err != nil {
+			(*storedAddrPort)(&r.RemoteAddr), &r.Size, &r.TotalMs, &problems, &detail); err != nil {
 			return nil, err
 		}
 		r.Seq = uint64(seq)

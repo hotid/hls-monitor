@@ -5,6 +5,7 @@ package probe
 
 import (
 	"encoding/json"
+	"net/netip"
 	"time"
 
 	"github.com/hotid/hls-monitor/internal/httpx"
@@ -18,6 +19,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/types/overload"
 	"github.com/hotid/hls-monitor/internal/types/picturemode"
 	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/seconds"
 	"github.com/hotid/hls-monitor/internal/types/severity"
 	"github.com/hotid/hls-monitor/internal/types/status"
 	"github.com/hotid/hls-monitor/internal/types/variantkey"
@@ -29,11 +31,11 @@ type Target struct {
 	ID    id.Stream   `json:"id"`
 	URL   string      `json:"url"`
 	Level level.Level `json:"level" enums:"playlist,header,segments,container"`
-	// IntervalSec is the pause between cycles; zero derives it from the
+	// Interval is the pause between cycles; zero derives it from the
 	// playlist target duration.
-	IntervalSec float64 `json:"interval_sec"`
-	// TimeoutSec bounds a single HTTP request; zero means 10 seconds.
-	TimeoutSec float64 `json:"timeout_sec"`
+	Interval seconds.Span `json:"interval_sec" swaggertype:"number"`
+	// Timeout bounds a single HTTP request; zero means 10 seconds.
+	Timeout seconds.Span `json:"timeout_sec" swaggertype:"number"`
 	// MaxSegments limits segment downloads per variant per cycle; zero means 3.
 	MaxSegments int               `json:"max_segments"`
 	Headers     map[string]string `json:"headers,omitempty"`
@@ -93,8 +95,8 @@ type Metric struct {
 	// Server and IP name the server a figure is about, for the few that
 	// describe the way to a server rather than a playlist: the host that
 	// answered and the address the connection went to.
-	Server string `json:"s,omitempty"`
-	IP     string `json:"ip,omitempty"`
+	Server string     `json:"s,omitempty"`
+	IP     netip.Addr `json:"ip,omitzero" swaggertype:"string"`
 }
 
 // Segment is the record of one checked media segment.
@@ -109,7 +111,7 @@ type Segment struct {
 
 	Status     int                `json:"status"`
 	Error      string             `json:"error,omitempty"`
-	RemoteAddr string             `json:"remote_addr,omitempty"`
+	RemoteAddr netip.AddrPort     `json:"remote_addr,omitzero" swaggertype:"string"`
 	Proto      string             `json:"proto,omitempty"`
 	Cache      cachestatus.Status `json:"cache,omitzero" enums:"hit,miss"`
 	Size       int64              `json:"size"`
@@ -139,8 +141,8 @@ type Endpoint struct {
 	// Host is the host part of URL, with the port when it is not the default.
 	Host string `json:"host"`
 	// IP is the address of the server the connection was made to.
-	IP    string `json:"ip,omitempty"`
-	Proto string `json:"proto,omitempty"`
+	IP    netip.Addr `json:"ip,omitzero" swaggertype:"string"`
+	Proto string     `json:"proto,omitempty"`
 	// Headers are the response headers that identify the server or cache
 	// node and its software (Server, Via, X-Cache and the like).
 	Headers map[string]string `json:"headers,omitempty"`
@@ -149,6 +151,10 @@ type Endpoint struct {
 }
 
 // Node is what identifies the answering server for change detection.
+// Software is what the server that answered says it runs: its Server
+// header, as it sent it.
+func (e *Endpoint) Software() string { return e.Headers["Server"] }
+
 func (e *Endpoint) Node() node.Node { return node.Of(e.Host, e.IP) }
 
 // Source tells where one playlist and its segments were served from in a cycle.
@@ -178,6 +184,9 @@ type Result struct {
 	// Variants is the current set of playlists; nil when it could not be
 	// determined in this cycle (the entry playlist failed).
 	Variants []Variant `json:"variants,omitempty"`
+	// Statuses is what the cycle came to for each playlist it has
+	// something to say of.
+	Statuses []VariantStatus `json:"statuses,omitempty"`
 	// Sources tells, per playlist, which servers answered in this cycle.
 	Sources   []Source   `json:"sources,omitempty"`
 	Metrics   []Metric   `json:"metrics"`
@@ -194,6 +203,12 @@ type Result struct {
 	// are left out of such a result: a monitor that cannot keep up measures
 	// its own delay, not the stream's.
 	Overloaded overload.Reason `json:"overloaded,omitzero" enums:"processor"`
+}
+
+// VariantStatus is what a cycle came to for one playlist.
+type VariantStatus struct {
+	Variant variantkey.Key `json:"variant"`
+	Status  status.Status  `json:"status" enums:"ok,warn,fail"`
 }
 
 // Thresholds tune when observations become problems.

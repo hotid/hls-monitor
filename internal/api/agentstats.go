@@ -9,6 +9,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/status"
 )
 
 // agentStats is what a vantage point did over the last minutes.
@@ -49,14 +51,14 @@ var agentQueries = []struct {
 	expr string
 	set  func(*agentStats, float64)
 }{
-	{`count by (agent) (max by (agent, stream) (max_over_time(hls_stream_status[2m])) == 0)`, func(a *agentStats, v float64) { a.OK = int(v) }},
-	{`count by (agent) (max by (agent, stream) (max_over_time(hls_stream_status[2m])) == 1)`, func(a *agentStats, v float64) { a.Warn = int(v) }},
-	{`count by (agent) (max by (agent, stream) (max_over_time(hls_stream_status[2m])) == 2)`, func(a *agentStats, v float64) { a.Fail = int(v) }},
-	{`sum by (agent) (sum_over_time(hls_check_bytes[%[1]ds])) * 8 / %[1]d`, func(a *agentStats, v float64) { a.TrafficBps = v }},
-	{`sum by (agent) (sum_over_time(hls_segments_checked[%[1]ds])) * 60 / %[1]d`, func(a *agentStats, v float64) { a.SegmentsPerMin = v }},
-	{`sum by (agent) (sum_over_time(hls_segment_errors[%[1]ds]))`, func(a *agentStats, v float64) { a.SegmentErrors = v }},
-	{`quantile by (agent) (0.95, avg_over_time(hls_check_duration_seconds[%[1]ds]))`, func(a *agentStats, v float64) { a.CheckP95 = v }},
-	{`max by (agent) (max_over_time(hls_check_lag_seconds[1m]))`, func(a *agentStats, v float64) { a.LagMax = v }},
+	{`count by (agent) (max by (agent, stream) (max_over_time(` + metricname.StreamStatus().String() + `[2m])) == ` + rank(status.OK()) + `)`, func(a *agentStats, v float64) { a.OK = int(v) }},
+	{`count by (agent) (max by (agent, stream) (max_over_time(` + metricname.StreamStatus().String() + `[2m])) == ` + rank(status.Warn()) + `)`, func(a *agentStats, v float64) { a.Warn = int(v) }},
+	{`count by (agent) (max by (agent, stream) (max_over_time(` + metricname.StreamStatus().String() + `[2m])) == ` + rank(status.Fail()) + `)`, func(a *agentStats, v float64) { a.Fail = int(v) }},
+	{`sum by (agent) (sum_over_time(` + metricname.CheckBytes().String() + `[%[1]ds])) * 8 / %[1]d`, func(a *agentStats, v float64) { a.TrafficBps = v }},
+	{`sum by (agent) (sum_over_time(` + metricname.SegmentsChecked().String() + `[%[1]ds])) * 60 / %[1]d`, func(a *agentStats, v float64) { a.SegmentsPerMin = v }},
+	{`sum by (agent) (sum_over_time(` + metricname.SegmentErrors().String() + `[%[1]ds]))`, func(a *agentStats, v float64) { a.SegmentErrors = v }},
+	{`quantile by (agent) (0.95, avg_over_time(` + metricname.CheckDurationSeconds().String() + `[%[1]ds]))`, func(a *agentStats, v float64) { a.CheckP95 = v }},
+	{`max by (agent) (max_over_time(` + metricname.CheckLagSeconds().String() + `[1m]))`, func(a *agentStats, v float64) { a.LagMax = v }},
 }
 
 // agentsStats godoc
@@ -76,7 +78,7 @@ func (s *Server) agentsStats(c *gin.Context) {
 		return
 	}
 	for of, n := range open {
-		out.Agents[of] = agentStats{IncidentsCrit: n[0], IncidentsWarn: n[1]}
+		out.Agents[of] = agentStats{IncidentsCrit: n.Crit, IncidentsWarn: n.Warn}
 	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex

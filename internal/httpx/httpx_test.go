@@ -61,7 +61,7 @@ func TestGet(t *testing.T) {
 		if r.TTFB < 20*time.Millisecond || r.Total < r.TTFB {
 			t.Errorf("timings ttfb=%s total=%s do not reflect the 20ms server delay", r.TTFB, r.Total)
 		}
-		if r.RemoteAddr == "" || r.Proto != "HTTP/1.1" || r.Redirects != 0 {
+		if !r.RemoteAddr.IsValid() || r.Proto != "HTTP/1.1" || r.Redirects != 0 {
 			t.Errorf("connection details: addr=%q proto=%q redirects=%d", r.RemoteAddr, r.Proto, r.Redirects)
 		}
 		if age, ok := r.AgeSeconds(); !ok || age != 7 {
@@ -83,7 +83,7 @@ func TestGet(t *testing.T) {
 		if r.Redirects != 2 || r.FinalURL != srv.URL+"/ok" || !r.OK() {
 			t.Errorf("redirects=%d final=%s status=%d", r.Redirects, r.FinalURL, r.Status)
 		}
-		if len(r.Hops) != 2 || r.Hops[0].URL != srv.URL+"/hop2" || r.Hops[1].URL != srv.URL+"/hop" || r.Hops[0].Status != 302 || r.Hops[0].RemoteAddr == "" {
+		if len(r.Hops) != 2 || r.Hops[0].URL != srv.URL+"/hop2" || r.Hops[1].URL != srv.URL+"/hop" || r.Hops[0].Status != 302 || !r.Hops[0].RemoteAddr.IsValid() {
 			t.Errorf("hops = %+v", r.Hops)
 		}
 		if id := r.Identity(); id["X-Cache"] != "HIT from edge-3" || len(id) != 1 {
@@ -231,7 +231,8 @@ func TestReachDecisions(t *testing.T) {
 		st := &reachState{mode: tc.mode, cancel: func(error) {}}
 		via := &reachState{mode: tc.mode, cancel: func(error) {}}
 		via.viaProxy.Store(true)
-		for i, addr := range tc.conns {
+		for i, text := range tc.conns {
+			addr := netip.MustParseAddrPort(text).Addr()
 			if !via.allowed(addr) {
 				t.Errorf("%s: a connection to the proxy at %s was refused", tc.name, addr)
 			}

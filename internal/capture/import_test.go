@@ -40,19 +40,19 @@ func TestImportFromAnAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	desc, _ := json.Marshal(Capture{ID: "20260101-1", StreamID: id.StreamOf(7), Variant: variantkey.OfURI("v"), Kinds: []problemkind.Kind{problemkind.PTSDiscontinuity()}, State: capturestate.Kept(), At: time.Now(), Done: true,
+	desc, _ := json.Marshal(Capture{ID: ID{"20260101-1"}, StreamID: id.StreamOf(7), Variant: variantkey.OfURI("v"), Kinds: []problemkind.Kind{problemkind.PTSDiscontinuity()}, State: capturestate.Kept(), At: time.Now(), Done: true,
 		Files: []File{{Role: filerole.Segment(), Name: "segments/1.ts", Bytes: 5}}})
 	good := map[string][]byte{"20260101-1/capture.json": desc, "20260101-1/segments/1.ts": []byte("12345")}
 	a := archiveOf(t, good)
 	name, err := s.Import(id.AgentOf(2), a, a.Size(), nil)
-	if err != nil || name != "20260101-1-a2" {
+	if err != nil || name.String() != "20260101-1-a2" {
 		t.Fatalf("imported as %q: %v", name, err)
 	}
 	list := s.List(id.StreamOf(7))
 	if len(list) != 1 || list[0].AgentID != id.AgentOf(2) || !list[0].Done || list[0].Bytes != 5 {
 		t.Fatalf("listed %+v", list)
 	}
-	if b, _ := os.ReadFile(filepath.Join(dir, name, "segments", "1.ts")); string(b) != "12345" {
+	if b, _ := os.ReadFile(filepath.Join(dir, name.String(), "segments", "1.ts")); string(b) != "12345" {
 		t.Errorf("segment written as %q", b)
 	}
 	// Sent again, after an answer that was lost: the same capture.
@@ -72,7 +72,7 @@ func TestImportFromAnAgent(t *testing.T) {
 		t.Errorf("a capture of another's stream: %q, %v", name, err)
 	}
 	// One of nothing but its description is kept as any other.
-	bare, _ := json.Marshal(Capture{ID: "20260101-3", StreamID: id.StreamOf(8), Variant: variantkey.OfURI("v"), State: capturestate.Kept(), At: time.Now(), Done: true})
+	bare, _ := json.Marshal(Capture{ID: ID{"20260101-3"}, StreamID: id.StreamOf(8), Variant: variantkey.OfURI("v"), State: capturestate.Kept(), At: time.Now(), Done: true})
 	a = archiveOf(t, map[string][]byte{"20260101-3/capture.json": bare})
 	if _, err := s.Import(id.AgentOf(2), a, a.Size(), nil); err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestImportFromAnAgent(t *testing.T) {
 	if n := s.Forget(id.StreamOf(0), id.AgentOf(2)); n != 1 || len(s.List(id.StreamOf(0))) != 0 {
 		t.Errorf("forgot %d captures of agent 2; left %d", n, len(s.List(id.StreamOf(0))))
 	}
-	if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, name.String())); err == nil {
 		t.Error("the files of a forgotten capture are still there")
 	}
 

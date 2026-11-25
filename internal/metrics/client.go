@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -34,9 +35,10 @@ type Sample struct {
 	Agent   id.Agent
 	Variant id.Variant
 	// Server and IP, when set, name the server the value is about.
-	Server, IP string
-	Value      float64
-	Time       time.Time
+	Server string
+	IP     netip.Addr
+	Value  float64
+	Time   time.Time
 }
 
 // Series is one time series returned by a range query.
@@ -194,9 +196,9 @@ func (c *Client) Write(samples []Sample) {
 		if s.Server != "" {
 			b.WriteString(`",server="`)
 			b.WriteString(s.Server)
-			if labelRe.MatchString(s.IP) {
+			if s.IP.IsValid() {
 				b.WriteString(`",ip="`)
-				b.WriteString(s.IP)
+				b.WriteString(s.IP.String())
 			}
 		}
 		b.WriteString(`"} `)

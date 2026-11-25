@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"sort"
@@ -99,7 +100,7 @@ type watchSource struct {
 	// Kind is what is asked: the stream's own address or one server.
 	Kind     watchsource.Kind `json:"kind" swaggertype:"string" enums:"configured,server"`
 	Host     string           `json:"host,omitempty"`
-	IP       string           `json:"ip,omitempty"`
+	IP       netip.Addr       `json:"ip,omitzero" swaggertype:"string"`
 	Software string           `json:"software,omitempty"`
 	// Seen tells that this server answered for this stream lately;
 	// otherwise it is known from other streams of the same site and may
@@ -314,8 +315,8 @@ func (s *Server) play(c *gin.Context) {
 	if s.storeError(c, err) {
 		return
 	}
-	job := agentproto.FetchRequest{URL: tok.URL, Headers: st.Headers, HeadersFor: st.URL, Insecure: st.Insecure,
-		Entry: tok.Entry, Inside: tok.Inside, MaxBody: playMaxBody}
+	job := agentproto.Fetch(agentproto.FetchRequest{URL: tok.URL, Headers: st.Headers, HeadersFor: st.URL, Insecure: st.Insecure,
+		Entry: tok.Entry, Inside: tok.Inside, MaxBody: playMaxBody})
 	if from, length, ok := parseRange(c.GetHeader("Range")); ok {
 		job.RangeOffset, job.RangeLength = from, length
 	}
@@ -339,9 +340,9 @@ func (s *Server) play(c *gin.Context) {
 		c.Abort() // the viewer went away
 		return
 	}
-	if res.RemoteAddr != "" {
+	if res.RemoteAddr.IsValid() {
 		if e, err := url.Parse(res.FinalURL); err == nil {
-			c.Header("X-Upstream", e.Host+" "+hostname(res.RemoteAddr))
+			c.Header("X-Upstream", e.Host+" "+res.RemoteAddr.Addr().String())
 		}
 	}
 	switch {
@@ -531,7 +532,7 @@ func rewritePlaylist(body []byte, base string, token func(absolute string) strin
 	}
 	rewrite := func(ref string) (string, bool) {
 		u, err := b.Parse(strings.TrimSpace(ref))
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		if err != nil || !httpx.IsWeb(u) {
 			return "", false
 		}
 		return token(u.String()), true

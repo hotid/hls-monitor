@@ -3,12 +3,12 @@ package api
 import (
 	"context"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/hotid/hls-monitor/internal/httpx"
 	"github.com/hotid/hls-monitor/internal/store"
 	"github.com/hotid/hls-monitor/internal/types/agentkind"
 	"github.com/hotid/hls-monitor/internal/types/errcode"
@@ -16,6 +16,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/types/level"
 	"github.com/hotid/hls-monitor/internal/types/picturemode"
 	"github.com/hotid/hls-monitor/internal/types/role"
+	"github.com/hotid/hls-monitor/internal/types/seconds"
 	"github.com/hotid/hls-monitor/internal/types/severity"
 	"github.com/hotid/hls-monitor/internal/types/streamstatus"
 	"github.com/hotid/hls-monitor/internal/types/summarykey"
@@ -106,7 +107,7 @@ func (s *Server) view(st *store.Stream, sc *statusContext, admin bool) *streamVi
 		cp.Headers = masked
 		v.Stream = &cp
 	}
-	freshFor := max(90*time.Second, time.Duration(3*st.IntervalSec*float64(time.Second)))
+	freshFor := max(90*time.Second, 3*st.Interval.Duration())
 	best := streamstatus.NoData()
 	for _, id := range st.AgentIDs {
 		a := sc.agents[id]
@@ -162,8 +163,8 @@ func (r *streamRequest) input() (store.StreamInput, string) {
 		URL:         strings.TrimSpace(r.URL),
 		Enabled:     r.Enabled == nil || *r.Enabled,
 		Level:       level.Segments(),
-		IntervalSec: r.IntervalSec,
-		TimeoutSec:  r.TimeoutSec,
+		Interval:    seconds.Of(r.IntervalSec),
+		Timeout:     seconds.Of(r.TimeoutSec),
 		MaxSegments: r.MaxSegments,
 		Headers:     map[string]string{},
 		Insecure:    r.Insecure,
@@ -185,9 +186,9 @@ func (r *streamRequest) input() (store.StreamInput, string) {
 		return in, "level must be one of: playlist, header, segments, container"
 	case pictureErr != nil:
 		return in, "picture must be empty, static or off"
-	case in.IntervalSec != 0 && (in.IntervalSec < 1 || in.IntervalSec > 3600):
+	case in.Interval != 0 && (in.Interval < seconds.Span(time.Second) || in.Interval > seconds.Span(time.Hour)):
 		return in, "interval_sec must be 0 (automatic) or between 1 and 3600"
-	case in.TimeoutSec != 0 && (in.TimeoutSec < 1 || in.TimeoutSec > 120):
+	case in.Timeout != 0 && (in.Timeout < seconds.Span(time.Second) || in.Timeout > seconds.Span(2*time.Minute)):
 		return in, "timeout_sec must be 0 (default) or between 1 and 120"
 	case in.MaxSegments < 0 || in.MaxSegments > 20:
 		return in, "max_segments must be between 0 and 20"
@@ -196,8 +197,8 @@ func (r *streamRequest) input() (store.StreamInput, string) {
 	case len(r.Headers) > 20:
 		return in, "too many request headers"
 	}
-	u, err := url.Parse(in.URL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	_, err := httpx.ParseWebURL(in.URL)
+	if err != nil {
 		return in, "url must be an absolute http or https URL"
 	}
 	for k, v := range r.Headers {

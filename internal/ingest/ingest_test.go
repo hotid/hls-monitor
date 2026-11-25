@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -329,14 +330,14 @@ func TestLatestStateKeepsLastKnownValues(t *testing.T) {
 
 func TestSourcesAndInformationalIncidents(t *testing.T) {
 	e := newEnv(t)
-	epA := &probe.Endpoint{URL: "http://edge-a/x.m3u8", Host: "edge-a", IP: "10.0.0.6", Headers: map[string]string{"Server": "nginx/1.24"}}
-	segA := &probe.Endpoint{URL: "http://edge-a/1.ts", Host: "edge-a", IP: "10.0.0.6"}
+	epA := &probe.Endpoint{URL: "http://edge-a/x.m3u8", Host: "edge-a", IP: netip.MustParseAddr("10.0.0.6"), Headers: map[string]string{"Server": "nginx/1.24"}}
+	segA := &probe.Endpoint{URL: "http://edge-a/1.ts", Host: "edge-a", IP: netip.MustParseAddr("10.0.0.6")}
 	r := e.result(twoVariants)
 	r.Sources = []probe.Source{{Variant: variantkey.OfURI("hi.m3u8"), Playlist: epA, Segment: segA}}
 	e.apply(r)
 
 	// The next cycle downloads no segment and is answered by another server.
-	epB := &probe.Endpoint{URL: "http://edge-b/x.m3u8", Host: "edge-b", IP: "10.0.0.7"}
+	epB := &probe.Endpoint{URL: "http://edge-b/x.m3u8", Host: "edge-b", IP: netip.MustParseAddr("10.0.0.7")}
 	r = e.result(twoVariants, probe.Problem{Kind: problemkind.PlaylistSource(), Severity: severity.Info(), Variant: variantkey.OfURI("hi.m3u8"), Message: "moved", Count: 1})
 	r.Status = status.OK()
 	r.Sources = []probe.Source{{Variant: variantkey.OfURI("hi.m3u8"), Playlist: epB}}
@@ -471,5 +472,60 @@ func TestOverloadedResultClosesNothing(t *testing.T) {
 	}
 	if s := e.in.Stats(); s.Stored != 11 || s.Failed != 0 {
 		t.Errorf("stats = %+v", s)
+	}
+}
+
+// The state of a playlist is what the result says it is: never what a
+// figure that is not there would read as.
+func TestVariantStatusIsTold(t *testing.T) {
+	e := newEnv(t)
+	hi := twoVariants[1].Key
+	state := func() map[variantkey.Key]status.Status {
+		t.Helper()
+		variants, err := e.st.ListVariants(context.Background(), e.stream.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keys := map[id.Variant]variantkey.Key{}
+		for _, v := range variants {
+			keys[v.ID] = v.Key
+		}
+		states, err := e.st.VariantStates(context.Background(), e.stream.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[variantkey.Key]status.Status{}
+		for _, s := range states {
+			out[keys[s.VariantID]] = s.Status
+		}
+		return out
+	}
+	// Told as a value, it is taken as told, whatever the figure says.
+	r := e.result(twoVariants)
+	r.Statuses = []probe.VariantStatus{{Variant: hi, Status: status.Fail()}}
+	e.apply(r)
+	if got := state()[hi]; got != status.Fail() {
+		t.Fatalf("a status told as fail was stored as %v", got)
+	}
+	// An older agent tells it as a figure only, and it is read from there.
+	e.apply(e.result(twoVariants))
+	if got := state()[hi]; got != status.OK() {
+		t.Fatalf("a status told by a figure was stored as %v", got)
+	}
+	// Told in no way, it is not made up: what was known stays.
+	r = e.result(twoVariants)
+	r.Statuses = []probe.VariantStatus{{Variant: hi, Status: status.Warn()}}
+	e.apply(r)
+	r = e.result(twoVariants)
+	kept := r.Metrics[:0]
+	for _, m := range r.Metrics {
+		if m.Name != metricname.Status() {
+			kept = append(kept, m)
+		}
+	}
+	r.Metrics = kept
+	e.apply(r)
+	if got := state()[hi]; got != status.Warn() {
+		t.Fatalf("with no status told the stored one became %v", got)
 	}
 }

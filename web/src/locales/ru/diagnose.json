@@ -73,5 +73,10 @@
   "wholeSegmentsAndParsingOfTheir": "Сегменты целиком и разбор их содержимого: дорожки, метки времени, ошибки MPEG-TS",
   "withEvents": "С событиями",
   "withMediaParsing": "С разбором медиа",
-  "withProblemsOnly": "Только с замечаниями"
+  "withProblemsOnly": "Только с замечаниями",
+  "endAgentNotTaking": "агент не берёт задания: нет связи или занят",
+  "endAgentRefused": "агент отказался",
+  "endAgentTooOld": "агент слишком старый для этого",
+  "endAgentUnreadable": "агент прислал то, что не удаётся прочитать",
+  "endAgentSilent": "агент перестал отвечать"
 }

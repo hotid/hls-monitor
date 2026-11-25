@@ -14,6 +14,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/hotid/hls-monitor/internal/agentproto"
+	"github.com/hotid/hls-monitor/internal/types/answerkind"
+	"github.com/hotid/hls-monitor/internal/types/diagnoseend"
 	"github.com/hotid/hls-monitor/internal/types/errcode"
 	"github.com/hotid/hls-monitor/internal/types/id"
 )
@@ -200,12 +202,16 @@ func (s *Server) agentFetchResult(c *gin.Context) {
 
 // diagnoseThroughAgent has an agent check a stream every second and calls
 // cycle with what every check found, until the time is up, the reader
-// stops (cycle returns false) or ctx is done. It tells why it ended:
-// "time", or what went wrong.
-func (s *Server) diagnoseThroughAgent(ctx context.Context, agent id.Agent, d agentproto.DiagnoseJob, cycle func(agentproto.DiagnoseCycle) bool) string {
+// stops (cycle returns false) or ctx is done. It tells why it ended, with
+// what the agent said where it refused; no reason when the reader stopped
+// or ctx is done.
+func (s *Server) diagnoseThroughAgent(ctx context.Context, agent id.Agent, d agentproto.DiagnoseJob, cycle func(agentproto.DiagnoseCycle) bool) (diagnoseend.Reason, string) {
+	var none diagnoseend.Reason
 	var id [12]byte
 	_, _ = rand.Read(id[:])
-	job := &fetchJob{agent: agent, req: agentproto.FetchRequest{ID: hex.EncodeToString(id[:]), Diagnose: &d}, stream: make(chan fetchDone, 2)}
+	req := agentproto.Diagnose(d)
+	req.ID = hex.EncodeToString(id[:])
+	job := &fetchJob{agent: agent, req: req, stream: make(chan fetchDone, 2)}
 	q := s.relays.queue(agent)
 	s.relays.mu.Lock()
 	s.relays.pending[job.req.ID] = job
@@ -222,38 +228,38 @@ func (s *Server) diagnoseThroughAgent(ctx context.Context, agent id.Agent, d age
 	select {
 	case q <- job:
 	case <-hand.C:
-		return "the agent is not taking requests: it is out of contact or busy"
+		return diagnoseend.NotTaken(), ""
 	case <-ctx.Done():
-		return ""
+		return none, ""
 	}
 	// A check takes its timeout at the most; an agent silent for much
 	// longer than that is gone.
-	quiet := time.Duration(max(d.Target.TimeoutSec, 10)*3)*time.Second + 15*time.Second
+	quiet := 3*max(d.Target.Timeout.Duration(), 10*time.Second) + 15*time.Second
 	for {
 		silence := time.NewTimer(quiet)
 		select {
 		case got := <-job.stream:
 			silence.Stop()
-			switch {
+			switch answer := got.res.Answer(); {
 			case got.res.Error != "":
-				return got.res.Error
-			case got.res.ContentType == agentproto.DiagnoseEndType:
-				return "time"
-			case got.res.ContentType != agentproto.DiagnoseCycleType:
-				return "the agent is too old for this"
+				return diagnoseend.Refused(), got.res.Error
+			case answer == answerkind.DiagnoseEnd():
+				return diagnoseend.Time(), ""
+			case answer != answerkind.DiagnoseCycle():
+				return diagnoseend.TooOld(), ""
 			}
 			var c agentproto.DiagnoseCycle
 			if json.Unmarshal(got.body, &c) != nil || c.Result == nil {
-				return "the agent sent something that cannot be read"
+				return diagnoseend.Unreadable(), ""
 			}
 			if !cycle(c) {
-				return ""
+				return none, ""
 			}
 		case <-silence.C:
-			return "the agent stopped answering"
+			return diagnoseend.Silent(), ""
 		case <-ctx.Done():
 			silence.Stop()
-			return ""
+			return none, ""
 		}
 	}
 }

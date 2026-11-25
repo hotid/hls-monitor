@@ -57,8 +57,8 @@ type segAgg struct {
 	// subtitles tells that segments of subtitles were read, cues how
 	// many cues they had.
 	subtitles bool
-	// hdr tells a picture of high dynamic range: 1 for PQ, 2 for HLG.
-	hdr          int
+	// hdr tells a picture of high dynamic range, and of which kind.
+	hdr          videorange.Range
 	cues         int
 	pcrGap, lead float64
 }
@@ -228,7 +228,7 @@ func (k *segCheck) emit() {
 			detail.SegmentHTTPStatus(rec.Status), detail.SegmentError(rec.Error),
 			detail.SegmentBytes(rec.Size), detail.SegmentFetchedBytes(rec.Fetched))
 		if rec.Source != nil {
-			k.cy.detail(kind, k.v.Key, detail.SegmentServer(rec.Source.Node()), detail.SegmentSoftware(rec.Source.Headers["Server"]))
+			k.cy.detail(kind, k.v.Key, detail.SegmentServer(rec.Source.Node()), detail.SegmentSoftware(rec.Source.Software()))
 		}
 	}
 	k.cy.segment(rec)
@@ -701,11 +701,8 @@ func (m *mediaCheck) tracks() prevSegment {
 			m.flag(problemkind.NoKeyframeStart(), severity.Warn(), "segment %d does not start with a keyframe", s.seq)
 		}
 		cur.width, cur.height = vt.Width, vt.Height
-		switch vt.Range {
-		case videorange.PQ():
-			agg.hdr = 1
-		case videorange.HLG():
-			agg.hdr = 2
+		if !vt.Range.IsZero() {
+			agg.hdr = vt.Range
 		}
 		if vt.HasTiming {
 			cur.hasV, cur.vEnd = true, vt.EndPTS
@@ -901,7 +898,7 @@ func (c *Checker) emitSegmentMetrics(cy *cycle, v Variant, a *segAgg) {
 		cy.metric(metricname.MediaKeyframeStart(), k, float64(a.keyframeStarts)/n)
 		cy.metric(metricname.MediaWidth(), k, float64(a.width))
 		cy.metric(metricname.MediaHeight(), k, float64(a.height))
-		cy.metric(metricname.MediaHdr(), k, float64(a.hdr))
+		cy.metric(metricname.MediaHdr(), k, a.hdr.Gauge())
 		if !a.partial {
 			cy.metric(metricname.MediaGopSeconds(), k, a.maxGOP)
 			cy.metric(metricname.MediaFps(), k, a.fps)

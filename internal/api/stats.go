@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -13,7 +15,10 @@ import (
 	"github.com/hotid/hls-monitor/internal/store"
 	"github.com/hotid/hls-monitor/internal/types/errcode"
 	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/metricname"
+	"github.com/hotid/hls-monitor/internal/types/node"
 	"github.com/hotid/hls-monitor/internal/types/sourcekind"
+	"github.com/hotid/hls-monitor/internal/types/status"
 	"github.com/hotid/hls-monitor/internal/types/streamstatus"
 )
 
@@ -49,9 +54,9 @@ func (s *Server) streamSources(c *gin.Context) {
 
 // serverView is one answering server with the streams it currently serves.
 type serverView struct {
-	Host     string `json:"host"`
-	IP       string `json:"ip"`
-	Software string `json:"software"`
+	Host     string     `json:"host"`
+	IP       netip.Addr `json:"ip" swaggertype:"string"`
+	Software string     `json:"software"`
 	// Streams is the number of streams whose playlists or segments this
 	// server answered for recently; the rest split them by current state.
 	Streams   int       `json:"streams"`
@@ -96,16 +101,16 @@ const (
 
 // serverNetworks reads the figures of the last five minutes for every
 // server; nil when the time series storage does not answer.
-func (s *Server) serverNetworks(ctx context.Context, at time.Time) map[[2]string]*serverNetwork {
-	out := map[[2]string]*serverNetwork{}
+func (s *Server) serverNetworks(ctx context.Context, at time.Time) map[node.Node]*serverNetwork {
+	out := map[node.Node]*serverNetwork{}
 	for _, q := range []struct {
 		expr string
 		set  func(*serverNetwork, float64)
 	}{
-		{`sum by (server, ip) (sum_over_time(hls_server_requests[5m]))`, func(n *serverNetwork, v float64) { n.Requests = v }},
-		{`sum by (server, ip) (sum_over_time(hls_server_retransmits[5m]))`, func(n *serverNetwork, v float64) { n.Retransmits = v }},
-		{`sum by (server, ip) (sum_over_time(hls_server_out_of_order[5m]))`, func(n *serverNetwork, v float64) { n.OutOfOrder = v }},
-		{`avg by (server, ip) (avg_over_time(hls_server_rtt_seconds[5m]))`, func(n *serverNetwork, v float64) { n.RTT = v }},
+		{`sum by (server, ip) (sum_over_time(` + metricname.ServerRequests().String() + `[5m]))`, func(n *serverNetwork, v float64) { n.Requests = v }},
+		{`sum by (server, ip) (sum_over_time(` + metricname.ServerRetransmits().String() + `[5m]))`, func(n *serverNetwork, v float64) { n.Retransmits = v }},
+		{`sum by (server, ip) (sum_over_time(` + metricname.ServerOutOfOrder().String() + `[5m]))`, func(n *serverNetwork, v float64) { n.OutOfOrder = v }},
+		{`avg by (server, ip) (avg_over_time(` + metricname.ServerRTTSeconds().String() + `[5m]))`, func(n *serverNetwork, v float64) { n.RTT = v }},
 	} {
 		res, err := s.mx.Query(ctx, q.expr, at)
 		if err != nil {
@@ -115,7 +120,7 @@ func (s *Server) serverNetworks(ctx context.Context, at time.Time) map[[2]string
 			if len(r.Points) == 0 {
 				continue
 			}
-			k := [2]string{r.Labels["server"], r.Labels["ip"]}
+			k := labelled(r.Labels)
 			if out[k] == nil {
 				out[k] = &serverNetwork{}
 			}
@@ -160,14 +165,13 @@ func (s *Server) servers(c *gin.Context) {
 		names[st.ID] = st.Name
 	}
 
-	type key struct{ host, ip string }
 	type acc struct {
 		view    serverView
 		streams map[id.Stream]bool
 	}
-	byServer := map[key]*acc{}
+	byServer := map[node.Node]*acc{}
 	for _, r := range seen {
-		k := key{r.Host, r.IP}
+		k := node.Of(r.Host, r.IP)
 		a := byServer[k]
 		if a == nil {
 			a = &acc{view: serverView{Host: r.Host, IP: r.IP, FailingStreams: []streamRef{}, StreamIDs: []id.Stream{}}, streams: map[id.Stream]bool{}}
@@ -205,7 +209,7 @@ func (s *Server) servers(c *gin.Context) {
 	network := s.serverNetworks(ctx, sc.now)
 	out := make([]serverView, 0, len(byServer))
 	for k, a := range byServer {
-		a.view.Network = network[[2]string{k.host, k.ip}]
+		a.view.Network = network[k]
 		sort.Slice(a.view.FailingStreams, func(i, j int) bool { return a.view.FailingStreams[i].Name < a.view.FailingStreams[j].Name })
 		sort.Slice(a.view.StreamIDs, func(i, j int) bool { return a.view.StreamIDs[i].Compare(a.view.StreamIDs[j]) < 0 })
 		out = append(out, a.view)
@@ -214,15 +218,15 @@ func (s *Server) servers(c *gin.Context) {
 		if out[i].Host != out[j].Host {
 			return out[i].Host < out[j].Host
 		}
-		return out[i].IP < out[j].IP
+		return out[i].IP.Compare(out[j].IP) < 0
 	})
 	c.JSON(http.StatusOK, out)
 }
 
 // serverSeries is the history of the way to one server.
 type serverSeries struct {
-	Host string `json:"host"`
-	IP   string `json:"ip"`
+	Host string     `json:"host"`
+	IP   netip.Addr `json:"ip" swaggertype:"string"`
 	// Series maps a figure to [unix seconds, value] points: "rtt" in
 	// seconds, "loss" as the retransmissions per request, "requests" per
 	// second.
@@ -251,11 +255,11 @@ func (s *Server) serversNetwork(c *gin.Context) {
 	from, to, step := s.chartWindow(c)
 	sec := int(step.Seconds())
 	out := serversNetworkResponse{From: float64(from.Unix()), To: float64(to.Unix()), Step: step.Seconds(), Servers: []serverSeries{}}
-	byServer := map[[2]string]*serverSeries{}
+	byServer := map[node.Node]*serverSeries{}
 	for _, q := range []struct{ id, expr string }{
-		{"rtt", `avg by (server, ip) (avg_over_time(hls_server_rtt_seconds[%[1]ds]))`},
-		{"loss", `sum by (server, ip) (sum_over_time(hls_server_retransmits[%[1]ds])) / sum by (server, ip) (sum_over_time(hls_server_requests[%[1]ds]))`},
-		{"requests", `sum by (server, ip) (sum_over_time(hls_server_requests[%[1]ds])) / %[1]d`},
+		{"rtt", `avg by (server, ip) (avg_over_time(` + metricname.ServerRTTSeconds().String() + `[%[1]ds]))`},
+		{"loss", `sum by (server, ip) (sum_over_time(` + metricname.ServerRetransmits().String() + `[%[1]ds])) / sum by (server, ip) (sum_over_time(` + metricname.ServerRequests().String() + `[%[1]ds]))`},
+		{"requests", `sum by (server, ip) (sum_over_time(` + metricname.ServerRequests().String() + `[%[1]ds])) / %[1]d`},
 	} {
 		res, err := s.mx.QueryRange(c.Request.Context(), fmt.Sprintf(q.expr, sec), from, to, step)
 		if err != nil {
@@ -264,9 +268,9 @@ func (s *Server) serversNetwork(c *gin.Context) {
 			return
 		}
 		for _, r := range res {
-			k := [2]string{r.Labels["server"], r.Labels["ip"]}
+			k := labelled(r.Labels)
 			if byServer[k] == nil {
-				byServer[k] = &serverSeries{Host: k[0], IP: k[1], Series: map[string][][2]float64{}}
+				byServer[k] = &serverSeries{Host: k.Host(), IP: k.IP(), Series: map[string][][2]float64{}}
 			}
 			byServer[k].Series[q.id] = r.Points
 		}
@@ -279,7 +283,7 @@ func (s *Server) serversNetwork(c *gin.Context) {
 		if a.Host != b.Host {
 			return a.Host < b.Host
 		}
-		return a.IP < b.IP
+		return a.IP.Compare(b.IP) < 0
 	})
 	c.JSON(http.StatusOK, out)
 }
@@ -305,46 +309,46 @@ func (s *Server) chartWindow(c *gin.Context) (from, to time.Time, step time.Dura
 // aggregates are figures over all streams at once. %[1]d is the step in
 // seconds. A stream is counted once: by its worst agent and variant.
 var aggregates = []struct{ id, expr string }{
-	{"streams_ok", `count(max by (stream) (max_over_time(hls_stream_status[%[1]ds])) == 0)`},
-	{"streams_warn", `count(max by (stream) (max_over_time(hls_stream_status[%[1]ds])) == 1)`},
-	{"streams_fail", `count(max by (stream) (max_over_time(hls_stream_status[%[1]ds])) == 2)`},
-	{"playlists_down", `count(min by (stream, variant) (min_over_time(hls_playlist_up[%[1]ds])) == 0)`},
-	{"playlist_time_avg", `avg(avg_over_time(hls_playlist_total_seconds[%[1]ds]))`},
-	{"playlist_time_p95", `quantile(0.95, avg_over_time(hls_playlist_total_seconds[%[1]ds]))`},
-	{"playlist_time_max", `max(max_over_time(hls_playlist_total_seconds[%[1]ds]))`},
-	{"segment_ttfb_avg", `avg(avg_over_time(hls_segment_ttfb_seconds[%[1]ds]))`},
-	{"segment_ttfb_p95", `quantile(0.95, avg_over_time(hls_segment_ttfb_seconds[%[1]ds]))`},
-	{"rtt_avg", `avg(avg_over_time(hls_tcp_rtt_seconds[%[1]ds]))`},
-	{"rtt_p95", `quantile(0.95, avg_over_time(hls_tcp_rtt_seconds[%[1]ds]))`},
-	{"out_of_order", `sum(sum_over_time(hls_tcp_out_of_order[%[1]ds]))`},
+	{"streams_ok", `count(max by (stream) (max_over_time(` + metricname.StreamStatus().String() + `[%[1]ds])) == ` + rank(status.OK()) + `)`},
+	{"streams_warn", `count(max by (stream) (max_over_time(` + metricname.StreamStatus().String() + `[%[1]ds])) == ` + rank(status.Warn()) + `)`},
+	{"streams_fail", `count(max by (stream) (max_over_time(` + metricname.StreamStatus().String() + `[%[1]ds])) == ` + rank(status.Fail()) + `)`},
+	{"playlists_down", `count(min by (stream, variant) (min_over_time(` + metricname.PlaylistUp().String() + `[%[1]ds])) == 0)`},
+	{"playlist_time_avg", `avg(avg_over_time(` + metricname.PlaylistTotalSeconds().String() + `[%[1]ds]))`},
+	{"playlist_time_p95", `quantile(0.95, avg_over_time(` + metricname.PlaylistTotalSeconds().String() + `[%[1]ds]))`},
+	{"playlist_time_max", `max(max_over_time(` + metricname.PlaylistTotalSeconds().String() + `[%[1]ds]))`},
+	{"segment_ttfb_avg", `avg(avg_over_time(` + metricname.SegmentTTFBSeconds().String() + `[%[1]ds]))`},
+	{"segment_ttfb_p95", `quantile(0.95, avg_over_time(` + metricname.SegmentTTFBSeconds().String() + `[%[1]ds]))`},
+	{"rtt_avg", `avg(avg_over_time(` + metricname.TCPRTTSeconds().String() + `[%[1]ds]))`},
+	{"rtt_p95", `quantile(0.95, avg_over_time(` + metricname.TCPRTTSeconds().String() + `[%[1]ds]))`},
+	{"out_of_order", `sum(sum_over_time(` + metricname.TCPOutOfOrder().String() + `[%[1]ds]))`},
 	// Measured on a connection made for it, every few minutes per stream.
-	{"connect_avg", `avg(avg_over_time(hls_connect_seconds[%[1]ds]))`},
-	{"connect_p95", `quantile(0.95, max_over_time(hls_connect_seconds[%[1]ds]))`},
-	{"dns_avg", `avg(avg_over_time(hls_dns_seconds[%[1]ds]))`},
-	{"tls_avg", `avg(avg_over_time(hls_tls_seconds[%[1]ds]))`},
+	{"connect_avg", `avg(avg_over_time(` + metricname.ConnectSeconds().String() + `[%[1]ds]))`},
+	{"connect_p95", `quantile(0.95, max_over_time(` + metricname.ConnectSeconds().String() + `[%[1]ds]))`},
+	{"dns_avg", `avg(avg_over_time(` + metricname.DNSSeconds().String() + `[%[1]ds]))`},
+	{"tls_avg", `avg(avg_over_time(` + metricname.TLSSeconds().String() + `[%[1]ds]))`},
 	// The way in: how many redirects the stream's own address takes.
-	{"entry_redirects_avg", `avg(avg_over_time(hls_entry_redirects[%[1]ds]))`},
-	{"entry_time_avg", `avg(avg_over_time(hls_entry_seconds[%[1]ds]))`},
-	{"entry_time_p95", `quantile(0.95, avg_over_time(hls_entry_seconds[%[1]ds]))`},
-	{"retransmits", `sum(sum_over_time(hls_tcp_retransmits[%[1]ds]))`},
-	{"segment_errors", `sum(sum_over_time(hls_segment_errors[%[1]ds]))`},
-	{"segments_checked", `sum(sum_over_time(hls_segments_checked[%[1]ds]))`},
-	{"segments_missed", `sum(sum_over_time(hls_segments_missed[%[1]ds]))`},
-	{"stalls", `sum(sum_over_time(hls_stalls[%[1]ds]))`},
-	{"source_changes", `sum(sum_over_time(hls_playlist_source_changed[%[1]ds]))`},
-	{"bitrate_total", `sum(max by (stream) (avg_over_time(hls_segment_bitrate_bps[%[1]ds])))`},
+	{"entry_redirects_avg", `avg(avg_over_time(` + metricname.EntryRedirects().String() + `[%[1]ds]))`},
+	{"entry_time_avg", `avg(avg_over_time(` + metricname.EntrySeconds().String() + `[%[1]ds]))`},
+	{"entry_time_p95", `quantile(0.95, avg_over_time(` + metricname.EntrySeconds().String() + `[%[1]ds]))`},
+	{"retransmits", `sum(sum_over_time(` + metricname.TCPRetransmits().String() + `[%[1]ds]))`},
+	{"segment_errors", `sum(sum_over_time(` + metricname.SegmentErrors().String() + `[%[1]ds]))`},
+	{"segments_checked", `sum(sum_over_time(` + metricname.SegmentsChecked().String() + `[%[1]ds]))`},
+	{"segments_missed", `sum(sum_over_time(` + metricname.SegmentsMissed().String() + `[%[1]ds]))`},
+	{"stalls", `sum(sum_over_time(` + metricname.Stalls().String() + `[%[1]ds]))`},
+	{"source_changes", `sum(sum_over_time(` + metricname.PlaylistSourceChanged().String() + `[%[1]ds]))`},
+	{"bitrate_total", `sum(max by (stream) (avg_over_time(` + metricname.SegmentBitrateBps().String() + `[%[1]ds])))`},
 	// What the checks download, from every vantage point together: bytes
 	// received within a step, as a rate.
-	{"check_traffic", `sum(sum_over_time(hls_check_bytes[%[1]ds])) * 8 / %[1]d`},
-	{"bitrate_avg", `avg(max by (stream) (avg_over_time(hls_segment_bitrate_bps[%[1]ds])))`},
-	{"stale_max", `max(max_over_time(hls_playlist_stale_seconds[%[1]ds]))`},
+	{"check_traffic", `sum(sum_over_time(` + metricname.CheckBytes().String() + `[%[1]ds])) * 8 / %[1]d`},
+	{"bitrate_avg", `avg(max by (stream) (avg_over_time(` + metricname.SegmentBitrateBps().String() + `[%[1]ds])))`},
+	{"stale_max", `max(max_over_time(` + metricname.PlaylistStaleSeconds().String() + `[%[1]ds]))`},
 	// What the server itself uses: the process, and the whole container
 	// with the programs it runs.
-	{"self_cpu", `avg(avg_over_time(hlsmon_self_cpu_cores[%[1]ds]))`},
-	{"self_cpu_all", `avg(avg_over_time(hlsmon_self_cpu_all_cores[%[1]ds]))`},
-	{"self_memory", `avg(avg_over_time(hlsmon_self_memory_bytes[%[1]ds]))`},
-	{"check_lag_max", `max(max_over_time(hls_check_lag_seconds[%[1]ds]))`},
-	{"check_duration_p95", `quantile(0.95, avg_over_time(hls_check_duration_seconds[%[1]ds]))`},
+	{"self_cpu", `avg(avg_over_time(` + metricname.SelfCPUCores().String() + `[%[1]ds]))`},
+	{"self_cpu_all", `avg(avg_over_time(` + metricname.SelfCPUAllCores().String() + `[%[1]ds]))`},
+	{"self_memory", `avg(avg_over_time(` + metricname.SelfMemoryBytes().String() + `[%[1]ds]))`},
+	{"check_lag_max", `max(max_over_time(` + metricname.CheckLagSeconds().String() + `[%[1]ds]))`},
+	{"check_duration_p95", `quantile(0.95, avg_over_time(` + metricname.CheckDurationSeconds().String() + `[%[1]ds]))`},
 }
 
 // aggregateResponse carries figures over all streams for the overview charts.
@@ -405,4 +409,15 @@ func (s *Server) aggregate(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, out)
+}
+
+// rank writes the number a status is held as in the series of statuses,
+// for a query to compare with.
+func rank(st status.Status) string { return strconv.FormatFloat(st.Rank(), 'f', -1, 64) }
+
+// labelled is the server a series is about, by the labels it carries. The
+// labels are text of the time series storage; they are read here, once.
+func labelled(labels map[string]string) node.Node {
+	ip, _ := netip.ParseAddr(labels["ip"])
+	return node.Of(labels["server"], ip)
 }

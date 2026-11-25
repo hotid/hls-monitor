@@ -622,7 +622,7 @@ func (c *Checker) reportLooks(cy *cycle) {
 		standing = append(standing, sounds...)
 	}
 	own := ""
-	if c.ownName != "" && c.now().Sub(c.ownAt) < knownFor {
+	if !c.ownAt.IsZero() && c.now().Sub(c.ownAt) < knownFor {
 		own = c.ownName
 	}
 	c.mu.Unlock()

@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/hotid/hls-monitor/internal/probe"
+	"github.com/hotid/hls-monitor/internal/types/answerkind"
 	"github.com/hotid/hls-monitor/internal/types/id"
+	"github.com/hotid/hls-monitor/internal/types/jobkind"
 	"github.com/hotid/hls-monitor/internal/types/level"
 	"github.com/hotid/hls-monitor/internal/types/picturemode"
 	"github.com/hotid/hls-monitor/internal/types/problemkind"
@@ -57,5 +59,60 @@ func TestResultFromANewerAgent(t *testing.T) {
 	}
 	if p := req.Results[2].Problems; len(p) != 1 || p[0].Kind != problemkind.PlaylistStale() || p[0].Details.Len() != 1 {
 		t.Errorf("the result after the one refused: %+v", p)
+	}
+}
+
+// Work says what it is in one way, and work that does not is refused
+// rather than guessed at.
+func TestWorkIsOfOneKind(t *testing.T) {
+	fetch := Fetch(FetchRequest{ID: "a", URL: "http://x/a.ts"})
+	diagnose := Diagnose(DiagnoseJob{Seconds: 5})
+	diagnose.ID = "b"
+	capture := Capture(CaptureJob{StreamID: id.StreamOf(7)})
+	capture.ID = "c"
+	for _, tc := range []struct {
+		rq   FetchRequest
+		want jobkind.Kind
+	}{{fetch, jobkind.Fetch()}, {diagnose, jobkind.Diagnose()}, {capture, jobkind.Capture()}} {
+		if got, err := tc.rq.Work(); err != nil || got != tc.want {
+			t.Errorf("work of the kind %v read as %v, %v", tc.want, got, err)
+		}
+	}
+	// A server from before kinds were told: the kind is what came with it.
+	var old FetchRequest
+	if err := json.Unmarshal([]byte(`{"id":"d","url":"","max_body":0,"diagnose":{"target":{"id":7,"url":"http://x/a.m3u8","level":"header"},"seconds":5}}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := old.Work(); err != nil || got != jobkind.Diagnose() {
+		t.Errorf("work of an older server read as %v, %v", got, err)
+	}
+	both := diagnose
+	both.Kind, both.Capture = jobkind.Kind{}, capture.Capture
+	wrong := fetch
+	wrong.Diagnose = diagnose.Diagnose
+	addressed := diagnose
+	addressed.URL = "http://x/a.ts"
+	for name, rq := range map[string]FetchRequest{"both a diagnosis and a capture": both, "a fetch that carries a diagnosis": wrong,
+		"a diagnosis with an address": addressed, "a fetch of nothing": Fetch(FetchRequest{ID: "e"}), "no ID": Fetch(FetchRequest{URL: "http://x/"})} {
+		if _, err := rq.Work(); err == nil {
+			t.Errorf("%s was taken as work", name)
+		}
+	}
+	if json.Unmarshal([]byte(`{"id":"f","kind":"reboot"}`), &old) == nil {
+		t.Error("work of a kind that is not known was read")
+	}
+}
+
+// An answer says what it is; one of an agent from before that is read by
+// its content type.
+func TestAnswerKinds(t *testing.T) {
+	cycle, end := CycleAnswer(), EndAnswer()
+	if cycle.Answer() != answerkind.DiagnoseCycle() || end.Answer() != answerkind.DiagnoseEnd() {
+		t.Errorf("answers read as %v and %v", cycle.Answer(), end.Answer())
+	}
+	for ct, want := range map[string]answerkind.Kind{DiagnoseCycleType: answerkind.DiagnoseCycle(), DiagnoseEndType: answerkind.DiagnoseEnd(), "video/mp2t": answerkind.Fetched(), "": answerkind.Fetched()} {
+		if got := (&FetchResult{ContentType: ct}).Answer(); got != want {
+			t.Errorf("an answer with the content type %q read as %v", ct, got)
+		}
 	}
 }

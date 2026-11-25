@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/hotid/hls-monitor/internal/types/id"
 	"github.com/hotid/hls-monitor/internal/types/metricname"
 	"github.com/hotid/hls-monitor/internal/types/problemkind"
+	"github.com/hotid/hls-monitor/internal/types/severity"
 	"github.com/hotid/hls-monitor/internal/types/sourcekind"
 	"github.com/hotid/hls-monitor/internal/types/status"
 	"github.com/hotid/hls-monitor/internal/types/summarykey"
@@ -106,7 +108,7 @@ func (tx *Tx) EnsureVariant(ctx context.Context, streamID id.Stream, key variant
 }
 
 func (s *Store) ListVariants(ctx context.Context, streamID id.Stream) ([]*Variant, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+variantCols+" FROM variants WHERE stream_id = ? ORDER BY active DESC, kind = 'master' DESC, kind, bandwidth DESC, key", streamID)
+	rows, err := s.db.QueryContext(ctx, "SELECT "+variantCols+" FROM variants WHERE stream_id = ? ORDER BY active DESC, kind = "+lit(variantkind.Master())+" DESC, kind, bandwidth DESC, key", streamID)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +126,7 @@ func (s *Store) ListVariants(ctx context.Context, streamID id.Stream) ([]*Varian
 
 // ListAllVariants returns the active variants of every stream.
 func (s *Store) ListAllVariants(ctx context.Context) ([]*Variant, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+variantCols+" FROM variants WHERE active = 1 ORDER BY stream_id, kind = 'master' DESC, kind, bandwidth DESC, key")
+	rows, err := s.db.QueryContext(ctx, "SELECT "+variantCols+" FROM variants WHERE active = 1 ORDER BY stream_id, kind = "+lit(variantkind.Master())+" DESC, kind, bandwidth DESC, key")
 	if err != nil {
 		return nil, err
 	}
@@ -218,15 +220,18 @@ func readKinds(text string) []problemkind.Kind {
 	return out
 }
 
-// StreamCheckedAt returns the time, in Unix milliseconds, of the newest
+// StreamCheckedAt returns the time of the newest
 // result stored for the stream from the agent; zero when there is none.
-func (tx *Tx) StreamCheckedAt(ctx context.Context, streamID id.Stream, agentID id.Agent) (int64, error) {
+func (tx *Tx) StreamCheckedAt(ctx context.Context, streamID id.Stream, agentID id.Agent) (time.Time, error) {
 	var ms int64
 	err := tx.q.QueryRowContext(ctx, "SELECT checked_at FROM stream_state WHERE stream_id = ? AND agent_id = ?", streamID, agentID).Scan(&ms)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
+	if errors.Is(err, sql.ErrNoRows) || err == nil && ms == 0 {
+		return time.Time{}, nil
 	}
-	return ms, err
+	if err != nil {
+		return time.Time{}, err
+	}
+	return fromMs(ms), nil
 }
 
 func (tx *Tx) SaveStreamState(ctx context.Context, streamID id.Stream, agentID id.Agent, st status.Status, now time.Time, summary map[summarykey.Key]float64) error {
@@ -301,24 +306,32 @@ func (s *Store) StreamStates(ctx context.Context, streamID id.Stream) ([]*Stream
 	return out, rows.Err()
 }
 
+// KnownOfVariant is what an agent last told of a playlist: its status
+// and its figures.
+type KnownOfVariant struct {
+	Status  status.Status
+	Metrics map[metricname.Name]float64
+}
+
 // VariantMetrics returns the latest metrics one agent reported for each
 // variant of a stream, by variant ID.
-func (tx *Tx) VariantMetrics(ctx context.Context, streamID id.Stream, agentID id.Agent) (map[id.Variant]map[metricname.Name]float64, error) {
+func (tx *Tx) VariantMetrics(ctx context.Context, streamID id.Stream, agentID id.Agent) (map[id.Variant]KnownOfVariant, error) {
 	rows, err := tx.q.QueryContext(ctx, `
-		SELECT vs.variant_id, vs.metrics FROM variant_state vs JOIN variants v ON v.id = vs.variant_id
+		SELECT vs.variant_id, vs.status, vs.metrics FROM variant_state vs JOIN variants v ON v.id = vs.variant_id
 		WHERE v.stream_id = ? AND vs.agent_id = ?`, streamID, agentID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[id.Variant]map[metricname.Name]float64{}
+	out := map[id.Variant]KnownOfVariant{}
 	for rows.Next() {
 		var v id.Variant
+		var st status.Status
 		var raw string
-		if err := rows.Scan(&v, &raw); err != nil {
+		if err := rows.Scan(&v, &st, &raw); err != nil {
 			return nil, err
 		}
-		out[v] = readFigures(raw, metricname.Parse)
+		out[v] = KnownOfVariant{Status: st, Metrics: readFigures(raw, metricname.Parse)}
 	}
 	return out, rows.Err()
 }
@@ -371,7 +384,7 @@ type SegmentRecord struct {
 	Duration   float64            `json:"duration"`
 	Status     int                `json:"status"`
 	Error      string             `json:"error"`
-	RemoteAddr string             `json:"remote_addr"`
+	RemoteAddr netip.AddrPort     `json:"remote_addr" swaggertype:"string"`
 	Size       int64              `json:"size"`
 	TotalMs    float64            `json:"total_ms"`
 	Problems   []problemkind.Kind `json:"problems"`
@@ -459,7 +472,7 @@ type SourceSeen struct {
 	AgentID   id.Agent        `json:"agent_id"`
 	What      sourcekind.Kind `json:"what" enums:"playlist,segment"`
 	Host      string          `json:"host"`
-	IP        string          `json:"ip"`
+	IP        netip.Addr      `json:"ip" swaggertype:"string"`
 	Software  string          `json:"software"`
 	FirstSeen time.Time       `json:"first_seen"`
 	LastSeen  time.Time       `json:"last_seen"`
@@ -473,7 +486,7 @@ func (tx *Tx) RecordSource(ctx context.Context, variantID id.Variant, agentID id
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (variant_id, agent_id, what, host, ip) DO UPDATE SET
 			software = excluded.software, last_seen = excluded.last_seen, hits = variant_sources.hits + 1`,
-		variantID, agentID, what, e.Host, e.IP, e.Headers["Server"], toMs(now), toMs(now))
+		variantID, agentID, what, e.Host, addrText(e.IP), e.Software(), toMs(now), toMs(now))
 	return err
 }
 
@@ -497,7 +510,7 @@ func (s *Store) ListSources(ctx context.Context, streamID id.Stream, since time.
 	for rows.Next() {
 		var r SourceSeen
 		var first, last int64
-		if err := rows.Scan(&r.StreamID, &r.VariantID, &r.AgentID, &r.What, &r.Host, &r.IP, &r.Software, &first, &last, &r.Hits); err != nil {
+		if err := rows.Scan(&r.StreamID, &r.VariantID, &r.AgentID, &r.What, &r.Host, (*storedAddr)(&r.IP), &r.Software, &first, &last, &r.Hits); err != nil {
 			return nil, err
 		}
 		r.FirstSeen, r.LastSeen = fromMs(first), fromMs(last)
@@ -528,7 +541,7 @@ func (s *Store) Purge(ctx context.Context, keep Retention, now time.Time) (delet
 	}{
 		{s.journal, "segments", "time < ?", now.Add(-keep.Segments)},
 		{s.db, "playlist_snapshots", "time < ?", now.Add(-keep.Snapshots)},
-		{s.db, "incidents", "ended_at IS NOT NULL AND severity = 'info' AND ended_at < ?", now.Add(-keep.Events)},
+		{s.db, "incidents", "ended_at IS NOT NULL AND severity = " + lit(severity.Info()) + " AND ended_at < ?", now.Add(-keep.Events)},
 		{s.db, "incidents", "ended_at IS NOT NULL AND ended_at < ?", now.Add(-keep.Incidents)},
 		{s.db, "server_incidents", "ended_at IS NOT NULL AND ended_at < ?", now.Add(-keep.Incidents)},
 	} {

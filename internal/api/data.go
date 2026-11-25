@@ -326,7 +326,7 @@ func (s *Server) listSegments(c *gin.Context) {
 		StreamID:     streamID,
 		AgentID:      queryID[id.Agent](c, "agent"),
 		VariantID:    queryID[id.Variant](c, "variant"),
-		OnlyProblems: c.Query("problems") == "true" || c.Query("problems") == "1",
+		OnlyProblems: queryFlag(c, "problems"),
 		Before:       queryTime(c, "before"),
 		Limit:        int(queryInt(c, "limit")),
 	})
@@ -401,7 +401,7 @@ func (s *Server) listIncidents(c *gin.Context) {
 		To:       queryTime(c, "to"),
 		Limit:    int(queryInt(c, "limit")),
 	}
-	f.Problems = c.Query("problems") == "true" || c.Query("problems") == "1"
+	f.Problems = queryFlag(c, "problems")
 	if raw := c.Query("severity"); raw != "" {
 		for _, sev := range strings.Split(raw, ",") {
 			switch sev, err := severity.Parse(strings.TrimSpace(sev)); {
@@ -413,12 +413,7 @@ func (s *Server) listIncidents(c *gin.Context) {
 			}
 		}
 	}
-	switch c.Query("open") {
-	case "true", "1":
-		v := true
-		f.Open = &v
-	case "false", "0":
-		v := false
+	if v, told := queryChoice(c, "open"); told {
 		f.Open = &v
 	}
 	rows, err := s.st.ListIncidents(c.Request.Context(), f)
@@ -465,7 +460,7 @@ func (s *Server) timeline(c *gin.Context) {
 	to := s.now().Truncate(step).Add(step)
 	from := to.Add(-rng)
 
-	expr := fmt.Sprintf("max by (stream) (max_over_time(hls_stream_status[%ds]))", int(step.Seconds()))
+	expr := fmt.Sprintf("max by (stream) (max_over_time("+metricname.StreamStatus().String()+"[%ds]))", int(step.Seconds()))
 	res, err := s.mx.QueryRange(c.Request.Context(), expr, from, to, step)
 	if err != nil {
 		s.log.Warn("timeline query failed", "error", err)

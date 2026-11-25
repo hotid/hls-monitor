@@ -13,6 +13,10 @@ var set = enum.NewSet("status")
 
 func (domain) Set() *enum.Set { return set }
 
+// The values of the set are all defined by the time the package is
+// loaded; nothing is added after.
+func init() { set.Seal() }
+
 type value = enum.Of[domain]
 
 // Status is one status.
@@ -67,8 +71,34 @@ func Of(sev severity.Severity) Status {
 }
 
 // Worse tells whether s is worse than o.
-func (s Status) Worse(o Status) bool { return s.Ord() > o.Ord() }
+func (s Status) Worse(o Status) bool { return s.Rank() > o.Rank() }
 
 // Rank is the status as the number the series of statuses hold: 0 for
-// good, 1 for a warning, 2 for a failure.
-func (s Status) Rank() float64 { return float64(s.Ord() - 1) }
+// good, 1 for a warning, 2 for a failure. The numbers are what is stored
+// and what queries compare with: they do not follow from the order the
+// statuses are defined in, and do not change with it.
+func (s Status) Rank() float64 {
+	switch s {
+	case ok:
+		return 0
+	case warn:
+		return 1
+	case fail:
+		return 2
+	}
+	panic("status: the rank of a status that was never set")
+}
+
+// OfRank reads a status back from the number a series holds it as; false
+// for a number that is none of them.
+func OfRank(v float64) (Status, bool) {
+	switch v {
+	case 0:
+		return ok, true
+	case 1:
+		return warn, true
+	case 2:
+		return fail, true
+	}
+	return Status{}, false
+}
