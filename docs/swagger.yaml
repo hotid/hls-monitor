@@ -1938,7 +1938,8 @@ definitions:
         description: |-
           Series maps a figure to [unix seconds, value] points: "rtt" in
           seconds, "loss" as the retransmissions per request, "requests" per
-          second.
+          second, and "streams_ok", "streams_warn" and "streams_fail": how
+          many of the streams the server answered for were in each state.
         type: object
     type: object
   internal_api.serverView:
@@ -3235,7 +3236,8 @@ paths:
     get:
       description: By the kernel's count on the connections of the checks, from every
         vantage point together. Loss is the TCP retransmissions per request on the
-        way to the server.
+        way to the server. The streams by state are those the server answered for
+        within a step; a stream that several servers answered for is counted at each.
       parameters:
       - description: Length of the history in seconds (default 3600, max 604800)
         in: query
@@ -3256,7 +3258,8 @@ paths:
           description: Bad Gateway
           schema:
             $ref: '#/definitions/internal_api.apiError'
-      summary: Round trip time, loss and the share of requests, by server
+      summary: Round trip time, loss, the share of requests and the streams by state,
+        by server
       tags:
       - overview
   /api/v1/slates:

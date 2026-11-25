@@ -229,7 +229,8 @@ type serverSeries struct {
 	IP   netip.Addr `json:"ip" swaggertype:"string"`
 	// Series maps a figure to [unix seconds, value] points: "rtt" in
 	// seconds, "loss" as the retransmissions per request, "requests" per
-	// second.
+	// second, and "streams_ok", "streams_warn" and "streams_fail": how
+	// many of the streams the server answered for were in each state.
 	Series map[string][][2]float64 `json:"series"`
 }
 
@@ -242,8 +243,8 @@ type serversNetworkResponse struct {
 
 // serversNetwork godoc
 //
-//	@Summary	Round trip time, loss and the share of requests, by server
-//	@Description	By the kernel's count on the connections of the checks, from every vantage point together. Loss is the TCP retransmissions per request on the way to the server.
+//	@Summary	Round trip time, loss, the share of requests and the streams by state, by server
+//	@Description	By the kernel's count on the connections of the checks, from every vantage point together. Loss is the TCP retransmissions per request on the way to the server. The streams by state are those the server answered for within a step; a stream that several servers answered for is counted at each.
 //	@Tags		overview
 //	@Produce	json
 //	@Param		range	query		int	false	"Length of the history in seconds (default 3600, max 604800)"
@@ -260,6 +261,9 @@ func (s *Server) serversNetwork(c *gin.Context) {
 		{"rtt", `avg by (server, ip) (avg_over_time(` + metricname.ServerRTTSeconds().String() + `[%[1]ds]))`},
 		{"loss", `sum by (server, ip) (sum_over_time(` + metricname.ServerRetransmits().String() + `[%[1]ds])) / sum by (server, ip) (sum_over_time(` + metricname.ServerRequests().String() + `[%[1]ds]))`},
 		{"requests", `sum by (server, ip) (sum_over_time(` + metricname.ServerRequests().String() + `[%[1]ds])) / %[1]d`},
+		{"streams_ok", streamsOfServers(status.OK())},
+		{"streams_warn", streamsOfServers(status.Warn())},
+		{"streams_fail", streamsOfServers(status.Fail())},
 	} {
 		res, err := s.mx.QueryRange(c.Request.Context(), fmt.Sprintf(q.expr, sec), from, to, step)
 		if err != nil {
@@ -286,6 +290,15 @@ func (s *Server) serversNetwork(c *gin.Context) {
 		return a.IP.Compare(b.IP) < 0
 	})
 	c.JSON(http.StatusOK, out)
+}
+
+// streamsOfServers counts, by server, the streams it answered for within
+// a step that were in the given state then — by their worst agent and
+// variant, as everywhere. A stream is the state it is in whoever serves
+// it: one that several servers answered for within the step is counted at
+// each of them, and one that no server answered for at none.
+func streamsOfServers(st status.Status) string {
+	return `count by (server, ip) ((max by (stream, server, ip) (max_over_time(` + metricname.ServerRequests().String() + `[%[1]ds]))) and on (stream) (max by (stream) (max_over_time(` + metricname.StreamStatus().String() + `[%[1]ds])) == ` + rank(st) + `))`
 }
 
 // chartWindow reads the range and the number of steps of a chart request.

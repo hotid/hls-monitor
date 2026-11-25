@@ -66,5 +66,7 @@
   "unavailable": "— unavailable",
   "unavailablePlaylistsSegmentErrorsSegmentsMissed": "Unavailable playlists, segment errors, segments missed between checks, stalls of the player model",
   "whichServersAnsweredInTheLast": "Which servers answered in the last five minutes and the status of the streams they serve",
-  "whichStreamsToShow": "Which streams to show"
+  "whichStreamsToShow": "Which streams to show",
+  "streamsByStatusOfServer": "Streams by status: {server}",
+  "streamsByStatusOfServerHint": "How many of the streams this server answered for were in each state. A stream that several servers answered for within a step is counted at each of them."
 }

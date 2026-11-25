@@ -173,15 +173,18 @@ function lines(c: SummaryChart): ChartLine[] {
     return busiest.value.map((s) => ({ label: serverLabel(s), points: s.series[figure] ?? [] }))
   }
   return c.series.map((s) => {
-    let points = a.series[s.id] ?? []
-    if (c.zeroFill) {
-      const have = new Map(points.map(([t, v]) => [Math.round((t - a.from) / a.step), v]))
-      const n = Math.round((a.to - a.from) / a.step)
-      points = []
-      for (let i = 0; i <= n; i++) points.push([a.from + i * a.step, have.get(i) ?? 0])
-    }
-    return { label: s.label, points }
+    const points = a.series[s.id] ?? []
+    return { label: s.label, points: c.zeroFill ? zeroFilled(points, a) : points }
   })
+}
+
+/** Counts: a step without a point is zero, not a gap. */
+function zeroFilled(points: [number, number][], w: { from: number; to: number; step: number }): [number, number][] {
+  const have = new Map(points.map(([t, v]) => [Math.round((t - w.from) / w.step), v]))
+  const n = Math.round((w.to - w.from) / w.step)
+  const out: [number, number][] = []
+  for (let i = 0; i <= n; i++) out.push([w.from + i * w.step, have.get(i) ?? 0])
+  return out
 }
 
 // ── Servers ──────────────────────────────────────────────────────────
@@ -197,6 +200,17 @@ const busiest = computed(() => {
 function serverLabel(s: ServerSeries): string {
   const same = (network.value?.servers ?? []).filter((o) => o.host === s.host).length
   return same > 1 && s.ip ? `${s.host} (${s.ip})` : s.host
+}
+// The streams by state, of one server: the same picture as of all streams.
+const serverStates = [
+  { id: 'streams_fail', label: t('common.failure') },
+  { id: 'streams_warn', label: t('common.warning') },
+  { id: 'streams_ok', label: t('common.ok') },
+]
+function stateLines(s: ServerSeries): ChartLine[] {
+  const w = network.value
+  if (!w) return []
+  return serverStates.map((st) => ({ label: st.label, points: zeroFilled(s.series[st.id] ?? [], w) }))
 }
 const lossOf = (s: ServerView) => (s.network && s.network.requests > 0 ? s.network.retransmits / s.network.requests : undefined)
 
@@ -327,6 +341,21 @@ const creating = ref(false)
       <div class="section-title">
         <h2>{{ t('common.servers') }}</h2>
         <span class="muted">{{ t('dashboard.whichServersAnsweredInTheLast') }}</span>
+      </div>
+      <div v-if="network && busiest.length" class="charts">
+        <TimeChart
+          v-for="s in busiest"
+          :key="`${s.host} ${s.ip}`"
+          :title="t('dashboard.streamsByStatusOfServer', { server: serverLabel(s) })"
+          :hint="t('dashboard.streamsByStatusOfServerHint')"
+          unit="count"
+          :lines="stateLines(s)"
+          :from="network.from"
+          :to="network.to"
+          :step="network.step"
+          steps
+          :colors="[red, orange, green]"
+        />
       </div>
       <div class="panel table-wrap">
         <table class="table">

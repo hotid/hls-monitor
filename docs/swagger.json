@@ -1255,14 +1255,14 @@
         },
         "/api/v1/servers/network": {
             "get": {
-                "description": "By the kernel's count on the connections of the checks, from every vantage point together. Loss is the TCP retransmissions per request on the way to the server.",
+                "description": "By the kernel's count on the connections of the checks, from every vantage point together. Loss is the TCP retransmissions per request on the way to the server. The streams by state are those the server answered for within a step; a stream that several servers answered for is counted at each.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
                     "overview"
                 ],
-                "summary": "Round trip time, loss and the share of requests, by server",
+                "summary": "Round trip time, loss, the share of requests and the streams by state, by server",
                 "parameters": [
                     {
                         "type": "integer",
@@ -5255,7 +5255,7 @@
                     "type": "string"
                 },
                 "series": {
-                    "description": "Series maps a figure to [unix seconds, value] points: \"rtt\" in\nseconds, \"loss\" as the retransmissions per request, \"requests\" per\nsecond.",
+                    "description": "Series maps a figure to [unix seconds, value] points: \"rtt\" in\nseconds, \"loss\" as the retransmissions per request, \"requests\" per\nsecond, and \"streams_ok\", \"streams_warn\" and \"streams_fail\": how\nmany of the streams the server answered for were in each state.",
                     "type": "object",
                     "additionalProperties": {
                         "type": "array",
