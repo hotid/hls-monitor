@@ -70,11 +70,12 @@ func (st *reachState) allowed(addr string) bool {
 }
 
 // use records that the request was given a connection to addr, new or
-// kept from before, and ends the request when it may not have it.
-func (st *reachState) use(addr string) {
+// kept from before, and ends the request when it may not have it: false
+// is returned then.
+func (st *reachState) use(addr string) bool {
 	if !st.allowed(addr) {
 		st.cancel(fmt.Errorf("%s: %w", hostOf(addr), ErrNotPublic))
-		return
+		return false
 	}
 	st.mu.Lock()
 	if st.got == 0 {
@@ -82,6 +83,7 @@ func (st *reachState) use(addr string) {
 	}
 	st.got++
 	st.mu.Unlock()
+	return true
 }
 
 // controlDial is the dialer's hook: it refuses a connection before

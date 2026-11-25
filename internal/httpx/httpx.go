@@ -313,8 +313,12 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 				lastConn = i.Conn
 			}
 			rt.addrs = append(rt.addrs, res.RemoteAddr)
-			if res.RemoteAddr != "" {
-				reach.use(res.RemoteAddr)
+			// Ending the request is not enough for a connection kept
+			// from before: the request is written to it at once, and may
+			// be answered before the end is noticed. The connection is
+			// closed, so that nothing is written.
+			if res.RemoteAddr != "" && !reach.use(res.RemoteAddr) && i.Conn != nil {
+				_ = i.Conn.Close()
 			}
 		},
 		GotFirstResponseByte: func() { res.TTFB = time.Since(start) },
@@ -357,6 +361,10 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 		return res, refused(cleanErr(err))
 	}
 	defer resp.Body.Close()
+	// An answer that came all the same is not given to who asked.
+	if cause := context.Cause(ctx); errors.Is(cause, ErrNotPublic) {
+		return res, cause
+	}
 	if len(rt.addrs) > 0 {
 		res.Inside = !addrPublic(rt.addrs[0])
 	}
