@@ -204,10 +204,12 @@ func TestAgentEndToEnd(t *testing.T) {
 	if e.state(id.StreamOf(1), store.LocalAgentID()) != nil {
 		t.Error("the server must not check a stream assigned only to a remote agent")
 	}
-	segs, _ := e.st.ListSegments(context.Background(), store.SegmentFilter{StreamID: id.StreamOf(1), AgentID: id.AgentOf(en.Agent.ID.Int64())})
-	if len(segs) == 0 {
-		t.Error("the agent's segment records did not reach the journal")
-	}
+	// The journal is written after the state is, and apart from it: a
+	// result whose state is there may not have its segments there yet.
+	waitFor(t, "the agent's segment records in the journal", func() bool {
+		segs, _ := e.st.ListSegments(context.Background(), store.SegmentFilter{StreamID: id.StreamOf(1), AgentID: id.AgentOf(en.Agent.ID.Int64())})
+		return len(segs) > 0
+	})
 
 	// The server goes away: checks continue; when it returns, the backlog arrives.
 	before := e.state(id.StreamOf(1), id.AgentOf(en.Agent.ID.Int64())).CheckedAt

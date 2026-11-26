@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/publicsuffix"
@@ -287,28 +288,61 @@ func (c *Client) Get(ctx context.Context, rq Request) (*Response, error) {
 	}
 
 	res := &Response{URL: rq.URL, ContentLength: -1}
-	var start, dnsStart, connStart, tlsStart time.Time
+	var start time.Time
 	var lastConn net.Conn
+	// The library dials on a goroutine of its own, and a dial the request
+	// did not wait for — it was given a connection that came free first —
+	// goes on after the request is over and tells of itself then. What
+	// the dials tell is gathered apart, under a lock, and goes into the
+	// answer once: settle ends the gathering before the answer is given
+	// to who asked, and what is told after that is not of this request.
+	var told struct {
+		sync.Mutex
+		over                          bool
+		dnsStart, connStart, tlsStart time.Time
+		dns, connect, tls             time.Duration
+		lookups, connects             int
+	}
+	note := func(f func()) {
+		told.Lock()
+		defer told.Unlock()
+		if !told.over {
+			f()
+		}
+	}
+	settle := func() {
+		told.Lock()
+		defer told.Unlock()
+		told.over = true
+		res.DNS, res.Lookups, res.Connect, res.Connects, res.TLS = told.dns, told.lookups, told.connect, told.connects, told.tls
+	}
+	defer settle()
 	trace := &httptrace.ClientTrace{
-		DNSStart: func(httptrace.DNSStartInfo) { dnsStart = time.Now() },
+		DNSStart: func(httptrace.DNSStartInfo) { note(func() { told.dnsStart = time.Now() }) },
 		DNSDone: func(httptrace.DNSDoneInfo) {
-			if !dnsStart.IsZero() {
-				res.DNS += time.Since(dnsStart)
-				res.Lookups++
-			}
+			note(func() {
+				if !told.dnsStart.IsZero() {
+					told.dns += time.Since(told.dnsStart)
+					told.lookups++
+				}
+			})
 		},
-		ConnectStart: func(string, string) { connStart = time.Now() },
+		ConnectStart: func(string, string) { note(func() { told.connStart = time.Now() }) },
 		ConnectDone: func(_, _ string, err error) {
-			if err == nil && !connStart.IsZero() {
-				res.Connect += time.Since(connStart)
-				res.Connects++
-			}
+			note(func() {
+				if err == nil && !told.connStart.IsZero() {
+					told.connect += time.Since(told.connStart)
+					told.connects++
+				}
+			})
 		},
-		TLSHandshakeStart: func() { tlsStart = time.Now() },
+		TLSHandshakeStart: func() { note(func() { told.tlsStart = time.Now() }) },
 		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
-			if err == nil && !tlsStart.IsZero() {
-				res.TLS += time.Since(tlsStart)
-			}
+			note(func() {
+				if err == nil && !told.tlsStart.IsZero() {
+					told.tls += time.Since(told.tlsStart)
+				}
+			})
 		},
 		GotConn: func(i httptrace.GotConnInfo) {
 			res.ConnReused = i.Reused
